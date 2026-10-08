@@ -28,6 +28,8 @@ class UpdateHelper {
     }
     [DataContract] sealed class ReleaseIdentity {
         [DataMember(Name="version", IsRequired=true)] public string Version;
+        [DataMember(Name="webview2")] public string WebView;
+        [DataMember(Name="math")] public string Math;
     }
     sealed class DesktopLease : IDisposable {
         readonly Mutex singleton = new Mutex(false, "Local\\ManimStudio-Desktop");
@@ -59,8 +61,7 @@ class UpdateHelper {
         "app/studio_ui/index.html", "app/studio_ui/app.js", "app/studio_ui/workspace.js",
         "app/studio_ui/updates.js", "app/studio_ui/style.css", "app/studio_ui/vendor/editor.bundle.js",
         "runtime/python.exe", "runtime/pythonw.exe", "runtime/python312.dll", "runtime/python312.zip",
-        "runtime/python312._pth", "webview2/msedgewebview2.exe", "tools/ffmpeg.exe", "tools/ffprobe.exe",
-        "math/texmfs/install/miktex/bin/x64/latex.exe", "math/texmfs/install/miktex/bin/x64/dvisvgm.exe",
+        "runtime/python312._pth", "tools/ffmpeg.exe", "tools/ffprobe.exe",
         "Manim Studio.exe", "standalone.json", "portable.mode", "LICENSE", "THIRD-PARTY-NOTICES.txt"
     };
 
@@ -182,8 +183,22 @@ class UpdateHelper {
                 ReleaseIdentity identity = (ReleaseIdentity)serializer.ReadObject(reader);
                 while (reader.Read()) { }
                 if (identity.Version != version) throw new IOException("The archive version does not match the selected release.");
+                string[] browserFiles;
+                if (identity.WebView == null || identity.WebView == "fixed") browserFiles = new[] {"webview2/msedgewebview2.exe"};
+                else if (identity.WebView == "evergreen") browserFiles = new[] {"app/webview_runtime.py", "app/webview-evergreen.json", "tools/MicrosoftEdgeWebview2Setup.exe"};
+                else throw new IOException("Unsupported browser runtime profile.");
+                foreach (string file in browserFiles) RequireFile(stage, file);
+                if (identity.Math == "none") RequireFile(stage, "runtime/Lib/site-packages/typst/_typst.pyd");
+                else if (identity.Math == null || identity.Math == "minimal" || identity.Math == "full") {
+                    RequireFile(stage, "math/texmfs/install/miktex/bin/x64/latex.exe");
+                    RequireFile(stage, "math/texmfs/install/miktex/bin/x64/dvisvgm.exe");
+                } else throw new IOException("Unsupported equation runtime profile.");
             }
         }
+    }
+    static void RequireFile(string stage, string name) {
+        string path = IoPath(Path.Combine(stage, name.Replace('/', '\\')));
+        if (!File.Exists(path) || new FileInfo(path).Length == 0) throw new IOException("The update is incomplete: " + name);
     }
     static bool Exists(string path) { path = IoPath(path); return File.Exists(path) || Directory.Exists(path); }
     static string Journal(string root) { return Path.Combine(root, "update.pending"); }

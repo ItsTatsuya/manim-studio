@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import stat
+import tomllib
 import pefile
 from zipfile import ZipFile, ZIP_DEFLATED
 from provenance import (
@@ -26,12 +27,17 @@ from provenance import (
 )
 from prepare_vc import install_vc_runtime
 from prepare_native_notices import install_native_notices
+from math_profile import install_minimal_math
+from prepare_webview import installers as evergreen_installers
+from prepare_typst import install_typst_notices
 
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / ".build-cache"
 DIST = ROOT / "dist"
 BUNDLE = DIST / "Manim Studio Portable"
-VERSION = "1.0.0"
+VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+    "project"
+]["version"]
 
 
 def payload_path_length(directory):
@@ -144,13 +150,28 @@ def copy_tree(source, destination):
 
 
 def main():
+    global DIST, BUNDLE
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-archive", action="store_true")
     parser.add_argument("--no-installer", action="store_true")
+    parser.add_argument("--output-dir", type=Path, default=DIST)
+    parser.add_argument(
+        "--math-profile", choices=("minimal", "full", "none"), default="minimal"
+    )
+    parser.add_argument(
+        "--webview-profile", choices=("evergreen", "fixed"), default="evergreen"
+    )
     args = parser.parse_args()
+    DIST = args.output_dir.resolve()
+    if not DIST.is_relative_to((ROOT / "dist").resolve()):
+        raise RuntimeError("Build output must stay within the project's dist directory")
+    BUNDLE = DIST / "Manim Studio Portable"
     # Check source inputs before replacing any existing app/runtime component.
-    inputs = cached_runtime_inputs()
+    inputs = cached_runtime_inputs(args.webview_profile == "fixed")
     math_snapshot = verify_math_snapshot(CACHE / "math-runtime")
+    evergreen, webview_files = (
+        evergreen_installers() if args.webview_profile == "evergreen" else ({}, {})
+    )
     requirements, built_wheels = build_source_wheels(
         CACHE / "verified-source-wheels", locked_requirements()
     )
@@ -202,6 +223,7 @@ def main():
         "worker.py",
         "updates.py",
         "update_handoff.py",
+        "webview_runtime.py",
         "manim.cfg",
     ):
         shutil.copy2(ROOT / name, app / name)
@@ -209,31 +231,82 @@ def main():
     # Expand the hash-verified CAB afresh; an old extracted tree is not a trusted input.
     import tempfile
 
-    with tempfile.TemporaryDirectory(prefix="webview2-build-", dir=CACHE) as folder:
-        subprocess.run(
-            [
-                str(Path(os.environ["WINDIR"]) / "System32" / "expand.exe"),
-                "-F:*",
-                str(CACHE / "webview2-x64.cab"),
-                folder,
-            ],
-            check=True,
-            stdout=subprocess.DEVNULL,
+    if args.webview_profile == "fixed":
+        with tempfile.TemporaryDirectory(prefix="webview2-build-", dir=CACHE) as folder:
+            subprocess.run(
+                [
+                    str(Path(os.environ["WINDIR"]) / "System32" / "expand.exe"),
+                    "-F:*",
+                    str(CACHE / "webview2-x64.cab"),
+                    folder,
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+            )
+            browsers = list(
+                Path(folder).glob("Microsoft.WebView2.FixedVersionRuntime.*.x64")
+            )
+            if len(browsers) != 1:
+                raise RuntimeError(
+                    "Expected one browser tree in the verified WebView2 CAB"
+                )
+            copy_tree(browsers[0], BUNDLE / "webview2")
+    math_profile = {"profile": args.math_profile}
+    if args.math_profile == "minimal":
+        math_profile = install_minimal_math(CACHE / "math-runtime", BUNDLE / "math")
+    elif args.math_profile == "full":
+        shutil.copytree(CACHE / "math-runtime", BUNDLE / "math", ignore=math_ignore)
+        from provenance import tree_inventory
+
+        math_profile["inventory"] = tree_inventory(BUNDLE / "math")
+    if args.math_profile != "none":
+        bin_dir = BUNDLE / "math" / "texmfs" / "install" / "miktex" / "bin" / "x64"
+        verify_math_imports(bin_dir)
+        native = json.loads((ROOT / "packaging/tex-native-lock.json").read_text())
+        native["files"] = {
+            file.name: digest(file)
+            for file in bin_dir.iterdir()
+            if file.is_file() and file.suffix.lower() in {".exe", ".dll"}
+        }
+        reviewed_native = json.loads(
+            (ROOT / "packaging/tex-native-lock.json").read_text()
+        )["files"]
+        if any(
+            reviewed_native.get(name) != sha for name, sha in native["files"].items()
+        ):
+            raise RuntimeError("Unreviewed native binary in selected TeX payload")
+        (app / "tex-native-lock.json").write_text(
+            json.dumps(native, indent=2) + "\n", encoding="utf-8"
         )
-        browsers = list(
-            Path(folder).glob("Microsoft.WebView2.FixedVersionRuntime.*.x64")
+        (app / "math-inventory.json").write_text(
+            json.dumps(math_profile["inventory"]) + "\n", encoding="utf-8"
         )
-        if len(browsers) != 1:
-            raise RuntimeError("Expected one browser tree in the verified WebView2 CAB")
-        copy_tree(browsers[0], BUNDLE / "webview2")
-    shutil.copytree(CACHE / "math-runtime", BUNDLE / "math", ignore=math_ignore)
-    verify_math_imports(
-        BUNDLE / "math" / "texmfs" / "install" / "miktex" / "bin" / "x64"
+    kept_paths = {
+        entry["path"] for entry in math_profile.get("inventory", {}).get("files", [])
+    }
+    prune_file = DIST / "prune-runtime.iss"
+    prune_file.write_text(
+        "\n".join(
+            'Type: files; Name: "{app}\\math\\' + entry["path"].replace("/", "\\") + '"'
+            for entry in math_snapshot["inventory"]["files"]
+            if entry["path"] not in kept_paths
+        )
+        + "\n",
+        encoding="utf-8",
     )
     ffmpeg = install_ffmpeg_tools(BUNDLE)
+    if args.webview_profile == "evergreen":
+        shutil.copy2(
+            webview_files["bootstrapper"],
+            BUNDLE / "tools" / webview_files["bootstrapper"].name,
+        )
+        shutil.copy2(
+            ROOT / "packaging/webview-evergreen.json", app / "webview-evergreen.json"
+        )
     # The licensed, pinned official redist supplies app-local native-wheel dependencies.
     vc = install_vc_runtime(BUNDLE, runtime)
     native_notices = install_native_notices(BUNDLE)
+    typst_notices = install_typst_notices(BUNDLE)
     (BUNDLE / "portable.mode").write_text(
         "User files are kept in UserData beside this app.\n", encoding="utf-8"
     )
@@ -244,6 +317,9 @@ def main():
                 "python": "3.12.10",
                 "manim": "0.21.0",
                 "architecture": "x64",
+                "webview2": args.webview_profile,
+                "math": args.math_profile,
+                "typst": "0.15.0",
             },
             indent=2,
         ),
@@ -259,8 +335,14 @@ def main():
         "standalone_ffmpeg": ffmpeg,
         "visual_cpp_runtime": vc,
         "native_notices": native_notices,
+        "typst_notices": typst_notices,
         "math_snapshot_sha256": math_snapshot["inventory"]["tree_sha256"],
         "math_warning": math_snapshot["warning"],
+        "math_profile": {
+            key: value for key, value in math_profile.items() if key != "inventory"
+        },
+        "math_payload_sha256": math_profile.get("inventory", {}).get("tree_sha256"),
+        "webview2": evergreen or inputs.get("webview2.cab"),
     }
     (BUNDLE / "BUILD-PROVENANCE.json").write_text(
         json.dumps(provenance, indent=2) + "\n", encoding="utf-8"
@@ -268,13 +350,26 @@ def main():
     shutil.copy2(ROOT / "LICENSE", BUNDLE / "LICENSE")
     shutil.copy2(ROOT / "README.md", BUNDLE / "README.md")
     copy_tree(ROOT / "docs", BUNDLE / "docs")
+    browser_note = (
+        "Uses shared Evergreen WebView2. If missing, first launch installs it and needs internet.\n"
+        if args.webview_profile == "evergreen"
+        else "Includes a private WebView2 browser runtime.\n"
+    )
+    math_note = (
+        "Typst equations are included. Tex/MathTex require a separately installed LaTeX distribution.\n"
+        if args.math_profile == "none"
+        else "Typst and standard LaTeX equations are included.\n"
+    )
     (BUNDLE / "READ ME.txt").write_text(
-        f"MANIM STUDIO {VERSION}\n\nOpen Manim Studio.exe. Everything needed is included. No Python or commands.\n\nPortable edition: extract the WHOLE ZIP before opening the app. Your drafts,\nassets and renders live in UserData next to the executable. Keep this folder\nwhen you update the app. The installer edition saves them in your local app data.\n\nThe quick tour points to each button. You can dismiss it or use the app while\nit is open. Paste a Manim script, then click Render animation.\nText, equations, graphics, video preview, and audio tools are bundled.\n\nRequires 64-bit Windows 10 (2004+) or Windows 11.\n",
+        f"MANIM STUDIO {VERSION}\n\nOpen Manim Studio.exe. No Python or commands are needed.\n"
+        + browser_note
+        + math_note
+        + "\nPortable edition: extract the WHOLE ZIP before opening the app. Your drafts,\nassets and renders live in UserData next to the executable. Keep this folder\nwhen you update the app. The installer edition saves them in your local app data.\n\nThe quick tour points to each button. You can dismiss it or use the app while\nit is open. Paste a Manim script, then click Render animation.\nText, graphics, video preview, and audio tools are bundled.\n\nRequires 64-bit Windows 10 (2004+) or Windows 11.\n",
         encoding="utf-8",
     )
     notices = BUNDLE / "THIRD-PARTY-NOTICES.txt"
     notices.write_text(
-        "Manim Studio is an aggregate of separately licensed components.\n\nPython: PSF license (runtime/LICENSE.txt).\nManim: MIT; other Python package licenses are in runtime/Lib/site-packages/*.dist-info.\nMicrosoft WebView2: Microsoft redistributable runtime terms, included with webview2.\nMiKTeX and included TeX packages: individual licenses distributed under math.\nPrivate FFmpeg audio tools: LGPL 2.1 or later; matching source, build recipe and license in licenses/FFmpeg/.\nPyAV separately bundles GPL-enabled FFmpeg codec libraries; matching codec sources and upstream recipes are in the release Third-Party-Sources asset.\nGhostscript 9.25: AGPLv3; matching source and MiKTeX build recipe are in the release Third-Party-Sources asset.\nHost Grotesk and Geist Mono fonts: SIL Open Font License, in app/studio_ui/fonts.\nMicrosoft Visual C++ runtime: Microsoft redistributable DLLs.\n\nThis app uses its own Python environment; it does not install a system Python.\n",
+        "Manim Studio is an aggregate of separately licensed components.\n\nPython: PSF license (runtime/LICENSE.txt).\nManim: MIT; other Python package licenses are in runtime/Lib/site-packages/*.dist-info.\nMicrosoft WebView2: Microsoft redistributable runtime terms; shared Evergreen runtime, or the selected fixed-version profile. https://developer.microsoft.com/microsoft-edge/webview2/\nMiKTeX and included TeX packages: individual licenses distributed under math when bundled.\nTypst: Apache 2.0; original licenses and dependency SBOM in runtime/Lib/site-packages/typst-0.15.0.dist-info/.\nPrivate FFmpeg audio tools: LGPL 2.1 or later; matching source, build recipe and license in licenses/FFmpeg/.\nPyAV separately bundles GPL-enabled FFmpeg codec libraries; matching codec sources and upstream recipes are in the release Third-Party-Sources asset.\nGhostscript 9.25 when bundled: AGPLv3; matching source and MiKTeX build recipe are in the release Third-Party-Sources asset.\nHost Grotesk and Geist Mono fonts: SIL Open Font License, in app/studio_ui/fonts.\nMicrosoft Visual C++ runtime: Microsoft redistributable DLLs.\n\nThis app uses its own Python environment; it does not install a system Python.\n",
         encoding="utf-8",
     )
     with notices.open("a", encoding="utf-8") as notice_file:
@@ -356,6 +451,11 @@ def main():
                 str(CACHE / "inno" / "ISCC.exe"),
                 f"/DBundleDir={BUNDLE}",
                 f"/DPayloadPathLength={payload_path_length(BUNDLE)}",
+                f"/DOutputDir={DIST}",
+                f"/DAppVersion={VERSION}",
+                f"/DEvergreen={int(args.webview_profile == 'evergreen')}",
+                f"/DWebViewInstaller={webview_files.get('offline', '')}",
+                f"/DPruneRuntime={prune_file}",
                 str(ROOT / "packaging" / "studio.iss"),
             ],
             check=True,

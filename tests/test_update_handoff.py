@@ -41,12 +41,12 @@ class UpdateIntegrationTests(unittest.TestCase):
                         json.dumps({"version": version})
                     )
                     with self.assertLogs(level="WARNING"):
-                        self.assertEqual(runtime.app_version(), "1.0.0")
+                        self.assertEqual(runtime.app_version(), "1.1.0")
                 (path / "standalone.json").write_text(json.dumps({"version": "1.2.3"}))
                 self.assertEqual(runtime.app_version(), "1.2.3")
                 (path / "standalone.json").write_text("[" * 2000 + "]" * 2000)
                 with self.assertLogs(level="WARNING"):
-                    self.assertEqual(runtime.app_version(), "1.0.0")
+                    self.assertEqual(runtime.app_version(), "1.1.0")
 
     def test_install_reserves_render_admission_and_launch_failure_releases_it(self):
         entered, release = threading.Event(), threading.Event()
@@ -341,6 +341,30 @@ class NativeUpdateTests(unittest.TestCase):
             self.apply(self.package(missing="app/studio.py")).returncode, 0
         )
         self.assertFalse((self.cache / "update.ready").exists())
+
+    def test_evergreen_payload_accepts_missing_fixed_browser_and_preserves_data(self):
+        artifact = self.package(
+            metadata=b'{"version":"1.0.1","webview2":"evergreen","math":"minimal"}',
+            missing="webview2/msedgewebview2.exe",
+            extra={
+                "Manim Studio/app/webview_runtime.py": b"shared runtime fixture",
+                "Manim Studio/app/webview-evergreen.json": b"pinned bootstrapper fixture",
+                "Manim Studio/tools/MicrosoftEdgeWebview2Setup.exe": b"Microsoft installer fixture",
+            },
+        )
+        result = self.apply(artifact)
+        self.assertEqual(result.returncode, 0, (self.cache / "update.log").read_text())
+        self.assertFalse((self.app / "webview2").exists())
+        self.assert_data_preserved()
+
+    def test_missing_fixed_browser_without_migration_metadata_is_rejected(self):
+        self.assertNotEqual(
+            self.apply(self.package(missing="webview2/msedgewebview2.exe")).returncode,
+            0,
+        )
+        self.assertFalse((self.cache / "update.ready").exists())
+        self.assertEqual((self.app / "app/desktop.py").read_bytes(), b"old code")
+        self.assert_data_preserved()
 
     def test_inactive_interrupted_preflight_is_reclaimed_and_active_owner_preserved(
         self,

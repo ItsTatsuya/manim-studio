@@ -16,6 +16,7 @@ from pathlib import Path
 import shutil
 import tarfile
 import tempfile
+import tomllib
 import urllib.request
 from zipfile import ZipFile, ZIP_STORED
 
@@ -28,7 +29,9 @@ from provenance import (
     write_checksums,
 )
 
-VERSION = "1.0.0"
+VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+    "project"
+]["version"]
 LOCK = ROOT / "packaging" / "source-lock.json"
 SOURCE_CACHE = CACHE / "third-party-sources"
 ANCHORS = [
@@ -305,10 +308,13 @@ def snapshot_math() -> None:
     print("Recorded MiKTeX snapshot:", snapshot["inventory"]["tree_sha256"], flush=True)
 
 
-def collect() -> None:
+def collect(dist: Path | None = None) -> None:
     catalog = json.loads(LOCK.read_text(encoding="utf-8"))
     records = []
-    for item in catalog["sources"]:
+    from prepare_typst import typst_sources
+
+    typst_provenance, typst_records = typst_sources()
+    for item in catalog["sources"] + typst_records:
         print("Verifying source:", item["component"], flush=True)
         source = download_verified(item, SOURCE_CACHE)
         records.append(
@@ -331,6 +337,7 @@ def collect() -> None:
         "schema": 1,
         "release_version": VERSION,
         "sources": records,
+        "typst_wheel_sha256": typst_provenance["wheel_sha256"],
         "recipes": [
             {
                 "path": "recipes/compile_for_miktex.cmd",
@@ -345,6 +352,7 @@ def collect() -> None:
                 "ManimPango/Pycairo wrapper sources and frozen vendor recipes with all pinned static native sources and Meson patches",
                 "MiKTeX 26.5 core source/build recipes",
                 "Ghostscript 9.25 source and MiKTeX build recipe",
+                "Typst Python wrapper and exact native Rust crate sources, including MPL-2.0 option-ext",
             ],
             "unresolved": [
                 "Standalone FFmpeg tools until their separately verified source/recipe is added"
@@ -358,6 +366,9 @@ def collect() -> None:
     extra = [
         (audit, "native-source-audit.json"),
         (ROOT / "packaging" / "tex-native-lock.json", "recipes/tex-native-lock.json"),
+        (ROOT / "packaging" / "minimal-tex.json", "recipes/minimal-tex.json"),
+        (ROOT / "packaging" / "math_profile.py", "recipes/math_profile.py"),
+        (ROOT / "packaging" / "prepare_typst.py", "recipes/prepare_typst.py"),
     ]
     embedded = []
     ffmpeg_manifest = CACHE / "ffmpeg-studio.manifest.json"
@@ -409,7 +420,9 @@ def collect() -> None:
             "Standalone FFmpeg 9.0.2 source and separate build recipe/provenance"
         )
     encoded = json.dumps(manifest, indent=2) + "\n"
-    dist = ROOT / "dist"
+    dist = (dist or ROOT / "dist").resolve()
+    if not dist.is_relative_to((ROOT / "dist").resolve()):
+        raise RuntimeError("Source output must stay within dist")
     dist.mkdir(exist_ok=True)
     output = dist / f"Manim-Studio-{VERSION}-Third-Party-Sources.zip"
     handle, temporary = tempfile.mkstemp(prefix="sources-", suffix=".zip", dir=dist)
@@ -444,6 +457,7 @@ def collect() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "dist")
     parser.add_argument(
         "--lock",
         action="store_true",
@@ -460,7 +474,7 @@ def main() -> None:
     if args.snapshot_math:
         snapshot_math()
     if not args.lock and not args.snapshot_math:
-        collect()
+        collect(args.output_dir)
 
 
 if __name__ == "__main__":

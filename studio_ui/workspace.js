@@ -394,11 +394,17 @@ document.addEventListener("pointerdown", (event) => {
 window.scriptProblems = window.scriptProblems || [];
 window.refreshProblems = function () {
   const problems = [...(window.scriptProblems || [])];
-  if (window.engineHealth?.latex === false)
+  if (window.engineHealth?.latex === false && analysis?.needs_latex)
     problems.push({
       message:
-        "LaTeX is unavailable. Re-run the installer to repair equation tools, or use Text in your script.",
-      severity: analysis?.needs_latex ? "error" : "warning",
+        "This script needs LaTeX. Install the Studio edition with LaTeX, or use MathTypst for equations.",
+      severity: "error",
+    });
+  if (window.engineHealth?.typst === false && analysis?.needs_typst)
+    problems.push({
+      message:
+        "Typst is unavailable. Re-run the installer to repair equation tools.",
+      severity: "error",
     });
   if (window.engineDisconnected)
     problems.push({

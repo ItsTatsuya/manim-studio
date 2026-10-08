@@ -10,8 +10,8 @@ using System.Windows.Forms;
 [assembly: AssemblyTitle("Manim Studio")]
 [assembly: AssemblyDescription("Local animation studio")]
 [assembly: AssemblyProduct("Manim Studio")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.1.0.0")]
+[assembly: AssemblyFileVersion("1.1.0.0")]
 
 class Launcher {
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string title);
@@ -77,7 +77,7 @@ class Launcher {
                 string browserRoot = Path.Combine(root, "webview2");
                 string aclMarker = Path.Combine(data, "browser-acl-ready");
                 string browserIdentity = Path.GetFullPath(browserRoot).TrimEnd(Path.DirectorySeparatorChar).ToUpperInvariant();
-                if (Environment.OSVersion.Version.Build < 22000 && (!File.Exists(aclMarker) || File.ReadAllText(aclMarker) != browserIdentity)) {
+                if (File.Exists(Path.Combine(browserRoot, "msedgewebview2.exe")) && Environment.OSVersion.Version.Build < 22000 && (!File.Exists(aclMarker) || File.ReadAllText(aclMarker) != browserIdentity)) {
                     foreach (string sid in new string[] { "*S-1-15-2-1:(OI)(CI)(RX)", "*S-1-15-2-2:(OI)(CI)(RX)" }) {
                         ProcessStartInfo acl = new ProcessStartInfo("icacls.exe", Quote(browserRoot) + " /grant " + Quote(sid) + " /Q");
                         acl.UseShellExecute = false; acl.CreateNoWindow = true;

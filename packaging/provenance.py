@@ -311,7 +311,7 @@ def write_checksums(dist: Path, version: str) -> None:
     )
 
 
-def cached_runtime_inputs() -> dict:
+def cached_runtime_inputs(include_fixed_webview: bool = False) -> dict:
     items = {
         item["name"]: item
         for item in json.loads(
@@ -320,8 +320,9 @@ def cached_runtime_inputs() -> dict:
     }
     files = {
         "python.zip": CACHE / "python-3.12.10-embed-amd64.zip",
-        "webview2.cab": CACHE / "webview2-x64.cab",
     }
+    if include_fixed_webview:
+        files["webview2.cab"] = CACHE / "webview2-x64.cab"
     for name, path in files.items():
         verify_file(path, items[name]["sha256"])
     return {

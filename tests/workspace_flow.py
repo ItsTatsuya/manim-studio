@@ -15,6 +15,14 @@ with sync_playwright() as playwright:
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.on(
+        "response",
+        lambda response: (
+            errors.append(f"HTTP {response.status}: {response.url}")
+            if response.status >= 400
+            else None
+        ),
+    )
+    page.on(
         "console",
         lambda message: (
             errors.append(message.text) if message.type == "error" else None

@@ -45,10 +45,12 @@ and a licensed Visual Studio installation with its release CRT. The VC helper
 requires `--source` for the x64 CRT directory and `--visual-studio` for its
 licensed installation. These tools are for developers; end users run the EXE.
 
-The offline build requires the pinned Python/WebView2 archives and reviewed
+The default build uses pinned Python archives and Microsoft-signed Evergreen
+installers in packaging/webview-evergreen.json. Fixed WebView2 remains an explicit
+build profile. The minimal TeX build requires the reviewed
 `.build-cache/math-runtime` snapshot. Do not bypass native hashes or replace the
 snapshot silently. Rebuilding it requires source review and updated inventories.
-Run `packaging/verify_native.py`, `verify_math.py` and `verify_audio.py` with the
+Run `packaging/verify_native.py`, `verify_math.py`, `verify_typst.py` and `verify_audio.py` with the
 bundle's own Python and fresh data. Verify ZIP CRCs, source parity and checksums.
 Publish matching third-party sources and original license notices with releases.
 
@@ -65,9 +67,9 @@ Ship Studio Update.exe with the matching app source; updater downloads must use
 the official release URLs and pass SHA256 verification before installation.
 Keep the portable recovery journal and installer AppId compatible.
 
-Version 1.0.0 is the first public release. Publish the intended stable release
-as GitHub's latest release. Preserve published tags and checksums for subsequent
-releases.
+Version 1.1.0 ships the minimal TeX plus Typst profile. Publish the intended stable
+release as GitHub's latest release. Preserve Git tags and published asset bytes;
+retire an older GitHub release only when explicitly requested.
 
 Keep README.md for users and AGENTS.md for developers. Preserve third-party license files
 and notices in dependencies, font assets and release runtimes. The app's code is

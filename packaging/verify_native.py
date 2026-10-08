@@ -52,7 +52,7 @@ def verify():
             "getComputedStyle(document.body).fontFamily"
         )
         print(
-            "PASS: bundled WebView2, local Host Grotesk and nonmodal first-run tour",
+            "PASS: WebView2, local Host Grotesk and nonmodal first-run tour",
             flush=True,
         )
         print("Browser:", window.evaluate_js("navigator.userAgent"), flush=True)

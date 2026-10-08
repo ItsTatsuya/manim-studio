@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from fractions import Fraction
 import importlib.metadata
+import importlib.util
 import json
 import logging
 import math
@@ -278,6 +279,13 @@ def analyze(source: str) -> dict:
             and node.id in {"Tex", "MathTex"}
             or isinstance(node, ast.Attribute)
             and node.attr in {"Tex", "MathTex"}
+            for node in ast.walk(tree)
+        ),
+        "needs_typst": any(
+            isinstance(node, ast.Name)
+            and node.id in {"Typst", "MathTypst"}
+            or isinstance(node, ast.Attribute)
+            and node.attr in {"Typst", "MathTypst"}
             for node in ast.walk(tree)
         ),
     }
@@ -775,6 +783,7 @@ def health():
         "manim": importlib.metadata.version("manim"),
         "python": sys.version.split()[0],
         "latex": bool(shutil.which("latex") and shutil.which("dvisvgm")),
+        "typst": importlib.util.find_spec("typst") is not None,
         "active": ACTIVE,
         "assets": str(ROOT / "assets"),
         "outputs": str(OUTPUTS),
@@ -1231,7 +1240,12 @@ def start_render(body: RenderRequest):
     if analysis["needs_latex"] and not health()["latex"]:
         raise HTTPException(
             422,
-            "This script uses Tex or MathTex. Install MiKTeX from miktex.org/download and restart Studio, or ask your LLM to use Text instead.",
+            "This script uses Tex or MathTex. Install the Studio edition with LaTeX, or install MiKTeX and restart Studio. You can also rewrite equations using MathTypst.",
+        )
+    if analysis["needs_typst"] and not health()["typst"]:
+        raise HTTPException(
+            422,
+            "This script uses Typst or MathTypst. Reinstall Studio to repair Typst support.",
         )
     with LOCK:
         if UPDATE_INSTALLING:

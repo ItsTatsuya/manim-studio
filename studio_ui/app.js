@@ -514,7 +514,8 @@ function updateRenderButton() {
   const cancelling = cancelRequested || trackedJob?.status === "cancelling";
   const validating = !analysis && !!editor.value.trim();
   const blocked =
-    !!analysis?.needs_latex && window.engineHealth?.latex === false;
+    (!!analysis?.needs_latex && window.engineHealth?.latex === false) ||
+    (!!analysis?.needs_typst && window.engineHealth?.typst === false);
   const state = activeJob
     ? "rendering"
     : window.updatingStudio
@@ -672,7 +673,8 @@ async function startRender() {
     activeJob ||
     !analysis ||
     analysis.error ||
-    (analysis.needs_latex && window.engineHealth?.latex === false)
+    (analysis.needs_latex && window.engineHealth?.latex === false) ||
+    (analysis.needs_typst && window.engineHealth?.typst === false)
   )
     return;
   closeTour(false);

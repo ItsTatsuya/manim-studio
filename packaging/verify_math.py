@@ -9,6 +9,11 @@ class MainScene(Scene):
     def construct(self):
         self.add(Text("Bundled math", font_size=30).to_edge(UP))
         self.play(Write(MathTex(r"e^{i\\pi}+1=0")), run_time=0.5)
+        pdf = MathTex(
+            r"\\int_0^1 x^2\\,dx = \\frac{1}{3}",
+            tex_template=TexTemplate(tex_compiler="pdflatex", output_format=".pdf"),
+        ).to_edge(DOWN)
+        self.play(Write(pdf), run_time=0.2)
         self.wait(0.2)
 """
 print("Bundled LaTeX:", shutil.which("latex"), flush=True)
@@ -29,4 +34,4 @@ else:
     raise AssertionError("Equation render timed out")
 assert job["status"] == "completed", job
 assert job["size"] > 0
-print("PASS: standalone Text and MathTex render", flush=True)
+print("PASS: standalone Text, LaTeX DVI and pdfLaTeX PDF equations render", flush=True)

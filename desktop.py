@@ -11,6 +11,7 @@ import os
 import uvicorn
 from studio import app, shutdown_render, configure_update_install, update_install_failed
 from runtime import DATA_ROOT, PACKAGE_ROOT, STANDALONE
+from webview_runtime import browser_mode, ensure_evergreen
 
 
 def main():
@@ -38,6 +39,9 @@ def main():
     log_dir = DATA_ROOT / "outputs"
     log_dir.mkdir(exist_ok=True)
     logging.basicConfig(filename=log_dir / "studio-startup.log", level=logging.INFO)
+    shared_browser = browser_mode(PACKAGE_ROOT) == "evergreen"
+    if STANDALONE and os.name == "nt" and shared_browser:
+        ensure_evergreen(PACKAGE_ROOT)
     server = uvicorn.Server(
         uvicorn.Config(
             app, host="127.0.0.1", port=port, log_level="warning", log_config=None
@@ -56,7 +60,10 @@ def main():
         import webview
 
         webview.settings["ALLOW_DOWNLOADS"] = True
-        if (PACKAGE_ROOT / "webview2" / "msedgewebview2.exe").is_file():
+        if shared_browser:
+            os.environ.pop("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", None)
+            webview.settings["WEBVIEW2_RUNTIME_PATH"] = None
+        elif (PACKAGE_ROOT / "webview2" / "msedgewebview2.exe").is_file():
             webview.settings["WEBVIEW2_RUNTIME_PATH"] = str(PACKAGE_ROOT / "webview2")
         window = webview.create_window(
             "Manim Studio",

@@ -50,8 +50,19 @@ with sync_playwright() as playwright:
         "(source)=>{window.engineHealth.latex=false;setSource(source)}",
         'from manim import *\nclass MainScene(Scene):\n    def construct(self):\n        self.add(MathTex("x"))',
     )
-    expect(page.locator("#problem-list")).to_contain_text("repair equation tools")
+    expect(page.locator("#problem-list")).to_contain_text("needs LaTeX")
     expect(page.locator("#render-button")).to_be_disabled()
+    page.evaluate(
+        "window.engineHealth.typst=true;setSource('from manim import *\\nclass MainScene(Scene):\\n    def construct(self):\\n        self.add(MathTypst(\"x^2\"))')"
+    )
+    expect(page.locator("#render-button")).to_be_enabled()
+    expect(page.locator("#problem-list")).not_to_contain_text("needs LaTeX")
+    page.evaluate(
+        "window.engineHealth.typst=false;refreshProblems();updateRenderButton()"
+    )
+    expect(page.locator("#problem-list")).to_contain_text("Typst is unavailable")
+    expect(page.locator("#render-button")).to_be_disabled()
+    page.evaluate("window.engineHealth.typst=true")
     page.evaluate("window.engineHealth.latex=true;setSource(EXAMPLES[0].source)")
     expect(page.locator("#render-button")).to_be_enabled()
     page.locator("#resolution-select").select_option("854x480")

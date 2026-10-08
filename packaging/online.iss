@@ -1,13 +1,19 @@
 #ifndef StageDir
   #define StageDir "..\.build-cache\online-stage"
 #endif
+#ifndef OutputDir
+  #define OutputDir "..\dist"
+#endif
 #ifndef PayloadPathLength
   #error Build with packaging/build_online.py to supply the payload path inventory.
+#endif
+#ifndef AppVersion
+  #error Build with packaging/build_online.py to supply the release version.
 #endif
 [Setup]
 AppId={{E55B93EB-6197-4FAA-BF08-9EC68F6ACBA4}
 AppName=Manim Studio
-AppVersion=1.0.0
+AppVersion={#AppVersion}
 AppPublisher=ItsTatsuya
 DefaultDirName={localappdata}\Programs\Manim Studio
 DefaultGroupName=Manim Studio
@@ -15,8 +21,8 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.19041
-OutputDir=..\dist
-OutputBaseFilename=Manim-Studio-1.0.0-Setup-x64
+OutputDir={#OutputDir}
+OutputBaseFilename=Manim-Studio-{#AppVersion}-Setup-x64
 SetupIconFile=studio.ico
 UninstallDisplayIcon={app}\Manim Studio.exe
 WizardStyle=modern
@@ -24,7 +30,7 @@ WizardSizePercent=110
 Compression=lzma2/max
 SolidCompression=yes
 ArchiveExtraction=full
-ExtraDiskSpaceRequired=3000000000
+ExtraDiskSpaceRequired=1500000000
 CloseApplications=yes
 RestartApplications=no
 DisableProgramGroupPage=yes
@@ -37,7 +43,11 @@ WelcomeLabel2=This installs Manim Studio for your Windows account.%n%nSetup down
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
 
 [InstallDelete]
+Type: filesandordirs; Name: "{app}\webview2"
 #include "prune-previous.iss"
+#ifdef PruneRuntime
+#include PruneRuntime
+#endif
 Type: files; Name: "{app}\app\studio_ui\fonts\geist-latin.woff2"
 Type: files; Name: "{app}\tools\LICENSE"
 Type: files; Name: "{app}\tools\README.txt"
@@ -47,13 +57,16 @@ Type: files; Name: "{app}\tools\swscale-10.dll"
 [Files]
 Source: "{#StageDir}\core\*"; DestDir: "{app}"; Flags: ignoreversion overwritereadonly recursesubdirs createallsubdirs
 Source: "{#StageDir}\bootstrap.py"; Flags: dontcopy
+Source: "{#StageDir}\MicrosoftEdgeWebview2Setup.exe"; Flags: dontcopy
+Source: "{#StageDir}\runtime-profile.json"; Flags: dontcopy
+Source: "{#StageDir}\math-runtime.zip"; Flags: dontcopy
+Source: "{#StageDir}\math-inventory.json"; Flags: dontcopy
 Source: "{#StageDir}\downloads.json"; Flags: dontcopy
 Source: "{#StageDir}\requirements-online.txt"; Flags: dontcopy
-Source: "{#StageDir}\tex-commands.json"; Flags: dontcopy
 Source: "{#StageDir}\tex-native-lock.json"; Flags: dontcopy
 Source: "{#StageDir}\wheels\*"; DestDir: "{tmp}\wheels"; Flags: dontcopy
 Source: "{#StageDir}\vc\*"; DestDir: "{tmp}\prepared\runtime"; Flags: dontcopy
-Source: "{tmp}\prepared\*"; DestDir: "{app}"; ExternalSize: 1770000000; Excludes: "*.pyc"; Flags: external ignoreversion overwritereadonly recursesubdirs createallsubdirs
+Source: "{tmp}\prepared\*"; DestDir: "{app}"; ExternalSize: 850000000; Excludes: "*.pyc"; Flags: external ignoreversion overwritereadonly recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\Manim Studio"; Filename: "{app}\Manim Studio.exe"
@@ -64,6 +77,7 @@ Filename: "{app}\Manim Studio.exe"; Description: "Open Manim Studio"; Flags: now
 
 [Code]
 #include "installer-paths.iss"
+#include "evergreen.iss"
 
 var
   DownloadPage: TDownloadWizardPage;
@@ -103,6 +117,8 @@ var
   LogPath: String;
 begin
   Result := ValidateInstallerPath({#PayloadPathLength});
+  if Result <> '' then exit;
+  Result := EnsureEvergreenWebView2('MicrosoftEdgeWebview2Setup.exe');
   if Result <> '' then exit;
   if Prepared then begin
     Result := ValidatePreparedPaths;

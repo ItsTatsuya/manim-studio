@@ -25,6 +25,83 @@ def inno_compiler():
 
 @unittest.skipUnless(os.name == "nt", "Requires Windows and Inno Setup")
 class InstallerTests(unittest.TestCase):
+    def test_evergreen_preflight_blocks_cleanup_on_failure(self):
+        compiler = inno_compiler()
+        if compiler is None:
+            self.skipTest("Inno Setup compiler unavailable")
+        production = (ROOT / "packaging/evergreen.iss").read_text()
+        install_code = production[
+            production.index("function EnsureEvergreenWebView2") :
+        ]
+        for script in ("studio.iss", "online.iss"):
+            self.assertIn(
+                "EnsureEvergreenWebView2(", (ROOT / "packaging" / script).read_text()
+            )
+        with tempfile.TemporaryDirectory(prefix="manim-evergreen-") as directory:
+            base = Path(directory).resolve()
+            for available in (False, True):
+                with self.subTest(available=available):
+                    case = base / str(available)
+                    install = case / "installed"
+                    browser = install / "webview2/old-browser.txt"
+                    browser.parent.mkdir(parents=True)
+                    browser.write_bytes(b"old browser")
+                    user = install / "UserData/preferences.json"
+                    user.parent.mkdir()
+                    user.write_bytes(b"saved work")
+                    target = install / "runtime.txt"
+                    target.write_bytes(b"old runtime")
+                    source = case / "runtime.txt"
+                    source.write_bytes(b"new runtime")
+                    fixture = case / "fixture.iss"
+                    fixture.write_text(
+                        "[Setup]\nAppName=Studio Evergreen regression\nAppVersion=1.0.0\n"
+                        f"DefaultDirName={install}\nOutputDir={case}\nOutputBaseFilename=fixture\n"
+                        "PrivilegesRequired=lowest\nUninstallable=no\nCreateUninstallRegKey=no\n"
+                        "DisableDirPage=yes\nDisableProgramGroupPage=yes\nDirExistsWarning=no\nCloseApplications=no\n"
+                        '[InstallDelete]\nType: filesandordirs; Name: "{app}\\webview2"\n'
+                        f'[Files]\nSource: "{source}"; DestDir: "{{app}}"; Flags: ignoreversion\n'
+                        "[Code]\nfunction HasEvergreenWebView2: Boolean;\nbegin\n"
+                        f"  Result := {str(available)};\nend;\n"
+                        + install_code
+                        + "\nfunction PrepareToInstall(var NeedsRestart: Boolean): String;\nbegin\n"
+                        "  Result := EnsureEvergreenWebView2('unavailable-installer.exe');\nend;\n",
+                        encoding="utf-8",
+                    )
+                    compiled = subprocess.run(
+                        [str(compiler), "/Q", str(fixture)],
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                    self.assertEqual(
+                        compiled.returncode, 0, compiled.stdout + compiled.stderr
+                    )
+                    log = case / "install.log"
+                    result = subprocess.run(
+                        [
+                            str(case / "fixture.exe"),
+                            "/VERYSILENT",
+                            "/SUPPRESSMSGBOXES",
+                            "/NORESTART",
+                            f"/LOG={log}",
+                        ],
+                        timeout=60,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                    self.assertEqual(
+                        result.returncode,
+                        0 if available else 7,
+                        log.read_text(errors="replace"),
+                    )
+                    self.assertEqual(browser.exists(), not available)
+                    self.assertEqual(
+                        target.read_bytes(),
+                        b"new runtime" if available else b"old runtime",
+                    )
+                    self.assertEqual(user.read_bytes(), b"saved work")
+
     def test_path_preflight_preserves_existing_install_at_rejected_boundary(self):
         compiler = inno_compiler()
         if compiler is None:

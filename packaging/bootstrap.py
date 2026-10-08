@@ -8,7 +8,6 @@ import os
 import re
 from pathlib import Path
 import runpy
-import shutil
 import subprocess
 import sys
 import traceback
@@ -47,6 +46,14 @@ def inventory(directory):
         "tree_sha256": hashlib.sha256(encoded).hexdigest(),
         "files": records,
     }
+
+
+def verify_math_payload(directory, manifest):
+    expected = json.loads(manifest.read_text(encoding="utf-8"))
+    actual = inventory(directory)
+    if actual != expected:
+        raise RuntimeError("The bundled equation snapshot failed verification")
+    return actual
 
 
 def verify_math_engines(bin_dir, env, native_lock):
@@ -211,82 +218,41 @@ def main():
                 ]
             )
 
-            stage(40, "Preparing the built-in browser")
-            extracted = downloads / "browser-extracted"
-            extracted.mkdir(exist_ok=True)
-            command(
-                [
-                    Path(os.environ["WINDIR"]) / "System32" / "expand.exe",
-                    "-F:*",
-                    downloads / "webview2.cab",
-                    extracted,
-                ]
+            stage(60, "Preparing the verified equation payload")
+            profile = json.loads(
+                (downloads / "runtime-profile.json").read_text(encoding="utf-8")
             )
-            browser = next(
-                extracted.glob("Microsoft.WebView2.FixedVersionRuntime.*.x64")
-            )
-            shutil.copytree(browser, destination / "webview2", dirs_exist_ok=True)
-
-            stage(60, "Downloading equation and font packages")
-            extract_zip(downloads / "miktex.zip", downloads / "miktex-setup")
-            setup = next(
-                (downloads / "miktex-setup").rglob("miktexsetup_standalone.exe")
-            )
-            repository = downloads / "miktex-repository"
-            for attempt in range(3):
-                try:
-                    command(
-                        [
-                            setup,
-                            "--package-set=basic",
-                            f"--local-package-repository={repository}",
-                            "download",
-                        ]
-                    )
-                    break
-                except RuntimeError:
-                    if attempt == 2:
-                        raise
-                    say("Retrying equation package download...")
-            stage(80, "Installing the private equation renderer")
-            math = destination / "math"
-            command(
-                [
-                    setup,
-                    "--package-set=basic",
-                    f"--local-package-repository={repository}",
-                    f"--portable={math}",
-                    "install",
-                ]
-            )
-            bin_dir = math / "texmfs" / "install" / "miktex" / "bin" / "x64"
-            env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ["PATH"])
-            command(
-                [bin_dir / "initexmf.exe", "--set-config-value=[MPM]AutoInstall=1"], env
-            )
-            command([bin_dir / "initexmf.exe", "--dump=latex"], env)
-            rules = json.loads((downloads / "tex-commands.json").read_text())
-            for file in bin_dir.glob("*.exe"):
-                keep = file.stem in rules["keep"] or (
-                    file.stem.startswith("miktex-") and file.stem not in rules["gui"]
+            if profile.get("webview2") != "evergreen" or profile.get("math") not in {
+                "minimal",
+                "full",
+                "none",
+            }:
+                raise RuntimeError("Unsupported runtime profile")
+            math_inventory = None
+            versions = {}
+            if profile["math"] != "none":
+                math = destination / "math"
+                extract_zip(downloads / "math-runtime.zip", math)
+                math_inventory = verify_math_payload(
+                    math, downloads / "math-inventory.json"
                 )
-                if not keep:
-                    if not file.resolve().is_relative_to(math.resolve()):
-                        raise RuntimeError("Unsafe math component path")
-                    file.unlink()
+                bin_dir = math / "texmfs" / "install" / "miktex" / "bin" / "x64"
+                env = dict(
+                    os.environ, PATH=str(bin_dir) + os.pathsep + os.environ["PATH"]
+                )
+                versions = verify_math_engines(
+                    bin_dir, env, downloads / "tex-native-lock.json"
+                )
 
             stage(92, "Recording installed tool versions and package snapshot")
-            versions = verify_math_engines(
-                bin_dir, env, downloads / "tex-native-lock.json"
-            )
             provenance = {
                 "schema": 1,
                 "downloads": json.loads((downloads / "downloads.json").read_text()),
                 "requirements_sha256": hashlib.sha256(
                     (downloads / "requirements-online.txt").read_bytes()
                 ).hexdigest(),
-                "math_warning": "MiKTeX basic packages were retrieved from a mutable upstream repository. This inventory records this installation; it is not a pinned reproducible repository snapshot.",
-                "math_inventory": inventory(math),
+                "runtime_profile": profile,
+                "math_inventory": math_inventory,
                 "verified_math_engines": versions,
             }
             (destination / "INSTALLED-RUNTIME-PROVENANCE.json").write_text(
@@ -298,12 +264,13 @@ def main():
                 [
                     runtime / "python.exe",
                     "-c",
-                    'import manim, webview, av; assert manim.__version__ == "0.21.0"',
+                    'import manim, webview, av, typst; assert manim.__version__ == "0.21.0"; assert typst.compile(b"$x^2$", format="svg").startswith(b"<svg")',
                 ]
             )
             # The verified private audio tools ship in the installer's core files.
-            command([bin_dir / "latex.exe", "--version"], env)
-            command([bin_dir / "dvisvgm.exe", "--version"], env)
+            if profile["math"] != "none":
+                command([bin_dir / "latex.exe", "--version"], env)
+                command([bin_dir / "dvisvgm.exe", "--version"], env)
             stage(100, "All tools are ready. Installing Manim Studio...")
         except Exception as error:
             say("ERROR|" + str(error).replace("\n", " ")[:800])

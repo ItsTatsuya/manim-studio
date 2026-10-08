@@ -1,37 +1,49 @@
 """Build the small online installer after packaging/build.py prepares the app."""
 
 import json
+import argparse
+from pathlib import Path
 import shutil
 import subprocess
+from zipfile import ZipFile, ZIP_DEFLATED
 
 from build import (
     ROOT,
     CACHE,
     DIST,
-    BUNDLE,
     VERSION,
-    TEX_COMMANDS,
-    GUI_COMMANDS,
     payload_path_length,
 )
 from provenance import build_source_wheels, locked_requirements, write_checksums
 
 
 def main():
-    stage = CACHE / "online-stage"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output-dir", type=Path, default=DIST)
+    args = parser.parse_args()
+    output = args.output_dir.resolve()
+    if not output.is_relative_to(DIST.resolve()):
+        raise RuntimeError("Online build output must stay within dist")
+    bundle = output / "Manim Studio Portable"
+    metadata = json.loads((bundle / "standalone.json").read_text(encoding="utf-8"))
+    if metadata.get("webview2") != "evergreen":
+        raise RuntimeError("Online installer requires an Evergreen bundle")
+    stage = CACHE / "online-stage" / output.relative_to(DIST.resolve())
+    if stage == CACHE / "online-stage":
+        stage = stage / "default"
     if stage.exists():
-        if stage.resolve().parent != CACHE.resolve():
+        if not stage.resolve().is_relative_to((CACHE / "online-stage").resolve()):
             raise RuntimeError("Unsafe stage path")
         shutil.rmtree(stage)
     (stage / "core").mkdir(parents=True)
     shutil.copytree(
-        BUNDLE / "app",
+        bundle / "app",
         stage / "core" / "app",
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
-    shutil.copytree(BUNDLE / "tools", stage / "core" / "tools")
+    shutil.copytree(bundle / "tools", stage / "core" / "tools")
     shutil.copytree(
-        BUNDLE / "licenses",
+        bundle / "licenses",
         stage / "core" / "licenses",
         ignore=shutil.ignore_patterns("ffmpeg-9.0.2.tar.xz"),
     )
@@ -45,7 +57,7 @@ def main():
         "THIRD-PARTY-NOTICES.txt",
         "BUILD-PROVENANCE.json",
     ):
-        shutil.copy2(BUNDLE / name, stage / "core" / name)
+        shutil.copy2(bundle / name, stage / "core" / name)
     notice = stage / "core" / "THIRD-PARTY-NOTICES.txt"
     notice.write_text(
         notice.read_text(encoding="utf-8").replace(
@@ -54,39 +66,64 @@ def main():
         ),
         encoding="utf-8",
     )
-    shutil.copy2(BUNDLE / "LICENSE", stage / "core" / "LICENSE")
-    shutil.copy2(BUNDLE / "README.md", stage / "core" / "README.md")
-    if (BUNDLE / "docs").is_dir():
+    shutil.copy2(bundle / "LICENSE", stage / "core" / "LICENSE")
+    shutil.copy2(bundle / "README.md", stage / "core" / "README.md")
+    if (bundle / "docs").is_dir():
         shutil.copytree(
-            BUNDLE / "docs",
+            bundle / "docs",
             stage / "core" / "docs",
             ignore=shutil.ignore_patterns("*.md"),
         )
     (stage / "core" / "READ ME.txt").write_text(
         f"MANIM STUDIO {VERSION}\n\nOpen Manim Studio from the Start menu or Manim Studio.exe.\n"
         "Setup downloaded and prepared all rendering tools. No commands are needed.\n"
-        "Standard animations and equations now work offline.\n\n"
-        "Paste a complete Manim script, pick a scene, then click Render animation.\n"
+        + (
+            "Standard animations and Typst equations work offline; Tex/MathTex need an external LaTeX installation.\n\n"
+            if metadata["math"] == "none"
+            else "Standard animations, LaTeX and Typst equations now work offline.\n\n"
+        )
+        + "Paste a complete Manim script, pick a scene, then click Render animation.\n"
         "The small tour points to each button. Help & quick tour replays it.\n"
         "Your drafts, assets and renders are kept in your local app data:\n"
         "%LOCALAPPDATA%/ManimStudio/Data. They survive app upgrades and uninstalling.\n"
     )
     shutil.copy2(ROOT / "packaging" / "bootstrap.py", stage / "bootstrap.py")
+    (stage / "runtime-profile.json").write_text(
+        json.dumps(metadata) + "\n", encoding="utf-8"
+    )
+    for name in ("tex-native-lock.json", "math-inventory.json"):
+        original = bundle / "app" / name
+        if original.is_file():
+            shutil.copy2(original, stage / name)
+        else:
+            (stage / name).write_text("{}\n", encoding="utf-8")
+    with ZipFile(
+        stage / "math-runtime.zip", "w", ZIP_DEFLATED, compresslevel=9
+    ) as archive:
+        if (bundle / "math").is_dir():
+            for file in (bundle / "math").rglob("*"):
+                if (
+                    file.is_file()
+                    and "__pycache__" not in file.parts
+                    and file.suffix != ".pyc"
+                ):
+                    archive.write(file, file.relative_to(bundle / "math"))
     shutil.copy2(
-        ROOT / "packaging" / "tex-native-lock.json", stage / "tex-native-lock.json"
+        bundle / "tools/MicrosoftEdgeWebview2Setup.exe",
+        stage / "MicrosoftEdgeWebview2Setup.exe",
     )
     downloads = [
         item
         for item in json.loads(
             (ROOT / "packaging" / "downloads.json").read_text(encoding="utf-8")
         )
-        if not item["name"].startswith("ffmpeg")
+        if item["name"] in {"python.zip", "pip.whl"}
     ]
     (stage / "downloads.json").write_text(
         json.dumps(downloads, indent=2) + "\n", encoding="utf-8"
     )
     (stage / "vc").mkdir()
-    for file in (BUNDLE / "runtime").glob("*140*.dll"):
+    for file in (bundle / "runtime").glob("*140*.dll"):
         shutil.copy2(file, stage / "vc" / file.name)
     (stage / "wheels").mkdir()
     # These two small pure-Python packages publish only source archives. Build
@@ -101,14 +138,11 @@ def main():
         {
             "edition": "online",
             "source_built_wheels": built_wheels,
-            "math_warning": "MiKTeX setup utility is pinned; its basic package repository is mutable and the installed snapshot is inventoried during setup.",
+            "math_warning": "The selected math payload is embedded from the verified offline snapshot and checked against its complete inventory during setup.",
         }
     )
     provenance_path.write_text(
         json.dumps(provenance, indent=2) + "\n", encoding="utf-8"
-    )
-    (stage / "tex-commands.json").write_text(
-        json.dumps({"keep": sorted(TEX_COMMANDS), "gui": sorted(GUI_COMMANDS)})
     )
     (stage / "downloads.iss").write_text(
         "\n".join(
@@ -121,12 +155,15 @@ def main():
             str(CACHE / "inno" / "ISCC.exe"),
             f"/DStageDir={stage}",
             f"/DPayloadPathLength={payload_path_length(stage / 'core')}",
+            f"/DOutputDir={output}",
+            f"/DAppVersion={VERSION}",
+            f"/DPruneRuntime={output / 'prune-runtime.iss'}",
             str(ROOT / "packaging" / "online.iss"),
         ],
         check=True,
     )
-    write_checksums(DIST, VERSION)
-    print("Online installer:", DIST / f"Manim-Studio-{VERSION}-Setup-x64.exe")
+    write_checksums(output, VERSION)
+    print("Online installer:", output / f"Manim-Studio-{VERSION}-Setup-x64.exe")
 
 
 if __name__ == "__main__":

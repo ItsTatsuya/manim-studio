@@ -1,12 +1,13 @@
 [project]
 name = "manim-studio"
-version = "1.0.0"
+version = "1.1.0"
 description = "Standalone Manim Studio with a local script editor and video renderer"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.142.2",
     "manim==0.21.0",
     "pywebview>=6.2.1 ; sys_platform == 'win32'",
+    "typst==0.15.0",
     "uvicorn>=0.54.0",
 ]
 

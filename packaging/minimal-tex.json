@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "description": "Standard latex/pdflatex to SVG engines with native dependency closure; TeX macros and fonts retained",
+  "roots": [
+    "latex.exe", "pdflatex.exe", "pdftex.exe", "dvisvgm.exe", "initexmf.exe",
+    "mpm.exe", "miktex.exe", "kpsewhich.exe", "findtexmf.exe", "makefmt.exe",
+    "makebase.exe", "makepk.exe", "maketfm.exe", "mf.exe", "updmap.exe",
+    "texhash.exe", "fc-cache.exe", "fc-list.exe", "fc-match.exe", "mgsdll64.dll",
+    "miktex-makefmt.exe", "miktex-makebase.exe", "miktex-makepk.exe",
+    "miktex-maketfm.exe", "miktex-makemf.exe", "miktex-mf.exe", "miktex-pdftex.exe"
+  ],
+  "excluded_prefixes": [
+    "texmfs/install/executables/windows-x64/biber/",
+    "texmfs/install/hunspell/",
+    "texmfs/install/tex4ht/",
+    "texmfs/install/doc/"
+  ],
+  "limitations": [
+    "XeLaTeX, LuaLaTeX, bibliography processing and publishing utilities are not bundled; use a full math profile or external tools for these workflows."
+  ]
+}
