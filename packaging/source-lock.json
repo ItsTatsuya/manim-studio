@@ -1,0 +1,535 @@
+{
+  "schema": 1,
+  "release_version": "1.0.0",
+  "recipe_origin": {
+    "commit": "bac889417e26be29615cb6a3f38318151fed55cd",
+    "path": "scripts/pkg.py"
+  },
+  "sources": [
+    {
+      "component": "pyav-ffmpeg-build",
+      "version": "9.0.2-1",
+      "commit": "bac889417e26be29615cb6a3f38318151fed55cd",
+      "filename": "pyav-ffmpeg-bac889417e26be29615cb6a3f38318151fed55cd.tar.gz",
+      "url": "https://codeload.github.com/PyAV-Org/pyav-ffmpeg/tar.gz/bac889417e26be29615cb6a3f38318151fed55cd",
+      "sha256": "18cb507f2651902bbd824aec838262a6ac2c85a9883b629360322acadd4c4bfd",
+      "hash_origin": "Archive observed at the reviewed immutable upstream commit"
+    },
+    {
+      "component": "miktex",
+      "version": "26.5",
+      "commit": "77333fa300a9675ac3fdba45528a05bc3bff975d",
+      "filename": "miktex-77333fa300a9675ac3fdba45528a05bc3bff975d.tar.gz",
+      "url": "https://codeload.github.com/MiKTeX/miktex/tar.gz/77333fa300a9675ac3fdba45528a05bc3bff975d",
+      "sha256": "e75494c68bffa95ee9c2790f3cf51c64a8fbcedad3143e26a8dfc14efc330549",
+      "hash_origin": "Archive observed at the reviewed immutable upstream commit"
+    },
+    {
+      "component": "ghostpdl",
+      "version": "9.25",
+      "filename": "ghostpdl-9.25.tar.gz",
+      "url": "https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs925/ghostpdl-9.25.tar.gz",
+      "sha256": "784531e81f144c0f703a0f079e6fd1522eabb97b3a0670a92bdd1f39bf201d99"
+    },
+    {
+      "component": "w64devkit-source",
+      "version": "2.10.0",
+      "filename": "w64devkit-2.10.0-source.tar",
+      "url": "https://github.com/skeeto/w64devkit/releases/download/v2.10.0/source.tar",
+      "sha256": "1e7a789bbc3ec58a2717b7a9069acec6a5abc58e38fa3a4dc801f22fc986e3a4",
+      "hash_origin": "Upstream GitHub release asset SHA256",
+      "scope": "Build toolchain sources, including GCC/MinGW runtime licensing"
+    },
+    {
+      "component": "pango-build",
+      "version": "1.58.2",
+      "commit": "0dce9785ea638733764aebbd60b134387d8b44d8",
+      "filename": "pango-build-0dce9785ea638733764aebbd60b134387d8b44d8.tar.gz",
+      "url": "https://codeload.github.com/naveen521kk/pango-build/tar.gz/0dce9785ea638733764aebbd60b134387d8b44d8",
+      "sha256": "25e483bb0ef52e6e103852fb33a8143f12b5db1dc5419ca49173bb5d8bd1eb64",
+      "hash_origin": "Archive observed at the reviewed upstream commit or exact distributor source-package version"
+    },
+    {
+      "component": "cairo-win-build",
+      "version": "1.18.6",
+      "commit": "3a9a75de8f07b46430f9ccf477950f252790b8f4",
+      "filename": "cairo-win-build-3a9a75de8f07b46430f9ccf477950f252790b8f4.tar.gz",
+      "url": "https://codeload.github.com/pygobject/cairo-win-build/tar.gz/3a9a75de8f07b46430f9ccf477950f252790b8f4",
+      "sha256": "c9b3e27c65cb0282591e5e39de833824207acb3d54e87662bade1c3cd562140c",
+      "hash_origin": "Archive observed at the reviewed upstream commit or exact distributor source-package version"
+    },
+    {
+      "component": "manimpango-build",
+      "version": "0.7.0",
+      "commit": "035a36336974aa13fbc26d288b23de6c38e942f1",
+      "filename": "manimpango-build-035a36336974aa13fbc26d288b23de6c38e942f1.tar.gz",
+      "url": "https://codeload.github.com/ManimCommunity/ManimPango/tar.gz/035a36336974aa13fbc26d288b23de6c38e942f1",
+      "scope": "Original Windows wheel CI and static native download/relinking recipe, omitted from PyPI sdist",
+      "sha256": "53c5893e8bab6ce83861b8d55c3a1e3c2768027ae7a59e463c73767a5495b26e",
+      "hash_origin": "Archive observed at the reviewed upstream commit or exact distributor source-package version"
+    },
+    {
+      "component": "gvdb",
+      "commit": "2b42fc75f09dbe1cd1057580b5782b08f2dcb400",
+      "filename": "gvdb-2b42fc75f09dbe1cd1057580b5782b08f2dcb400.tar.gz",
+      "url": "https://codeload.github.com/GNOME/gvdb/tar.gz/2b42fc75f09dbe1cd1057580b5782b08f2dcb400",
+      "scope": "GNOME official mirror of the exact GLib vendored GVDB revision",
+      "sha256": "069a00aa1fc893f18423602f4e095583be5a220429f6e8a58d70511490b4b019",
+      "hash_origin": "Archive observed at the reviewed upstream commit or exact distributor source-package version"
+    },
+    {
+      "component": "msys2-gcc",
+      "version": "16.1.0-5",
+      "filename": "mingw-w64-gcc-16.1.0-5.src.tar.zst",
+      "url": "https://repo.msys2.org/mingw/sources/mingw-w64-gcc-16.1.0-5.src.tar.zst",
+      "scope": "Complete MSYS2 source-only package: upstream sources, PKGBUILD and downstream patches",
+      "sha256": "947166ed372d28ab8ffa25a66bc5e37a60a42e96a686424ce58cad304fcaea15",
+      "hash_origin": "Archive observed at the reviewed upstream commit or exact distributor source-package version"
+    },
+    {
+      "component": "msys2-libiconv",
+      "version": "1.19-1",
+      "filename": "mingw-w64-libiconv-1.19-1.src.tar.zst",
+      "url": "https://repo.msys2.org/mingw/sources/mingw-w64-libiconv-1.19-1.src.tar.zst",
+      "scope": "Complete MSYS2 source-only package: upstream sources, PKGBUILD and downstream patches",
+      "sha256": "74428280c17094da5b702c29b2e1a0abae59556ea5dfdd65705cc8ccc1e000fb",
+      "hash_origin": "Archive observed at the reviewed upstream commit or exact distributor source-package version"
+    },
+    {
+      "component": "msys2-winpthreads",
+      "version": "14.0.0.r92.g818fa6510-1",
+      "filename": "mingw-w64-winpthreads-14.0.0.r92.g818fa6510-1.src.tar.zst",
+      "url": "https://repo.msys2.org/mingw/sources/mingw-w64-winpthreads-14.0.0.r92.g818fa6510-1.src.tar.zst",
+      "scope": "Complete MSYS2 source-only package: upstream sources, PKGBUILD and downstream patches",
+      "sha256": "735596688e3a141240488a0146fa10ce93c7c60469c583efebc18329921c42fe",
+      "hash_origin": "Archive observed at the reviewed upstream commit or exact distributor source-package version"
+    },
+    {
+      "component": "alsa-lib",
+      "filename": "alsa-lib-alsa-lib-1.2.14.tar.bz2",
+      "url": "https://www.alsa-project.org/files/pub/lib/alsa-lib-1.2.14.tar.bz2",
+      "sha256": "be9c88a0b3604367dd74167a2b754a35e142f670292ae47a2fdef27a2ee97a32",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "amf-headers",
+      "filename": "amf-headers-AMF-headers-v1.5.2.tar.gz",
+      "url": "https://github.com/GPUOpen-LibrariesAndSDKs/AMF/releases/download/v1.5.2/AMF-headers-v1.5.2.tar.gz",
+      "sha256": "d3c12eb324edf05e214608b6a395a51dd95770ed9d45520185d6c3a206811c99",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "dav1d",
+      "filename": "dav1d-dav1d-1.5.4.tar.bz2",
+      "url": "https://code.videolan.org/videolan/dav1d/-/archive/1.5.4/dav1d-1.5.4.tar.bz2",
+      "sha256": "2abfb0c89212e6e4733a54e0ae509ec00a5b845a6360946f918806e14aedb011",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "ffmpeg",
+      "filename": "ffmpeg-ffmpeg-9.0.2.tar.xz",
+      "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
+      "sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "gmp",
+      "filename": "gmp-gmp-6.3.0.tar.xz",
+      "url": "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz",
+      "sha256": "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "gnutls",
+      "filename": "gnutls-gnutls-3.8.13.tar.xz",
+      "url": "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/gnutls-3.8.13.tar.xz",
+      "sha256": "ffed8ec1bf09c2426d4f14aae377de4753b53e537d685e604e99a8b16ca9c97e",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "lamer",
+      "filename": "lamer-lamer-3.101.0.tar.gz",
+      "url": "https://github.com/basswood-io/lamer/archive/refs/tags/v3.101.0.tar.gz",
+      "sha256": "81839b16fdc401e20b73389d05f32a7656008f43bcb960feff290d6f08fc109e",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "libsvtav1",
+      "filename": "libsvtav1-SVT-AV1-v4.2.0.tar.bz2",
+      "url": "https://gitlab.com/AOMediaCodec/SVT-AV1/-/archive/v4.2.0/SVT-AV1-v4.2.0.tar.bz2",
+      "sha256": "512f2ea5649e3e76c2dddcc25c2556fb67a9582baaab207c9c96161c94659dad",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "libvmaf",
+      "filename": "libvmaf-vmaf-3.2.1.tar.gz",
+      "url": "https://github.com/Netflix/vmaf/archive/refs/tags/v3.2.1.tar.gz",
+      "sha256": "5df7386911bc15fd1ca783132528748d219768ae4fc5f8e0b61184f041648092",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "libvpl",
+      "filename": "libvpl-v2.16.0.tar.gz",
+      "url": "https://github.com/intel/libvpl/archive/refs/tags/v2.16.0.tar.gz",
+      "sha256": "d60931937426130ddad9f1975c010543f0da99e67edb1c6070656b7947f633b6",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "nasm",
+      "filename": "nasm-nasm-2.16.03.tar.xz",
+      "url": "https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/nasm-2.16.03.tar.xz",
+      "sha256": "1412a1c760bbd05db026b6c0d1657affd6631cd0a63cddb6f73cc6d4aa616148",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "nettle",
+      "filename": "nettle-nettle-4.0.tar.gz",
+      "url": "https://ftp.gnu.org/gnu/nettle/nettle-4.0.tar.gz",
+      "sha256": "3addbc00da01846b232fb3bc453538ea5468da43033f21bb345cb1e9073f5094",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "nv-codec-headers",
+      "filename": "nv-codec-headers-n13.0.19.0.tar.gz",
+      "url": "https://github.com/FFmpeg/nv-codec-headers/archive/refs/tags/n13.0.19.0.tar.gz",
+      "sha256": "86d15d1a7c0ac73a0eafdfc57bebfeba7da8264595bf531cf4d8db1c22940116",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "opus",
+      "filename": "opus-opus-1.6.1.tar.gz",
+      "url": "https://ftp.osuosl.org/pub/xiph/releases/opus/opus-1.6.1.tar.gz",
+      "sha256": "6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "png",
+      "filename": "png-libpng-1.6.58.tar.xz",
+      "url": "https://downloads.sourceforge.net/project/libpng/libpng16/1.6.58/libpng-1.6.58.tar.xz",
+      "sha256": "28eb403f51f0f7405249132cecfe82ea5c0ef97f1b32c5a65828814ae0d34775",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "unistring",
+      "filename": "unistring-libunistring-1.4.2.tar.gz",
+      "url": "https://ftp.gnu.org/gnu/libunistring/libunistring-1.4.2.tar.gz",
+      "sha256": "e82664b170064e62331962126b259d452d53b227bb4a93ab20040d846fec01d8",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "vpx",
+      "filename": "vpx-vpx-1.17.0.tar.gz",
+      "url": "https://github.com/webmproject/libvpx/archive/refs/tags/v1.17.0.tar.gz",
+      "sha256": "1020f184046187baa2985dbde38e0691f49c44088bca7a1842b0236c6081dc0a",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "webp",
+      "filename": "webp-webp-1.6.0.tar.gz",
+      "url": "https://github.com/webmproject/libwebp/archive/refs/tags/v1.6.0.tar.gz",
+      "sha256": "93a852c2b3efafee3723efd4636de855b46f9fe1efddd607e1f42f60fc8f2136",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "x264",
+      "filename": "x264-x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2",
+      "url": "https://code.videolan.org/videolan/x264/-/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2",
+      "sha256": "6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "x265",
+      "filename": "x265-x265_4.3.tar.gz",
+      "url": "https://github.com/Multicorewareinc/x265/releases/download/4.3/x265_4.3.tar.gz",
+      "sha256": "83c53e4c8bbb8f1e33ed59e10a7d621d1d7801ca853910c3eb41f038b8ffb121",
+      "hash_origin": "pyav-ffmpeg pinned scripts/pkg.py",
+      "scope": "Includes a superset of Windows sources, including optional Linux components"
+    },
+    {
+      "component": "pango-build-cairo-source",
+      "filename": "pango-build-cairo-1.18.6.tar.xz",
+      "url": "https://www.cairographics.org/releases/cairo-1.18.6.tar.xz",
+      "sha256": "1c767308174337a74694da0f3ec069c271452163a1ef4540964c50c301f157d4",
+      "fallback_url": null,
+      "hash_origin": "pango-build pinned pango-build/subprojects/cairo.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-expat-source",
+      "filename": "pango-build-expat-2.8.4.tar.xz",
+      "url": "https://github.com/libexpat/libexpat/releases/download/R_2_8_4/expat-2.8.4.tar.xz",
+      "sha256": "656ae1cc8da3b4ea513bb4e254f33e6243938084c0ec6239da873376b09985a7",
+      "fallback_url": "https://wrapdb.mesonbuild.com/v2/expat_2.8.4-1/get_source/expat-2.8.4.tar.xz",
+      "hash_origin": "pango-build pinned pango-build/subprojects/expat.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-expat-patch",
+      "filename": "pango-build-expat_2.8.4-1_patch.zip",
+      "url": "https://github.com/mesonbuild/wrapdb/releases/download/expat_2.8.4-1/expat_2.8.4-1_patch.zip",
+      "sha256": "221c537a6cfd8d55ea2d41600ee7f32d8c0659cf6e41511e9e7a2f294b21cb92",
+      "fallback_url": "https://github.com/mesonbuild/wrapdb/releases/download/expat_2.8.4-1/expat_2.8.4-1_patch.zip",
+      "hash_origin": "pango-build pinned pango-build/subprojects/expat.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-fontconfig-source",
+      "filename": "pango-build-fontconfig-2.18.3.tar.xz",
+      "url": "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/2.18.3/fontconfig-2.18.3.tar.xz",
+      "sha256": "4f7b554a38cdf78c033f666c8871f3749e14a094f65a07f630c91ed0b43d35e3",
+      "fallback_url": "https://wrapdb.mesonbuild.com/v2/fontconfig_2.18.3-1/get_source/fontconfig-2.18.3.tar.xz",
+      "hash_origin": "pango-build pinned pango-build/subprojects/fontconfig.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-freetype2-source",
+      "filename": "pango-build-freetype-2.14.3.tar.xz",
+      "url": "https://download.savannah.gnu.org/releases/freetype/freetype-2.14.3.tar.xz",
+      "sha256": "36bc4f1cc413335368ee656c42afca65c5a3987e8768cc28cf11ba775e785a5f",
+      "fallback_url": "https://wrapdb.mesonbuild.com/v2/freetype2_2.14.3-1/get_source/freetype-2.14.3.tar.xz",
+      "hash_origin": "pango-build pinned pango-build/subprojects/freetype2.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-fribidi-source",
+      "filename": "pango-build-fribidi-1.0.17.tar.xz",
+      "url": "https://github.com/fribidi/fribidi/releases/download/v1.0.17/fribidi-1.0.17.tar.xz",
+      "sha256": "6949dcde27d41cebad1fd741fcafc36d55a1020d2d872d4a6eb3914caabbada2",
+      "fallback_url": "https://wrapdb.mesonbuild.com/v2/fribidi_1.0.17-1/get_source/fribidi-1.0.17.tar.xz",
+      "hash_origin": "pango-build pinned pango-build/subprojects/fribidi.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-glib-source",
+      "filename": "pango-build-glib-2.90.0.tar.xz",
+      "url": "https://download.gnome.org/sources/glib/2.90/glib-2.90.0.tar.xz",
+      "sha256": "17d15cac2af80a33271127408e0abc2748eb297c595c2a26409e81e14e7d1b8f",
+      "fallback_url": "https://wrapdb.mesonbuild.com/v2/glib_2.90.0-1/get_source/glib-2.90.0.tar.xz",
+      "hash_origin": "pango-build pinned pango-build/subprojects/glib.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-harfbuzz-source",
+      "filename": "pango-build-harfbuzz-13.0.1.tar.xz",
+      "url": "https://github.com/harfbuzz/harfbuzz/releases/download/13.0.1/harfbuzz-13.0.1.tar.xz",
+      "sha256": "3553d943401c34ab9b8c75f35cdb8452ca660233b0e9d4a22395ce5245484bd7",
+      "fallback_url": "https://wrapdb.mesonbuild.com/v2/harfbuzz_13.0.1-1/get_source/harfbuzz-13.0.1.tar.xz",
+      "hash_origin": "pango-build pinned pango-build/subprojects/harfbuzz.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-libffi-source",
+      "filename": "pango-build-libffi-3.8.0.tar.gz",
+      "url": "https://github.com/libffi/libffi/releases/download/v3.8.0/libffi-3.8.0.tar.gz",
+      "sha256": "7da3e2d9a171eb0a038f592ecad3ff2bb2550f3496d87b3b29ad0cf4430c0db4",
+      "fallback_url": "https://wrapdb.mesonbuild.com/v2/libffi_3.8.0-1/get_source/libffi-3.8.0.tar.gz",
+      "hash_origin": "pango-build pinned pango-build/subprojects/libffi.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-libffi-patch",
+      "filename": "pango-build-libffi_3.8.0-1_patch.zip",
+      "url": "https://github.com/mesonbuild/wrapdb/releases/download/libffi_3.8.0-1/libffi_3.8.0-1_patch.zip",
+      "sha256": "9674679806598d276ee49ecdf27f1b3eb62fbf4776723ef67f0e14f9200a6f6d",
+      "fallback_url": "https://github.com/mesonbuild/wrapdb/releases/download/libffi_3.8.0-1/libffi_3.8.0-1_patch.zip",
+      "hash_origin": "pango-build pinned pango-build/subprojects/libffi.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-libpng-source",
+      "filename": "pango-build-libpng-1.6.58.tar.gz",
+      "url": "https://github.com/pnggroup/libpng/archive/v1.6.58.tar.gz",
+      "sha256": "a9d4df463d36a6e5f9c29bd6f4967312d17e996c1854f3511f833924eb1993cf",
+      "fallback_url": "https://wrapdb.mesonbuild.com/v2/libpng_1.6.58-1/get_source/libpng-1.6.58.tar.gz",
+      "hash_origin": "pango-build pinned pango-build/subprojects/libpng.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-libpng-patch",
+      "filename": "pango-build-libpng_1.6.58-1_patch.zip",
+      "url": "https://github.com/mesonbuild/wrapdb/releases/download/libpng_1.6.58-1/libpng_1.6.58-1_patch.zip",
+      "sha256": "6e9c6120317d701a9e909eb11f473d129581b8c0b662d0c6ec6a06495c3c0e46",
+      "fallback_url": "https://github.com/mesonbuild/wrapdb/releases/download/libpng_1.6.58-1/libpng_1.6.58-1_patch.zip",
+      "hash_origin": "pango-build pinned pango-build/subprojects/libpng.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-pango-source",
+      "filename": "pango-build-pango-1.58.2.tar.xz",
+      "url": "https://download.gnome.org/sources/pango/1.58/pango-1.58.2.tar.xz",
+      "sha256": "342385b6ca3b7c73455d7c80a13b7dbe4489e00bc3bd4c5bd6ed4dce421e374a",
+      "fallback_url": null,
+      "hash_origin": "pango-build pinned pango-build/subprojects/pango.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-pcre2-source",
+      "filename": "pango-build-pcre2-10.48.tar.bz2",
+      "url": "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.48/pcre2-10.48.tar.bz2",
+      "sha256": "b6c68fdf6f3ac31388b50aa89ff0fc49c00c987c16e7b5146491d12003f2c8ed",
+      "fallback_url": "https://wrapdb.mesonbuild.com/v2/pcre2_10.48-1/get_source/pcre2-10.48.tar.bz2",
+      "hash_origin": "pango-build pinned pango-build/subprojects/pcre2.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-pcre2-patch",
+      "filename": "pango-build-pcre2_10.48-1_patch.zip",
+      "url": "https://github.com/mesonbuild/wrapdb/releases/download/pcre2_10.48-1/pcre2_10.48-1_patch.zip",
+      "sha256": "fbcc964804a921b02ea78fc0ff1558d5999b224db8361087828e30012023525c",
+      "fallback_url": "https://github.com/mesonbuild/wrapdb/releases/download/pcre2_10.48-1/pcre2_10.48-1_patch.zip",
+      "hash_origin": "pango-build pinned pango-build/subprojects/pcre2.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-pixman-source",
+      "filename": "pango-build-pixman-0.46.4.tar.gz",
+      "url": "https://www.cairographics.org/releases/pixman-0.46.4.tar.gz",
+      "sha256": "d09c44ebc3bd5bee7021c79f922fe8fb2fb57f7320f55e97ff9914d2346a591c",
+      "fallback_url": "https://github.com/mesonbuild/wrapdb/releases/download/pixman_0.46.4-1/pixman-0.46.4.tar.gz",
+      "hash_origin": "pango-build pinned pango-build/subprojects/pixman.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-proxy-libintl-source",
+      "filename": "pango-build-proxy-libintl-0.5.tar.gz",
+      "url": "https://github.com/frida/proxy-libintl/archive/refs/tags/0.5.tar.gz",
+      "sha256": "f7a1cbd7579baaf575c66f9d99fb6295e9b0684a28b095967cfda17857595303",
+      "fallback_url": "https://github.com/mesonbuild/wrapdb/releases/download/proxy-libintl_0.5-1/proxy-libintl-0.5.tar.gz",
+      "hash_origin": "pango-build pinned pango-build/subprojects/proxy-libintl.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-zlib-source",
+      "filename": "pango-build-zlib-1.3.2.tar.xz",
+      "url": "https://zlib.net/zlib-1.3.2.tar.xz",
+      "sha256": "d7a0654783a4da529d1bb793b7ad9c3318020af77667bcae35f95d0e42a792f3",
+      "fallback_url": "https://wrapdb.mesonbuild.com/v2/zlib_1.3.2-1/get_source/zlib-1.3.2.tar.xz",
+      "hash_origin": "pango-build pinned pango-build/subprojects/zlib.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-zlib-patch",
+      "filename": "pango-build-zlib_1.3.2-1_patch.zip",
+      "url": "https://github.com/mesonbuild/wrapdb/releases/download/zlib_1.3.2-1/zlib_1.3.2-1_patch.zip",
+      "sha256": "5ae7a2e92f823df118cfb8c1b23d94e3117864392b3446581d669049b2fba6dd",
+      "fallback_url": "https://github.com/mesonbuild/wrapdb/releases/download/zlib_1.3.2-1/zlib_1.3.2-1_patch.zip",
+      "hash_origin": "pango-build pinned pango-build/subprojects/zlib.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pango-build-pkgconf-source",
+      "filename": "pango-build-pkgconf-3.0.7.tar.xz",
+      "url": "https://distfiles.ariadne.space/pkgconf/pkgconf-3.0.7.tar.xz",
+      "sha256": "c926ff491cbd9a331a589160811bd97ab1749b4d5198a519338f2cdfabe6940a",
+      "fallback_url": "https://wrapdb.mesonbuild.com/v2/pkgconf_3.0.7-1/get_source/pkgconf-3.0.7.tar.xz",
+      "hash_origin": "pango-build pinned pkgconf-build/subprojects/pkgconf.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "cairo-win-build-cairo-source",
+      "filename": "cairo-win-build-cairo-1.18.6.tar.gz",
+      "url": "https://cairographics.org/releases/cairo-1.18.6.tar.xz",
+      "sha256": "1c767308174337a74694da0f3ec069c271452163a1ef4540964c50c301f157d4",
+      "fallback_url": null,
+      "hash_origin": "cairo-win-build pinned cairo-build/subprojects/cairo.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "cairo-win-build-libpng-source",
+      "filename": "cairo-win-build-libpng-1.6.58.tar.gz",
+      "url": "https://github.com/pnggroup/libpng/archive/v1.6.58.tar.gz",
+      "sha256": "a9d4df463d36a6e5f9c29bd6f4967312d17e996c1854f3511f833924eb1993cf",
+      "fallback_url": "https://wrapdb.mesonbuild.com/v2/libpng_1.6.58-1/get_source/libpng-1.6.58.tar.gz",
+      "hash_origin": "cairo-win-build pinned cairo-build/subprojects/libpng.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "cairo-win-build-libpng-patch",
+      "filename": "cairo-win-build-libpng_1.6.58-1_patch.zip",
+      "url": "https://github.com/mesonbuild/wrapdb/releases/download/libpng_1.6.58-1/libpng_1.6.58-1_patch.zip",
+      "sha256": "6e9c6120317d701a9e909eb11f473d129581b8c0b662d0c6ec6a06495c3c0e46",
+      "fallback_url": "https://github.com/mesonbuild/wrapdb/releases/download/libpng_1.6.58-1/libpng_1.6.58-1_patch.zip",
+      "hash_origin": "cairo-win-build pinned cairo-build/subprojects/libpng.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "cairo-win-build-pixman-source",
+      "filename": "cairo-win-build-pixman-0.46.4.tar.gz",
+      "url": "https://www.cairographics.org/releases/pixman-0.46.4.tar.gz",
+      "sha256": "d09c44ebc3bd5bee7021c79f922fe8fb2fb57f7320f55e97ff9914d2346a591c",
+      "fallback_url": "https://github.com/mesonbuild/wrapdb/releases/download/pixman_0.46.4-1/pixman-0.46.4.tar.gz",
+      "hash_origin": "cairo-win-build pinned cairo-build/subprojects/pixman.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "cairo-win-build-zlib-source",
+      "filename": "cairo-win-build-zlib-1.3.2.tar.xz",
+      "url": "https://zlib.net/zlib-1.3.2.tar.xz",
+      "sha256": "d7a0654783a4da529d1bb793b7ad9c3318020af77667bcae35f95d0e42a792f3",
+      "fallback_url": "https://wrapdb.mesonbuild.com/v2/zlib_1.3.2-1/get_source/zlib-1.3.2.tar.xz",
+      "hash_origin": "cairo-win-build pinned cairo-build/subprojects/zlib.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "cairo-win-build-zlib-patch",
+      "filename": "cairo-win-build-zlib_1.3.2-1_patch.zip",
+      "url": "https://github.com/mesonbuild/wrapdb/releases/download/zlib_1.3.2-1/zlib_1.3.2-1_patch.zip",
+      "sha256": "5ae7a2e92f823df118cfb8c1b23d94e3117864392b3446581d669049b2fba6dd",
+      "fallback_url": "https://github.com/mesonbuild/wrapdb/releases/download/zlib_1.3.2-1/zlib_1.3.2-1_patch.zip",
+      "hash_origin": "cairo-win-build pinned cairo-build/subprojects/zlib.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "cairo-win-build-pkgconf-source",
+      "filename": "cairo-win-build-pkgconf-3.0.7.tar.xz",
+      "url": "https://distfiles.ariadne.space/pkgconf/pkgconf-3.0.7.tar.xz",
+      "sha256": "c926ff491cbd9a331a589160811bd97ab1749b4d5198a519338f2cdfabe6940a",
+      "fallback_url": "https://wrapdb.mesonbuild.com/v2/pkgconf_3.0.7-1/get_source/pkgconf-3.0.7.tar.xz",
+      "hash_origin": "cairo-win-build pinned pkgconf-build/subprojects/pkgconf.wrap",
+      "scope": "Static native libraries and their original Meson patches/build dependencies"
+    },
+    {
+      "component": "pyav",
+      "version": "19.0.1",
+      "filename": "pyav-19.0.1.tar.gz",
+      "url": "https://files.pythonhosted.org/packages/90/bc/a2a40e503250fe5d4174471911828f31658864eb69a8a7cb960c715e17b7/av-19.0.1.tar.gz",
+      "sha256": "08674930eaf1af78a3ed8f93d3ba49383323b3a867e84349d9c399e36f7497da",
+      "hash_origin": "uv.lock"
+    },
+    {
+      "component": "manimpango",
+      "version": "0.7.0",
+      "filename": "manimpango-0.7.0.tar.gz",
+      "url": "https://files.pythonhosted.org/packages/88/35/30bfde8a5fbb82392755d078e41d3f43b686fa2feb4f8c25c12435e23892/manimpango-0.7.0.tar.gz",
+      "sha256": "64330c360f5040ed356b9eb289d52e8ae8cbc3d9c39297c5e77522e1b417f1c7",
+      "hash_origin": "uv.lock"
+    },
+    {
+      "component": "pycairo",
+      "version": "1.29.2",
+      "filename": "pycairo-1.29.2.tar.gz",
+      "url": "https://files.pythonhosted.org/packages/bb/5e/19ab2572981a996ce96b853a189d2dcced40506b67d9555a7568457abcf2/pycairo-1.29.2.tar.gz",
+      "sha256": "3e69fff74fe64f5ba2dfa31f67c6bdf26413342574047437d2ac520d35e9a489",
+      "hash_origin": "uv.lock"
+    }
+  ]
+}

@@ -1,0 +1,792 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="studio-token" content="__STUDIO_TOKEN__" />
+    <title>Manim Studio · Create animation</title>
+    <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css?v=441ed9090552" />
+    <script>
+      try {
+        document.documentElement.dataset.theme =
+          localStorage.getItem("manim-theme") || "dark";
+      } catch {}
+    </script>
+    <script src="/static/vendor/editor.bundle.js?v=8e7e53d8f4a6" defer></script>
+    <script src="/static/app.js?v=e259f1897218" defer></script>
+    <script src="/static/workspace.js?v=73d7414e87ee" defer></script>
+    <script src="/static/updates.js?v=f7ec03efc02e" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#editor-panel">Skip to editor</a>
+    <svg class="icon-library" aria-hidden="true">
+      <defs>
+        <symbol id="i-search" viewBox="0 0 24 24">
+          <circle cx="10" cy="10" r="6" />
+          <path d="m15 15 6 6" />
+        </symbol>
+        <symbol id="i-play" viewBox="0 0 24 24">
+          <path d="m9 5 11 7-11 7z" />
+        </symbol>
+        <symbol id="i-code" viewBox="0 0 24 24">
+          <path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-14-2 18" />
+        </symbol>
+        <symbol id="i-grid" viewBox="0 0 24 24">
+          <rect x="3" y="3" width="7" height="7" rx="2" />
+          <rect x="14" y="3" width="7" height="7" rx="2" />
+          <rect x="3" y="14" width="7" height="7" rx="2" />
+          <rect x="14" y="14" width="7" height="7" rx="2" />
+        </symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v5l3 2" />
+        </symbol>
+        <symbol id="i-folder" viewBox="0 0 24 24">
+          <path d="M3 8V5h6l2 3h10v12H3z" />
+        </symbol>
+        <symbol id="i-help" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M9 9a3 3 0 0 1 6 0c0 2-3 2-3 4m0 3h.01" />
+        </symbol>
+        <symbol id="i-arrow" viewBox="0 0 24 24">
+          <path d="M5 12h14m-6-6 6 6-6 6" />
+        </symbol>
+        <symbol id="i-upload" viewBox="0 0 24 24">
+          <path d="M12 16V3m-5 5 5-5 5 5M4 16v5h16v-5" />
+        </symbol>
+        <symbol id="i-download" viewBox="0 0 24 24">
+          <path d="M12 3v13m-5-5 5 5 5-5M4 17v4h16v-4" />
+        </symbol>
+        <symbol id="i-check" viewBox="0 0 24 24">
+          <path d="m5 12 4 4L19 6" />
+        </symbol>
+        <symbol id="i-copy" viewBox="0 0 24 24">
+          <rect x="8" y="8" width="12" height="13" rx="2" />
+          <path d="M16 8V3H3v13h5" />
+        </symbol>
+        <symbol id="i-spark" viewBox="0 0 24 24">
+          <path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z" />
+        </symbol>
+        <symbol id="i-close" viewBox="0 0 24 24">
+          <path d="m6 6 12 12M6 18 18 6" />
+        </symbol>
+        <symbol id="i-refresh" viewBox="0 0 24 24">
+          <path d="M20 8a9 9 0 1 0 0 8m0-13v5h-5" />
+        </symbol>
+      </defs>
+    </svg>
+
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#workspace" title="Manim Studio workspace"
+          >Manim Studio</a
+        >
+        <div class="sidebar-label">Workspace</div>
+        <nav aria-label="Main navigation">
+          <button
+            class="nav-item active"
+            data-view="workspace"
+            aria-current="page"
+          >
+            <svg aria-hidden="true"><use href="#i-code" /></svg>Create animation
+          </button>
+          <button class="nav-item" data-view="history">
+            <svg aria-hidden="true"><use href="#i-clock" /></svg>My renders
+            <span id="history-count" class="nav-count">0</span>
+          </button>
+          <button class="nav-item" id="examples-button">
+            <svg aria-hidden="true"><use href="#i-grid" /></svg>Starter examples
+          </button>
+        </nav>
+        <div class="sidebar-bottom">
+          <button class="nav-item" id="open-outputs">
+            <svg aria-hidden="true"><use href="#i-folder" /></svg>Videos folder</button
+          ><button class="nav-item" id="open-assets">
+            <svg aria-hidden="true"><use href="#i-folder" /></svg>Assets folder</button
+          ><button class="nav-item" id="help-button">
+            <svg aria-hidden="true"><use href="#i-help" /></svg>Help & quick
+            tour
+          </button>
+        </div>
+      </aside>
+      <main>
+        <header class="topbar">
+          <h1 id="breadcrumb-current">Create animation</h1>
+          <div class="topbar-actions">
+            <button
+              class="button secondary updates-button"
+              id="updates-button"
+              aria-label="Updates"
+              title="Updates"
+            >
+              <svg aria-hidden="true"><use href="#i-download" /></svg
+              ><span class="updates-label">Updates</span
+              ><span
+                id="updates-badge"
+                class="updates-badge"
+                aria-hidden="true"
+                hidden
+              ></span>
+            </button>
+            <span
+              id="updates-notification"
+              class="updates-notification"
+              role="status"
+              aria-live="polite"
+            ></span>
+            <button
+              class="icon-button theme-toggle"
+              id="theme-button"
+              aria-label="Switch to light theme"
+              title="Switch to light theme"
+            >
+              <span aria-hidden="true">☼</span></button
+            ><button
+              class="icon-button mobile-help"
+              id="mobile-help"
+              aria-label="Help & quick tour"
+            >
+              <svg aria-hidden="true"><use href="#i-help" /></svg>
+            </button>
+          </div>
+        </header>
+        <section id="workspace-view" class="view">
+          <div class="pane-tabs" role="tablist" aria-label="Workspace panes">
+            <button
+              id="editor-tab"
+              role="tab"
+              aria-controls="editor-panel"
+              aria-selected="true"
+            >
+              Editor</button
+            ><button
+              id="preview-tab"
+              role="tab"
+              aria-controls="preview-panel"
+              aria-selected="false"
+            >
+              Preview
+            </button>
+          </div>
+          <div class="workspace-grid" data-pane="editor">
+            <section
+              class="panel editor-panel"
+              id="editor-panel"
+              tabindex="-1"
+              aria-labelledby="script-heading"
+            >
+              <div class="panel-heading">
+                <h2 id="script-heading">Script editor</h2>
+                <span id="script-filename">animation.py</span>
+              </div>
+              <div class="script-toolbar">
+                <div>
+                  <button class="button secondary" id="paste-button">
+                    <svg aria-hidden="true"><use href="#i-copy" /></svg
+                    >Paste</button
+                  ><button class="button secondary" id="import-button">
+                    <svg aria-hidden="true"><use href="#i-upload" /></svg>Import
+                    file</button
+                  ><input
+                    id="file-input"
+                    type="file"
+                    accept=".py,.txt"
+                    hidden
+                  /><button class="text-button" id="copy-script">Copy</button
+                  ><button
+                    class="text-button"
+                    id="format-script"
+                    title="Normalize indentation and trailing spaces"
+                  >
+                    Format
+                  </button>
+                </div>
+                <div class="editor-tools">
+                  <button
+                    class="icon-button"
+                    id="font-decrease"
+                    aria-label="Decrease editor font size"
+                    title="Decrease font size"
+                  >
+                    <svg aria-hidden="true" viewBox="0 0 24 24">
+                      <path d="M3 18 8 6l5 12M5 13h6m5-1h6" />
+                    </svg></button
+                  ><button
+                    class="icon-button"
+                    id="font-increase"
+                    aria-label="Increase editor font size"
+                    title="Increase font size"
+                  >
+                    <svg aria-hidden="true" viewBox="0 0 24 24">
+                      <path d="M3 18 8 6l5 12M5 13h6m5-1h6m-3-3v6" />
+                    </svg></button
+                  ><button
+                    class="icon-button"
+                    id="wrap-toggle"
+                    aria-label="Toggle word wrap"
+                    aria-pressed="false"
+                    title="Word wrap"
+                  >
+                    <span aria-hidden="true">↵</span></button
+                  ><button
+                    class="icon-button"
+                    id="find-button"
+                    aria-label="Find in script (Ctrl+F)"
+                    title="Find · Ctrl+F"
+                  >
+                    <svg aria-hidden="true"><use href="#i-search" /></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="editor-banner" id="editor-empty">
+                <span>Bring a script from your favorite AI.</span
+                ><button class="text-button" id="load-sample">
+                  Try an example</button
+                ><button class="text-button" id="banner-prompt">
+                  Copy starter prompt</button
+                ><button
+                  class="icon-button"
+                  id="dismiss-banner"
+                  aria-label="Dismiss starter help"
+                >
+                  ×
+                </button>
+              </div>
+              <div class="code-editor">
+                <div class="line-numbers" id="line-numbers" aria-hidden="true">
+                  1
+                </div>
+                <div class="code-area">
+                  <pre id="code-highlight" aria-hidden="true"></pre>
+                  <textarea
+                    id="script-input"
+                    aria-label="Manim Python script"
+                    spellcheck="false"
+                    autocapitalize="off"
+                    autocomplete="off"
+                    placeholder="# Paste your Manim script here"
+                    wrap="off"
+                  ></textarea>
+                </div>
+              </div>
+              <div class="editor-status">
+                <span id="script-status" role="status"
+                  >Add a script to begin</span
+                ><span class="cursor-status"
+                  ><span id="cursor-position">Ln 1, Col 1</span> ·
+                  <span id="line-count">1 line</span> · Python</span
+                >
+              </div>
+              <section
+                class="bottom-drawer"
+                id="log-panel"
+                aria-label="Diagnostics and render output"
+              >
+                <div class="drawer-heading">
+                  <div role="tablist" aria-label="Editor output">
+                    <button
+                      id="problems-tab"
+                      role="tab"
+                      aria-controls="problems-panel"
+                      aria-selected="true"
+                    >
+                      Problems <span id="problem-count">0</span></button
+                    ><button
+                      id="log-tab"
+                      role="tab"
+                      aria-controls="log-output"
+                      aria-selected="false"
+                    >
+                      Render log
+                    </button>
+                  </div>
+                  <span id="log-summary">No render yet</span
+                  ><button
+                    class="icon-button"
+                    id="drawer-toggle"
+                    aria-label="Collapse output drawer"
+                    aria-expanded="true"
+                    aria-controls="drawer-body"
+                  >
+                    ⌄
+                  </button>
+                </div>
+                <div id="drawer-body">
+                  <div
+                    id="problems-panel"
+                    role="tabpanel"
+                    aria-labelledby="problems-tab"
+                  >
+                    <div id="problem-list">
+                      <p class="problem-empty">No problems detected.</p>
+                    </div>
+                    <div class="error-card" id="error-card" hidden>
+                      <p id="error-text"></p>
+                      <button id="copy-error" class="text-button">
+                        Copy details for your AI
+                      </button>
+                    </div>
+                    <div id="validation-message" role="status" hidden></div>
+                  </div>
+                  <div
+                    id="log-output"
+                    role="tabpanel"
+                    aria-labelledby="log-tab"
+                    hidden
+                  >
+                    <pre id="render-log" tabindex="0" aria-label="Render log">
+Render output appears here.</pre>
+                  </div>
+                </div>
+              </section>
+            </section>
+            <div
+              class="split-divider"
+              id="split-divider"
+              role="separator"
+              aria-label="Resize editor and preview"
+              aria-orientation="vertical"
+              aria-valuemin="35"
+              aria-valuemax="70"
+              aria-valuenow="54"
+              tabindex="0"
+            ></div>
+            <section
+              class="panel preview-panel"
+              id="preview-panel"
+              aria-labelledby="preview-heading"
+            >
+              <div class="panel-heading">
+                <h2 id="preview-heading">Preview</h2>
+                <span class="preview-badge" id="preview-badge">MP4</span>
+              </div>
+              <div class="preview-content">
+                <div class="preview-screen" id="preview-screen">
+                  <div class="preview-placeholder" id="preview-placeholder">
+                    <svg aria-hidden="true"><use href="#i-play" /></svg>
+                    <h3>Render to see your animation</h3>
+                    <p>
+                      Choose a scene, resolution and frame rate, then select
+                      Render animation.
+                    </p>
+                  </div>
+                  <video
+                    id="video-player"
+                    controls
+                    playsinline
+                    preload="metadata"
+                    hidden
+                    aria-label="Rendered animation"
+                  ></video>
+                  <div class="render-overlay" id="render-overlay" hidden>
+                    <svg class="render-spinner" aria-hidden="true">
+                      <use href="#i-clock" />
+                    </svg>
+                    <h3 id="render-stage">Preparing render…</h3>
+                    <progress
+                      id="preview-progress"
+                      max="100"
+                      aria-label="Current animation progress"
+                    ></progress>
+                    <p id="render-elapsed">Starting your render</p>
+                    <button class="button secondary" id="cancel-button">
+                      Cancel render
+                    </button>
+                  </div>
+                </div>
+                <div class="playback-options" id="playback-options" hidden>
+                  <label><input id="loop-video" type="checkbox" />Loop</label
+                  ><label for="playback-speed">Speed</label
+                  ><select id="playback-speed">
+                    <option value="0.5">0.5×</option>
+                    <option value="1" selected>1×</option>
+                    <option value="1.5">1.5×</option>
+                    <option value="2">2×</option></select
+                  ><button class="text-button" id="fullscreen-video">
+                    Fullscreen
+                  </button>
+                </div>
+                <div class="preview-footer" id="preview-footer" hidden>
+                  <strong id="video-caption"></strong
+                  ><span id="video-meta"></span>
+                </div>
+                <div class="video-actions" id="video-actions" hidden>
+                  <button class="button secondary" id="save-library">
+                    <svg aria-hidden="true"><use href="#i-check" /></svg>Save to
+                    library</button
+                  ><a class="button secondary" id="download-video" download
+                    ><svg aria-hidden="true"><use href="#i-download" /></svg
+                    >Save video</a
+                  ><button class="text-button" id="show-video-folder">
+                    Open file location</button
+                  ><button class="text-button" id="higher-quality">
+                    Render at 1080p / 60 fps
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+          <div class="render-settings render-bar" id="render-settings">
+            <div class="name-field">
+              <label for="animation-name">Animation name</label
+              ><input
+                id="animation-name"
+                maxlength="100"
+                placeholder="Untitled animation"
+              />
+            </div>
+            <div class="scene-row" hidden>
+              <label for="scene-trigger">Scene</label
+              ><select id="scene-select" disabled hidden>
+                <option>Add a script to detect scenes</option></select
+              ><button
+                id="scene-trigger"
+                class="scene-trigger"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+                aria-controls="scene-list"
+                hidden
+              >
+                MainScene <span>⌄</span>
+              </button>
+              <div
+                id="scene-list"
+                role="listbox"
+                aria-label="Scenes"
+                hidden
+              ></div>
+            </div>
+            <div class="output-options resolution-options">
+              <label for="resolution-select">Resolution</label>
+              <select id="resolution-select" name="resolution">
+                <option value="854x480">854 × 480 · 480p</option>
+                <option value="1280x720">1280 × 720 · 720p</option>
+                <option value="1920x1080">1920 × 1080 · 1080p</option>
+                <option value="2560x1440">2560 × 1440 · 1440p</option>
+                <option value="3840x2160">3840 × 2160 · 4K</option>
+                <option value="720x1280">720 × 1280 · Portrait</option>
+                <option value="1080x1920">1080 × 1920 · Portrait</option>
+                <option value="1080x1080">1080 × 1080 · Square</option>
+                <option value="custom">Custom…</option>
+              </select>
+            </div>
+            <div class="output-options fps-options">
+              <label for="fps-select">Frame rate</label>
+              <select id="fps-select" name="fps">
+                <option value="15">15 fps</option>
+                <option value="24">24 fps</option>
+                <option value="25">25 fps</option>
+                <option value="29.97">29.97 fps</option>
+                <option value="30">30 fps</option>
+                <option value="50">50 fps</option>
+                <option value="59.94">59.94 fps</option>
+                <option value="60">60 fps</option>
+                <option value="120">120 fps</option>
+                <option value="custom">Custom…</option>
+              </select>
+            </div>
+            <button
+              id="advanced-button"
+              class="text-button"
+              popovertarget="advanced-popover"
+            >
+              Output info ⌄
+            </button>
+            <div class="render-action">
+              <button
+                id="render-button"
+                class="button primary render-button"
+                disabled
+                data-state="idle"
+              >
+                <svg aria-hidden="true"><use href="#i-play" /></svg
+                ><span>Render animation</span><kbd>Ctrl+Enter</kbd>
+              </button>
+            </div>
+          </div>
+          <div id="advanced-popover" class="advanced-popover" popover>
+            <h2>Output settings</h2>
+            <dl>
+              <div>
+                <dt>Format</dt>
+                <dd>MP4 · H.264</dd>
+              </div>
+              <div>
+                <dt>Background</dt>
+                <dd>From your script</dd>
+              </div>
+              <div>
+                <dt>Renderer</dt>
+                <dd>Cairo</dd>
+              </div>
+            </dl>
+            <p>
+              Choose resolution and frame rate independently. H.264 requires an
+              even number of pixels for both width and height. GIF, WebM and
+              transparency are not supported by this renderer interface.
+            </p>
+            <p>
+              <span id="render-estimate"
+                >Render time depends on your script and computer.</span
+              >
+            </p>
+          </div>
+        </section>
+        <section id="history-view" class="view" hidden>
+          <div class="page-heading">
+            <div>
+              <h2>My renders</h2>
+              <p>Completed videos and their scripts are saved automatically.</p>
+            </div>
+            <button class="button secondary" id="history-folder">
+              Open folder
+            </button>
+          </div>
+          <div id="history-list" class="history-grid"></div>
+          <div id="history-empty" class="history-empty">
+            <h2>No completed renders yet</h2>
+            <p>Completed animations will appear here.</p>
+            <button class="button secondary" id="history-create">
+              Create animation
+            </button>
+          </div>
+        </section>
+      </main>
+    </div>
+    <dialog
+      id="resolution-dialog"
+      class="output-dialog"
+      aria-labelledby="resolution-title"
+    >
+      <form id="resolution-form">
+        <h2 id="resolution-title">Custom resolution</h2>
+        <p id="resolution-hint">
+          Enter width and height in pixels. Both must be even whole numbers from
+          2 to 32766.
+        </p>
+        <div class="output-fields">
+          <div>
+            <label for="custom-width">Width</label
+            ><input
+              id="custom-width"
+              type="number"
+              min="2"
+              max="32766"
+              step="2"
+              required
+              aria-describedby="resolution-hint"
+              autofocus
+            />
+          </div>
+          <div>
+            <label for="custom-height">Height</label
+            ><input
+              id="custom-height"
+              type="number"
+              min="2"
+              max="32766"
+              step="2"
+              required
+              aria-describedby="resolution-hint"
+            />
+          </div>
+        </div>
+        <div class="confirm-actions">
+          <button
+            type="button"
+            class="button secondary"
+            data-close="resolution-dialog"
+          >
+            Cancel</button
+          ><button type="submit" class="button primary">
+            Apply resolution
+          </button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="fps-dialog" class="output-dialog" aria-labelledby="fps-title">
+      <form id="fps-form">
+        <h2 id="fps-title">Custom frame rate</h2>
+        <p id="fps-hint">
+          Enter a positive frame rate. Decimal values such as 29.97 are
+          supported.
+        </p>
+        <label for="custom-fps">Frames per second</label
+        ><input
+          id="custom-fps"
+          type="number"
+          min="0"
+          step="any"
+          required
+          aria-describedby="fps-hint"
+          autofocus
+        />
+        <div class="confirm-actions">
+          <button
+            type="button"
+            class="button secondary"
+            data-close="fps-dialog"
+          >
+            Cancel</button
+          ><button type="submit" class="button primary">
+            Apply frame rate
+          </button>
+        </div>
+      </form>
+    </dialog>
+    <dialog
+      id="examples-dialog"
+      class="examples-dialog"
+      aria-labelledby="examples-title"
+    >
+      <div class="dialog-top">
+        <span class="eyebrow">STARTER EXAMPLES</span
+        ><button
+          class="icon-button"
+          data-close="examples-dialog"
+          aria-label="Close examples"
+        >
+          <svg><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <h2 id="examples-title">Start with something simple.</h2>
+      <p>Pick a script, then change it to suit your idea.</p>
+      <div id="example-list"></div>
+      <p class="dialog-footnote">
+        Loading an example asks before replacing your current script.
+      </p>
+      <button class="text-button" id="prompt-button">
+        <svg><use href="#i-copy" /></svg> Copy a prompt for your AI
+      </button>
+    </dialog>
+    <section
+      id="tour-popover"
+      class="tour-popover"
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby="tour-title"
+      aria-describedby="tour-description"
+      hidden
+    >
+      <div class="tour-top">
+        <span id="tour-progress"></span
+        ><button class="icon-button" id="tour-close" aria-label="End tour">
+          <svg><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <h2 id="tour-title"></h2>
+      <p id="tour-description"></p>
+      <div class="tour-actions">
+        <button class="text-button" id="tour-back">Back</button
+        ><button class="button primary" id="tour-next">
+          Next <svg><use href="#i-arrow" /></svg>
+        </button>
+      </div>
+      <span class="tour-arrow" aria-hidden="true"></span>
+    </section>
+    <dialog
+      id="confirm-dialog"
+      class="confirm-dialog"
+      aria-labelledby="confirm-title"
+    >
+      <h2 id="confirm-title">Replace your current script?</h2>
+      <p>
+        Your current draft will be replaced. You can download it first to keep a
+        copy.
+      </p>
+      <div class="confirm-actions">
+        <button class="button secondary" id="confirm-cancel">
+          Keep current script</button
+        ><button class="button primary" id="confirm-replace">
+          Replace script
+        </button>
+      </div>
+      <button class="text-button" id="download-draft">
+        <svg><use href="#i-download" /></svg> Download current script
+      </button>
+    </dialog>
+    <dialog
+      id="updates-dialog"
+      class="updates-dialog"
+      aria-labelledby="updates-title"
+    >
+      <div class="dialog-top">
+        <h2 id="updates-title">Studio updates</h2>
+        <button
+          class="icon-button"
+          id="updates-close"
+          aria-label="Close updates"
+          autofocus
+        >
+          <svg aria-hidden="true"><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <p id="updates-version">Current version: —</p>
+      <p id="updates-status" role="status" aria-live="polite">
+        Check GitHub for a new version of Manim Studio.
+      </p>
+      <div id="updates-progress-section" hidden>
+        <progress
+          id="updates-progress"
+          aria-label="Update download progress"
+        ></progress>
+        <p id="updates-progress-text"></p>
+      </div>
+      <p id="updates-support" hidden>
+        In-app installation is available in the packaged Windows app. Open the
+        official release page to update this copy.
+      </p>
+      <label class="updates-auto"
+        ><input id="updates-auto" type="checkbox" />Automatically check GitHub
+        for updates</label
+      >
+      <p class="updates-footnote">
+        Checks contact GitHub. Updates download only when you choose;
+        installation always asks first.
+      </p>
+      <a
+        id="updates-release"
+        class="text-button"
+        href="https://github.com/ItsTatsuya/manim-studio/releases"
+        target="_blank"
+        rel="noopener noreferrer"
+        >Open official release page
+        <svg aria-hidden="true"><use href="#i-arrow" /></svg
+      ></a>
+      <div id="updates-actions" class="confirm-actions">
+        <button id="updates-check" class="button secondary">
+          Check for updates</button
+        ><button id="updates-download" class="button primary" hidden>
+          Download update</button
+        ><button id="updates-cancel" class="button secondary" hidden>
+          Cancel download</button
+        ><button id="updates-install" class="button primary" hidden>
+          Install update…
+        </button>
+      </div>
+      <section
+        id="updates-confirm"
+        aria-labelledby="updates-confirm-title"
+        hidden
+      >
+        <h3 id="updates-confirm-title">Install and restart Studio?</h3>
+        <p>
+          Your draft and preferences have been saved. Studio will close to
+          install the update and restart. Existing renders and user data are
+          preserved.
+        </p>
+        <div class="confirm-actions">
+          <button id="updates-back" class="button secondary">Not now</button
+          ><button id="updates-confirm-install" class="button primary">
+            Install and restart
+          </button>
+        </div>
+      </section>
+      <button id="updates-save-draft" class="text-button">
+        <svg aria-hidden="true"><use href="#i-download" /></svg>Save script copy
+      </button>
+    </dialog>
+    <div class="toast" id="toast" role="status" hidden></div>
+  </body>
+</html>

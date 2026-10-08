@@ -1,0 +1,121 @@
+{
+  "schema": 1,
+  "wheel": "av19.0.1 Windows cp312 amd64 from uv.lock",
+  "binary_distributor_packages": [
+    {
+      "component": "msys2-gcc-libs",
+      "version": "16.1.0-5",
+      "filename": "mingw-w64-x86_64-gcc-libs-16.1.0-5-any.pkg.tar.zst",
+      "url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-gcc-libs-16.1.0-5-any.pkg.tar.zst",
+      "sha256": "aa560f5438c35b71c3e7b24fd5becbca028f70c5b4d1f1697a86ff80fec947da",
+      "evidence": [
+        {
+          "bundled_filename": "libgcc_s_seh-1-3e3b83c1f8de213bb810010a5622b180.dll",
+          "bundled_sha256": "502e8318a096f0bfb26d9f628f768bfab72853eabc1b6b262f2412263aad605b",
+          "distributor_filename": "libgcc_s_seh-1.dll",
+          "distributor_sha256": "278f1101f2371c58b6b412a3206718e22343940a5164aceb4fb75f2bf3b38ed4",
+          "identical_pe_sections": {
+            ".text": "e0453cbf004725772b61adc6a638db281077539e7a551cc8cba7371868dc4039",
+            ".rdata": "80eecb1e9c4a76f9497394992c6064f1e5dfaded362c4abae9a8adc77e451d22",
+            ".pdata": "47d01f591349f6142ca34faa3078d34949a4fd13b3448b117d6edb8774027396",
+            ".xdata": "a686753aaf5423366b0b42e0fa51d211ef11c211a398f95a1660d4112924dd3e",
+            ".bss": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            ".edata": "e93369b60c29821d9e12f6d0870505fc9fbca9152c90d445f0b0ce834ab53a31",
+            ".tls": "076a27c79e5ace2a3d47f9dd2e83e4ff6ea8872b3c2218f66c92b89b55f36560",
+            ".reloc": "35584d075cf5086401e0734f2a5de0488c9d4aee7be2fee63c0983068d542e31"
+          },
+          "explanation": "delvewheel rewrites DLL imports/names and PE timestamp; matching native code sections identify the corresponding distributor runtime. libwinpthread matches every original PE section."
+        },
+        {
+          "bundled_filename": "libstdc++-6-7ad22040206bf70776b13a24ec3f87b2.dll",
+          "bundled_sha256": "1cba2ca3b6f410fa4b03b01b479f7663493ea9903857cd753dc8dbc772f67447",
+          "distributor_filename": "libstdc++-6.dll",
+          "distributor_sha256": "3529d11c422b2aaf0bbad7221bf62ba7b5a39f854e89a015bb58b6b55a677da1",
+          "identical_pe_sections": {
+            ".text": "02bc5bbc76895288ca62e81b3618d4df5d28bc4f3d66187d09d0cebbe4623a3d",
+            ".rdata": "f9537176f326af943590b0a08039ac37e26ce461ce6afd62666d4fa44d928e81",
+            ".pdata": "85d6173a269c0302ccc4f198ed5c36abd86d652f994b19ae420523cdf785c3fb",
+            ".xdata": "89437498326bd8ec42a54c9748f358704644c3f86558de7ab6822e24a364979e",
+            ".bss": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            ".edata": "195f9285769851138b62700b4af585512d4eae6596195000bb0f7091cd5a1cc2",
+            ".tls": "076a27c79e5ace2a3d47f9dd2e83e4ff6ea8872b3c2218f66c92b89b55f36560",
+            ".reloc": "f3768efba2b1b6663b313045363a81aac7151da473b633035cccf8cdbe478750"
+          },
+          "explanation": "delvewheel rewrites DLL imports/names and PE timestamp; matching native code sections identify the corresponding distributor runtime. libwinpthread matches every original PE section."
+        }
+      ]
+    },
+    {
+      "component": "msys2-libiconv",
+      "version": "1.19-1",
+      "filename": "mingw-w64-x86_64-libiconv-1.19-1-any.pkg.tar.zst",
+      "url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-libiconv-1.19-1-any.pkg.tar.zst",
+      "sha256": "21e334d0911f25de75d3e18e0697648bcecfa9658256d600cad0827d719c2f35",
+      "evidence": [
+        {
+          "bundled_filename": "libiconv-2-5e7e51fe6a6e182df6c9f30f41700345.dll",
+          "bundled_sha256": "5e7e51fe6a6e182df6c9f30f4170034575acd10d2079c3f1098411d21a311619",
+          "distributor_filename": "libiconv-2.dll",
+          "distributor_sha256": "7a282a854e01be726c6cccfe46f548c716aa45b3014818468253aaa4efbcd067",
+          "identical_pe_sections": {
+            ".text": "a7a4935f8c7d4168f87017817156728e391d8563a506357c594b4a34822b47cb",
+            ".data": "2d6935d7fab98d1eb497a4d102a5f9bf161cfae6be2956dd67574e909ccdec00",
+            ".rdata": "0892e05af75a99d9d51f6d81b3acdb82e1dfa3c9ee78af24d8e84c823c7d3678",
+            ".pdata": "5d6dbfb39feaf4b1d7f3fb8d6e16699b2e8f6754f5462928747bf2f8615ad4b3",
+            ".xdata": "df30baa0e3b996d792695b2b2a593e5f3a0a221010c83935b9307ab6bdb9e49e",
+            ".bss": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            ".edata": "8d61c56035861ad8deff38cb5334e6a903a2bd7c12d1f7b82d4cda096d623e9f",
+            ".idata": "2f952bed624b69cef1ebf16578681d16e8a6fb1d10c9ac086f3e2726828f1845",
+            ".tls": "076a27c79e5ace2a3d47f9dd2e83e4ff6ea8872b3c2218f66c92b89b55f36560",
+            ".rsrc": "0d2588d37fe9c1fde9bc3cbebeb01fc45f87ac5ae96e9de9fb12cf36649e6910",
+            ".reloc": "518625f43497132d89adfbb559e07e3294b9dfe762829b6dc9f0b4af12be4619"
+          },
+          "explanation": "delvewheel rewrites DLL imports/names and PE timestamp; matching native code sections identify the corresponding distributor runtime. libwinpthread matches every original PE section."
+        }
+      ]
+    },
+    {
+      "component": "msys2-libwinpthread",
+      "version": "14.0.0.r92.g818fa6510-1",
+      "filename": "mingw-w64-x86_64-libwinpthread-14.0.0.r92.g818fa6510-1-any.pkg.tar.zst",
+      "url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-libwinpthread-14.0.0.r92.g818fa6510-1-any.pkg.tar.zst",
+      "sha256": "c426ba9ef8870b4342d5c0843efa7a9b360361994c7556f3d18f23fd30734194",
+      "evidence": [
+        {
+          "bundled_filename": "libwinpthread-1-3e9f18fdf7e856e1e9fedd138e84e874.dll",
+          "bundled_sha256": "3e9f18fdf7e856e1e9fedd138e84e874542e8717272fa7fdae5d0d826e88658c",
+          "distributor_filename": "libwinpthread-1.dll",
+          "distributor_sha256": "4869aa8ab2e7e19ee43109b8832749aa1cd9c6e5302475439eae42d0b60b969f",
+          "identical_pe_sections": {
+            ".text": "54b13373f484b86d0405abf4f042d19a810999ed13d2022d54d02ce5ef48b2ed",
+            ".data": "817556667fa8a204bf969acfcf1410aa476401da1123e2d588e94c72d5636e5f",
+            ".rdata": "bfbbdc8e063aebfde9d423b8638f89e6a7a14850a838e1743fa9e9bebca14325",
+            ".pdata": "5f7ba1cbb866398570547e2b5bbc502a497d389c51d00613badbd7bdc7d8d1df",
+            ".xdata": "682c8f3470263df7a1e4f3c2e69e871169b6540244fb2b0b7417e9cb29fb503a",
+            ".bss": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            ".edata": "36d87acf99c448c2493c2c5528415cfc94dceb1e6ad0ff8b05a52953d9c5c2fb",
+            ".idata": "9bbcdcefb684cff38fefc94d0c4ae13fecacc9f3cfb04a92e580898bd5efbf57",
+            ".tls": "076a27c79e5ace2a3d47f9dd2e83e4ff6ea8872b3c2218f66c92b89b55f36560",
+            ".rsrc": "0552c79d58af45c56efb5dd4d43cdcffc34f4f77f9d75ab4ccb114579ac2805e",
+            ".reloc": "d4054fec247dbbcad60cb77fbcc2c7d2817fcd2c5f956924480854531bd05000"
+          },
+          "explanation": "delvewheel rewrites DLL imports/names and PE timestamp; matching native code sections identify the corresponding distributor runtime. libwinpthread matches every original PE section."
+        }
+      ]
+    }
+  ],
+  "other_native_wheels": {
+    "manimpango0.7.0": "Static Pango1.58.2/Cairo1.18.6 plus exact vendor Meson dependencies and patches; original wrapper source and build workflows included for rebuilding/relinking.",
+    "pycairo1.29.2": "Static Cairo1.18.6 with frozen cairo-win-build source recipe and all pinned native sources/patches.",
+    "pillow12.3.0": "Actual Windows features omit raqm/fribidi and imagequant; Pillow Windows workflow excludes their DLLs/licenses. Present native libraries use permissive component licenses shipped with the wheel.",
+    "numpy2.5.3/scipy1.18.1": "OpenBLAS/LAPACK BSD with statically linked GCC support covered by GCC Runtime Library Exception3.1; full notices/GPL+exception text shipped in wheel licenses.",
+    "skia-pathops/mapbox-earcut/others": "Permissive native implementation licenses retained in locked distribution metadata; Microsoft release CRT separately included under original Microsoft terms."
+  },
+  "primary_recipes": [
+    "https://github.com/ManimCommunity/ManimPango/tree/v0.7.0",
+    "https://github.com/naveen521kk/pango-build/tree/0dce9785ea638733764aebbd60b134387d8b44d8",
+    "https://github.com/pygobject/pycairo/tree/v1.29.2",
+    "https://github.com/pygobject/cairo-win-build/tree/3a9a75de8f07b46430f9ccf477950f252790b8f4",
+    "https://github.com/python-pillow/Pillow/blob/12.3.0/.github/workflows/wheels.yml"
+  ]
+}

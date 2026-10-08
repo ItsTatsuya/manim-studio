@@ -1,0 +1,17 @@
+.venv/
+.renders/
+outputs/
+__pycache__/
+.studio/
+.build-cache/
+dist/
+node_modules/
+*.py[cod]
+.ruff_cache/
+.env
+.env.*
+!.env.example
+*.log
+UserData/
+.DS_Store
+Thumbs.db

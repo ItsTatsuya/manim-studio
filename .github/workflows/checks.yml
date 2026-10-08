@@ -1,0 +1,44 @@
+name: Checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: python -m pip install uv
+      - run: uv sync --locked
+      - run: npm ci
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: npm run format:check
+      - run: npm run build:editor
+      - run: git diff --exit-code studio_ui/vendor studio_ui/index.html
+      - run: uv run python -m unittest discover -s tests -v
+      - run: uv run python -m playwright install chromium
+      - name: Browser checks
+        shell: pwsh
+        run: |
+          $env:MANIM_STUDIO_DATA = Join-Path $env:RUNNER_TEMP 'studio-checks'
+          $env:MANIM_STUDIO_URL = 'http://127.0.0.1:8765'
+          $server = Start-Process -FilePath '.venv/Scripts/python.exe' -ArgumentList 'desktop.py','--browser','--no-open','--port','8765' -WindowStyle Hidden -PassThru
+          try {
+            for ($attempt = 0; $attempt -lt 30; $attempt++) {
+              try { Invoke-RestMethod "$env:MANIM_STUDIO_URL/api/health" | Out-Null; break } catch { Start-Sleep -Seconds 1 }
+            }
+            uv run python tests/ui_smoke.py
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            uv run python tests/workspace_audit.py
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          } finally { Stop-Process -Id $server.Id -ErrorAction SilentlyContinue }

@@ -1,0 +1,25 @@
+[project]
+name = "manim-studio"
+version = "1.0.0"
+description = "Standalone Manim Studio with a local script editor and video renderer"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.142.2",
+    "manim==0.21.0",
+    "pywebview>=6.2.1 ; sys_platform == 'win32'",
+    "uvicorn>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "pefile>=2024.8.26",
+    "playwright>=1.63.0",
+    "ruff>=0.16.10",
+]
+
+[tool.ruff]
+target-version = "py312"
+extend-exclude = ["dist", ".build-cache", ".renders", "outputs", ".studio"]
+
+[tool.ruff.lint]
+select = ["E9", "F"]
