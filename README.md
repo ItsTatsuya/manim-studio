@@ -34,15 +34,11 @@ The editor includes autocomplete, formatting, and errors linked to script lines.
 **Help** replays the guided tour. Scripts run with your Windows account's
 permissions; review code before rendering.
 
-## Your files and updates
+## Your files
 
 Installed copies save work in `%LOCALAPPDATA%\ManimStudio\Data`. Portable copies
-use `UserData` beside the executable. Upgrades preserve scripts, assets,
-preferences, and render history.
-
-Use **Updates** to download and install new releases. For a **v1.0.0 portable
-copy**, migrate manually: close Studio, extract the new ZIP into a fresh folder,
-and copy your existing `UserData` into it before opening the new app.
+use `UserData` beside the executable. Scripts, assets, preferences, and render
+history stay in your data folder. Use **Updates** to check for future releases.
 
 ## Development
 

@@ -64,17 +64,12 @@ Studio is uninstalled and is excluded from Studio's own footprint.
 Online setup now embeds the verified selected math snapshot instead of rebuilding
 from a mutable MiKTeX mirror. It downloads hash-locked Python packages, including
 Typst, and checks the complete math inventory and native versions before replacing
-app files. Its initial download is therefore larger than the published 5.2 MB
-v1.0.0 bootstrap installer, while installed payload size is smaller.
+app files. The initial installer download includes the selected TeX payload;
+Python packages are downloaded separately during setup.
 
-The new portable updater validates explicit browser/math profiles and preserves
-UserData during component replacement. The published v1.0.0 updater requires a
-private browser file and cannot directly consume the new Evergreen ZIP layout.
-For that first migration, download and extract the new portable bundle and keep
-the existing UserData folder, or use the installer. Subsequent updates with the
-new helper support the optimized layout. Version 1.1.0 publishes only the minimal
-TeX plus Typst profile, with a new tag. Retiring the v1.0.0 GitHub release does not
-change the compatibility requirements for existing portable installations.
+The portable updater validates explicit browser/math profiles and preserves
+UserData during component replacement. Version 1.1.0 is the first public release
+and publishes only the minimal TeX plus Typst profile.
 
 ## Product screenshot
 

@@ -67,7 +67,7 @@ Ship Studio Update.exe with the matching app source; updater downloads must use
 the official release URLs and pass SHA256 verification before installation.
 Keep the portable recovery journal and installer AppId compatible.
 
-Version 1.1.0 ships the minimal TeX plus Typst profile. Publish the intended stable
+Version 1.1.0 is the first public release and ships minimal TeX plus Typst. Publish the intended stable
 release as GitHub's latest release. Preserve Git tags and published asset bytes;
 retire an older GitHub release only when explicitly requested.
 
