@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "distribution": "Evergreen",
+  "reference": "https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution",
+  "installers": {
+    "bootstrapper": {
+      "filename": "MicrosoftEdgeWebview2Setup.exe",
+      "url": "https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/c289719c-c70c-464b-81ea-9efa692d5428/MicrosoftEdgeWebview2Setup.exe",
+      "sha256": "aa38a8cfce6179b87181609b1c730a29eaf26138fc833af5759e67576770f3a3",
+      "bytes": 1850576,
+      "signature": {
+        "thumbprint": "4028CAD637509D4744B17EC5B42AED8D7A31E6AF",
+        "subject": "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+        "status": "Valid"
+      }
+    },
+    "offline": {
+      "filename": "MicrosoftEdgeWebView2RuntimeInstallerX64.exe",
+      "url": "https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/18c66e75-0385-4019-be3f-3f4a2bb867d5/MicrosoftEdgeWebView2RuntimeInstallerX64.exe",
+      "sha256": "ac22ecdc19c5b88b87f3fa752c00da9541653a8f5c0c5fc4a3b2b6ebe6591f69",
+      "bytes": 212358352,
+      "signature": {
+        "thumbprint": "4028CAD637509D4744B17EC5B42AED8D7A31E6AF",
+        "status": "Valid",
+        "subject": "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
+      }
+    }
+  }
+}

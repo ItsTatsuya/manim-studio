@@ -1,0 +1,127 @@
+{
+  "family": "Poppins",
+  "license": "Poppins-OFL.txt",
+  "license_source": "https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/OFL.txt",
+  "files": [
+    {
+      "file": "poppins-devanagari-400-italic.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiGyp8kv8JHgFVrJJLucXtAKPY.woff2",
+      "sha256": "cde48c89e89f53ae2f2f91be15fa1577799d40a37510c5bfa3e93a5181633c02"
+    },
+    {
+      "file": "poppins-latin-ext-400-italic.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiGyp8kv8JHgFVrJJLufntAKPY.woff2",
+      "sha256": "1e91b430ebe5aa347934e70dcd76ca3c594e34d41d14ba3e2f1a7e1dcbc0cfc6"
+    },
+    {
+      "file": "poppins-latin-400-italic.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiGyp8kv8JHgFVrJJLucHtA.woff2",
+      "sha256": "50d0c1742d80ac71f4cde20e8c04d41a24806af342831f479938b527fbff0972"
+    },
+    {
+      "file": "poppins-devanagari-500-italic.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiDyp8kv8JHgFVrJJLmg1hVFteOcEg.woff2",
+      "sha256": "c4f36ddfe165e5c1b2de13cac6088cdc044dd47cca8d41884da2d0ea4c272381"
+    },
+    {
+      "file": "poppins-latin-ext-500-italic.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiDyp8kv8JHgFVrJJLmg1hVGdeOcEg.woff2",
+      "sha256": "248a4c140325101536a69bff763665e7356390cbf0ce326b35bad968e42b5743"
+    },
+    {
+      "file": "poppins-latin-500-italic.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiDyp8kv8JHgFVrJJLmg1hVF9eO.woff2",
+      "sha256": "1ddb074f9963be8f6275c42dbd54d18625da8f91c85803121094ec81649f488b"
+    },
+    {
+      "file": "poppins-devanagari-600-italic.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiDyp8kv8JHgFVrJJLmr19VFteOcEg.woff2",
+      "sha256": "73b9ec8afb28abd16c401fe196d328450127f13004099c2a9685b9e1baf52c47"
+    },
+    {
+      "file": "poppins-latin-ext-600-italic.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiDyp8kv8JHgFVrJJLmr19VGdeOcEg.woff2",
+      "sha256": "10a9b6414cbebd6948c3a3a96838480b1ee019e0468033245ea1ddf1143bcda8"
+    },
+    {
+      "file": "poppins-latin-600-italic.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiDyp8kv8JHgFVrJJLmr19VF9eO.woff2",
+      "sha256": "3ad6c8bd3624555dd79177efe91f0aca20e7f28597fa6b49762c27f337500d8d"
+    },
+    {
+      "file": "poppins-devanagari-700-italic.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiDyp8kv8JHgFVrJJLmy15VFteOcEg.woff2",
+      "sha256": "4a57a4098e8ee918e9f91c1555d36302289e8f48c48be053404a9bcdf6909954"
+    },
+    {
+      "file": "poppins-latin-ext-700-italic.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiDyp8kv8JHgFVrJJLmy15VGdeOcEg.woff2",
+      "sha256": "4c05ae2d20c308c3b949b4578256e5438d0af62a7d32ac6dfcc63a230246adb0"
+    },
+    {
+      "file": "poppins-latin-700-italic.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiDyp8kv8JHgFVrJJLmy15VF9eO.woff2",
+      "sha256": "4b0864712c6e7ca75f8c003f7bc1a9270af33d6becd4119463771593274c48d2"
+    },
+    {
+      "file": "poppins-devanagari-400-normal.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiEyp8kv8JHgFVrJJbecmNE.woff2",
+      "sha256": "6b986471df6084ba6f89749100b2731200a722d3de0e00f48e1967f21eb2adc0"
+    },
+    {
+      "file": "poppins-latin-ext-400-normal.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiEyp8kv8JHgFVrJJnecmNE.woff2",
+      "sha256": "0b1fcab42c18b69bcfe9ce4799fcbff5af1621c53ffcfdc4723c6f5ec4ee3ffb"
+    },
+    {
+      "file": "poppins-latin-400-normal.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiEyp8kv8JHgFVrJJfecg.woff2",
+      "sha256": "7d93459d86585bfcdbb7e0376056226adb25821ee54b96236fe2123e9560929f"
+    },
+    {
+      "file": "poppins-devanagari-500-normal.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiByp8kv8JHgFVrLGT9Z11lFc-K.woff2",
+      "sha256": "f018c9ad67dc6c2ca9743ba407d879a251e778bfb3f1cced9dd59a9214ea0350"
+    },
+    {
+      "file": "poppins-latin-ext-500-normal.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiByp8kv8JHgFVrLGT9Z1JlFc-K.woff2",
+      "sha256": "af5fda16a19169e029a132374616728e1bf326d90bef5a552395c5053e21cd0f"
+    },
+    {
+      "file": "poppins-latin-500-normal.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiByp8kv8JHgFVrLGT9Z1xlFQ.woff2",
+      "sha256": "cd36de204aca2d5fa263a731f7c20009b5e3d754ba1f1e03c33e93a48f3e7446"
+    },
+    {
+      "file": "poppins-devanagari-600-normal.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiByp8kv8JHgFVrLEj6Z11lFc-K.woff2",
+      "sha256": "58dba357cb1e89bf36e83f19227293f35d5d7de91215d0fcf394e705634837b5"
+    },
+    {
+      "file": "poppins-latin-ext-600-normal.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiByp8kv8JHgFVrLEj6Z1JlFc-K.woff2",
+      "sha256": "bb1f2d582e7fba586ab70c91ef062d3becaf78b887654953863521b73665d171"
+    },
+    {
+      "file": "poppins-latin-600-normal.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiByp8kv8JHgFVrLEj6Z1xlFQ.woff2",
+      "sha256": "f4e80d9dfd374d02989b87a27b5ed4cb78fbb177c27f1478e9a8b0afb7513149"
+    },
+    {
+      "file": "poppins-devanagari-700-normal.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiByp8kv8JHgFVrLCz7Z11lFc-K.woff2",
+      "sha256": "de10eb6f1f452594080f69e1e4925fc68f2d594b4837c70b6c8e6ac0e8384916"
+    },
+    {
+      "file": "poppins-latin-ext-700-normal.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiByp8kv8JHgFVrLCz7Z1JlFc-K.woff2",
+      "sha256": "ccfd87f69ef00d811da3d06488cec4e79ec99d289cfbcbe4be42031cecae775a"
+    },
+    {
+      "file": "poppins-latin-700-normal.woff2",
+      "source": "https://fonts.gstatic.com/s/poppins/v24/pxiByp8kv8JHgFVrLCz7Z1xlFQ.woff2",
+      "sha256": "9338e65fc077355c7a87ae0d64cc101e23b9bf8ad78ae65f0f319c857311b526"
+    }
+  ]
+}

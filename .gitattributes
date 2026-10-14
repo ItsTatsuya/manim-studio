@@ -1,0 +1,8 @@
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.woff2 binary
+web/public/** -text
+web/T3CODE-LICENSE.txt -text
+studio_ui/** -text
+studio_ui/assets/** -diff

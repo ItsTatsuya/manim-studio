@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "wheel": {
+    "name": "espeakng_loader-0.2.4-py3-none-win_amd64.whl",
+    "sha256": "41f1e08ac9deda2efd1ea9de0b81dab9f5ae3c4b24284f76533d0a7b1dd7abd7",
+    "hash_origin": "uv.lock",
+    "library": "espeakng_loader/espeak-ng.dll",
+    "library_sha256": "646d387acbc7ac2aa45e3625aa00a6835ae5d446ff8b0748298c3900b4dde258",
+    "reported_espeak_Info_version": "1.52.0"
+  },
+  "loader_commit": "146599e29be31bf17d99f0bcb7dbb2f92aef3d95",
+  "espeak_ng_commit": "4870adfa25b1a32b4361592f1be8a40337c58d6c",
+  "evidence": [
+    "Loader commit bumps pyproject.toml to 0.2.4 immediately before the locked PyPI wheel upload.",
+    "The loader build workflow clones espeak-ng tag 1.52.0, resolved to the recorded commit; the installed locked Windows DLL reports 1.52.0 via espeak_Info.",
+    "build.sh and .github/workflows/build.yml describe the shared library and dictionary/voice data builds; .github/workflows/pypi.yml and hatch_build.py describe wheel assembly.",
+    "Original upstream packaging downloaded native/data release assets through a mutable latest URL. The release ships the immutable source commits and original recipes, records the actual locked DLL hash, and does not claim a byte-reproducible native build.",
+    "Windows DLL imports only Windows APIs and the separately licensed Microsoft Visual C++ runtime, with no additional eSpeak third-party native DLLs."
+  ],
+  "licenses": {
+    "espeak-ng": "GPL-3.0-or-later plus original component notices",
+    "phonemizer": "GPL-3.0-or-later; exact 3.4.0 sdist pinned by uv.lock",
+    "kokoro-onnx": "MIT; exact 0.6.1 sdist pinned by uv.lock",
+    "espeakng-loader": "The 0.2.4 loader repository declares no separate license; its complete source and original packaging recipes are supplied without assigning a license. The bundled eSpeak library retains its GPL and original notices."
+  },
+  "models": "Kokoro model/voice files are not bundled. Studio downloads hash-pinned files on demand; Kokoro-82M model licensing is Apache-2.0."
+}

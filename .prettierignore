@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.build-cache/
+.venv/
+.renders/
+outputs/
+.studio/
+studio_ui/vendor/
+package-lock.json
+packaging/requirements-runtime.txt
+uv.lock

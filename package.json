@@ -1,0 +1,46 @@
+{
+  "name": "manim-studio-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:editor": "npm run typecheck && npm run build",
+    "build": "vite build --config web/vite.config.ts",
+    "dev": "vite build --config web/vite.config.ts --watch --mode development",
+    "typecheck": "tsc -p web/tsconfig.json",
+    "format": "prettier --write web/src web/index.html web/vite.config.ts AGENTS.md README.md .github/workflows/*.yml package.json",
+    "format:check": "prettier --check web/src web/index.html web/vite.config.ts AGENTS.md README.md .github/workflows/*.yml package.json"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.9.0",
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-python": "^6.2.1",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/lint": "^6.9.7",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.14",
+    "@lezer/highlight": "^1.2.5",
+    "@tanstack/react-router": "^1.170.44",
+    "class-variance-authority": "^0.7.1",
+    "lucide-react": "^1.57.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.7.0",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "axe-core": "^4.14.0",
+    "prettier": "^3.9.9",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4"
+  }
+}

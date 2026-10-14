@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="studio-token" content="__STUDIO_TOKEN__" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Manim Studio</title>
+    <link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
+    <script>
+      // Apply the saved theme before first paint to avoid a flash.
+      try {
+        const theme = localStorage.getItem("studio-theme") || "dark";
+        const dark =
+          theme === "dark" ||
+          (theme === "system" &&
+            matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.classList.toggle("dark", dark);
+      } catch {}
+    </script>
+    <script type="module" crossorigin src="/static/assets/index-CnenqATq.js"></script>
+    <link rel="stylesheet" crossorigin href="/static/assets/index-Vh03lhVG.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
