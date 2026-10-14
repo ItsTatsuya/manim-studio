@@ -57,16 +57,6 @@ export function fixRenderContext(
 export const FIX_RENDER_PROMPT =
   "Fix the render error above in script.py, run the Studio check, and keep the narration in sync.";
 
-export const BLANK_SCENE = `from manim import *
-
-
-class MainScene(Scene):
-    def construct(self):
-        title = Text("Hello, Manim!", font_size=56)
-        self.play(Write(title))
-        self.wait(1)
-`;
-
 export const EXTERNAL_AI_PROMPT = `Create a downloadable ZIP project for Manim Studio based on the video details at the end of this message.
 
 Include only the files needed to render:

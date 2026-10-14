@@ -112,6 +112,7 @@ class UpdateManager:
         self._cancel = threading.Event()
         self._closed = False
         self._last_check = None
+        self._last_checked_at = None
         self._release = None
         self._ready = None
         self._state = {
@@ -125,6 +126,7 @@ class UpdateManager:
     def snapshot(self):
         with self._lock:
             status = self._state["status"]
+            has_package = bool(self._release and "asset" in self._release)
             return {
                 **self._state,
                 "current_version": self.current_version,
@@ -134,8 +136,16 @@ class UpdateManager:
                 "asset_name": self._release["asset"]["name"]
                 if self._release and "asset" in self._release
                 else None,
-                "can_download": self._install_supported,
-                "can_install": self._install_supported,
+                "last_checked": self._last_checked_at,
+                # Offer an action only when it can run now, so the UI never
+                # shows "Install" for an up-to-date app.
+                "can_download": self._install_supported
+                and has_package
+                and self._ready is None
+                and status in {"available", "error"},
+                "can_install": self._install_supported
+                and self._ready is not None
+                and status == "ready",
                 "can_cancel": not self._closed
                 and status in {"checking", "downloading"}
                 and not self._cancel.is_set(),
@@ -199,8 +209,9 @@ class UpdateManager:
                 return self.snapshot()
             if (
                 not self._install_supported
-                or self._state["status"] != "available"
+                or self._state["status"] not in {"available", "error"}
                 or not self._release
+                or "asset" not in self._release
             ):
                 raise UpdateError("Check for an available Windows update first.")
             return self._start("downloading", self._download)
@@ -329,6 +340,7 @@ class UpdateManager:
             self._release = selected
             self._ready = ready
             self._last_check = time.monotonic()
+            self._last_checked_at = time.time()
             self._state.update(error=None)
         return "ready" if ready else "available" if selected else "current"
 

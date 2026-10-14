@@ -9,8 +9,10 @@ Render and preview videos without installing Python.
 
 ![Manim Studio with project chats, Python editor and animation tools](docs/images/manim-studio.png)
 
-**1.0.0** is the first release of Manim Studio, with the agent workspace,
-guided setup, document and media uploads, and local narrated rendering.
+**1.1.0** adds chat forking, versioned model names with reasoning effort,
+clear usage-limit errors, resumable renders, a voice download step in setup,
+and an update notice in the sidebar. It builds on the 1.0.0 agent workspace,
+document and media uploads, and local narrated rendering.
 
 ## Install
 
@@ -19,9 +21,9 @@ during setup. The app is unsigned, so Windows may display a security warning.
 
 | Download                                                                                                                      | Use it when                                                                                 |
 | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| [Setup](https://github.com/ItsTatsuya/manim-studio/releases/download/v1.0.0/Manim-Studio-1.0.0-Setup-x64.exe)                 | You have internet. Setup downloads and prepares the rendering engine.                       |
-| [Portable ZIP](https://github.com/ItsTatsuya/manim-studio/releases/download/v1.0.0/Manim-Studio-1.0.0-Portable-x64.zip)       | You want a folder you can move. Extract the **entire ZIP**, then open **Manim Studio.exe**. |
-| [Offline setup](https://github.com/ItsTatsuya/manim-studio/releases/download/v1.0.0/Manim-Studio-1.0.0-Offline-Setup-x64.exe) | You need to install without downloading rendering tools.                                    |
+| [Setup](https://github.com/ItsTatsuya/manim-studio/releases/download/v1.1.0/Manim-Studio-1.1.0-Setup-x64.exe)                 | You have internet. Setup downloads and prepares the rendering engine.                       |
+| [Portable ZIP](https://github.com/ItsTatsuya/manim-studio/releases/download/v1.1.0/Manim-Studio-1.1.0-Portable-x64.zip)       | You want a folder you can move. Extract the **entire ZIP**, then open **Manim Studio.exe**. |
+| [Offline setup](https://github.com/ItsTatsuya/manim-studio/releases/download/v1.1.0/Manim-Studio-1.1.0-Offline-Setup-x64.exe) | You need to install without downloading rendering tools.                                    |
 
 All downloads include **standard LaTeX and Typst equation support**. Studio uses
 shared Microsoft WebView2; portable first launch needs internet only if that

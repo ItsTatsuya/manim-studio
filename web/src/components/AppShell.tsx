@@ -1,6 +1,6 @@
 import { Outlet, useRouterState } from "@tanstack/react-router";
 import { MenuIcon, XIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
 import { applyTheme, normalizeTheme, watchSystemTheme } from "~/lib/theme";
 import { connectEvents, useStudio } from "~/state/studio";
@@ -10,11 +10,24 @@ import { ConfirmDialogHost } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Spinner } from "./ui/input";
 import { Toaster } from "./ui/toast";
+
+// First-run setup is only needed once, so it is not part of the main bundle.
+const Onboarding = lazy(() =>
+  import("./Onboarding").then((module) => ({ default: module.Onboarding })),
+);
 import { TooltipProvider } from "./ui/tooltip";
 import { StudioMark } from "./icons";
-import { Onboarding } from "./Onboarding";
 
 export function AppShell() {
+  // Warm the editor and markdown chunks once the first screen is painted, so
+  // opening a script or chat never waits on the network or disk.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void import("./panel/CodeEditor");
+      void import("./chat/Markdown");
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, []);
   const ready = useStudio((state) => state.ready);
   const theme = useStudio((state) =>
     normalizeTheme(state.prefs["manim-theme"]),
@@ -158,10 +171,11 @@ export function AppShell() {
         </div>
       )}
       <AutoRender />
-      <Onboarding
-        open={!installing && (!completedSetup || reopenSetup)}
-        onClose={() => setReopenSetup(false)}
-      />
+      {!installing && (!completedSetup || reopenSetup) && (
+        <Suspense fallback={null}>
+          <Onboarding open onClose={() => setReopenSetup(false)} />
+        </Suspense>
+      )}
       <ConfirmDialogHost />
       <Toaster />
     </TooltipProvider>

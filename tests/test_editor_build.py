@@ -42,7 +42,10 @@ class EditorBuildTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 html = (ui / "index.html").read_text(encoding="utf-8")
                 urls = re.findall(r'(?:src|href)="(/static/assets/[^\"]+)"', html)
-                self.assertEqual(len(urls), 2)
+                # One entry script and stylesheet, plus preloads of shared chunks.
+                self.assertEqual(len(re.findall(r"<script[^>]+src=", html)), 1)
+                self.assertEqual(len(re.findall(r'rel="stylesheet"', html)), 1)
+                self.assertGreaterEqual(len(urls), 2)
                 for url in urls:
                     self.assertRegex(url, r"-[A-Za-z0-9_-]+\.(?:css|js)$")
                     self.assertTrue((ui / url.removeprefix("/static/")).is_file())

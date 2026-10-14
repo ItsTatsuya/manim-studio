@@ -31,6 +31,11 @@ starter scripts and manual rendering launchers have been retired.
   on the CPU; do not add PyTorch. Model files download on demand into
   `DATA_ROOT/.studio/models/kokoro` from pinned release URLs with SHA256 checks.
   The render worker synthesizes and muxes narration in the same cancellable process.
+  Narration is synthesized before Manim runs so script problems fail fast. Finished
+  lines (`.studio/render-cache/lines`) and the silent animation (`render-cache/videos`,
+  keyed by script, scene, quality and project files) are checkpointed so a retry
+  resumes instead of starting over. Paragraphs are chunked below Kokoro's 510-phoneme
+  limit; never request `continuous` synthesis because the bundled models lack durations.
 - Record Python dependencies in pyproject.toml and uv.lock. Rebuild the editor
   with npm run build:editor after changing UI assets.
 - Run the development and verification commands below before handing off changes.
@@ -102,13 +107,20 @@ Ship Studio Update.exe with the matching app source; updater downloads must use
 the official release URLs and pass SHA256 verification before installation.
 Keep the portable recovery journal and installer AppId compatible.
 
-Version 1.0.0 is the first public release and ships minimal TeX plus Typst. Publish the intended stable
+Version 1.0.0 was the first public release; releases ship minimal TeX plus Typst. Publish the intended stable
 release as GitHub's latest release. Preserve Git tags and published asset bytes;
 retire an older GitHub release only when explicitly requested.
-Current source version: 1.0.0. Version metadata and builders read pyproject.toml;
+Current source version: 1.1.0. Version metadata and builders read pyproject.toml;
 keep runtime.py's fallback version in sync. Project expansion persists in the
 manim-project-expanded preference. Deleting the last project creates a fresh blank
 project and preserves render history; every UI deletion requires confirmation.
+
+Agent chats can be forked (`/api/projects/<id>/threads/<id>/fork`): the copy replays the
+transcript once as context because provider sessions cannot be split. Provider
+failures are classified into stable codes (`agents.ERROR_CODES`, e.g. `usage_limit`,
+`rate_limited`, `context_too_long`) and shown with a hint in the timeline. Claude models
+are listed with explicit versions in `CLAUDE_MODELS`; add new releases there. The sidebar
+update notice and onboarding voice step share the updater and narration download APIs.
 
 Keep README.md for users and AGENTS.md for developers. Preserve third-party license files
 and notices in dependencies, font assets and release runtimes. The app's code is

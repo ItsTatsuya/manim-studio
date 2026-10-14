@@ -44,7 +44,3 @@ export function relativeTime(iso: string | null | undefined) {
     day: "numeric",
   });
 }
-
-export function isWindows() {
-  return /win/i.test(navigator.platform);
-}

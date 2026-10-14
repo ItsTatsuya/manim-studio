@@ -9,11 +9,14 @@ import argparse
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
+import shutil
 import sys
 import threading
 import urllib.request
+import uuid
 
 RELEASE = (
     "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
@@ -61,6 +64,15 @@ VOICE_NAMES = (
 ).split()
 TIMESTAMP = re.compile(r"^\s*\[\s*(\d+(?::\d{1,2}){0,2}(?:\.\d+)?)\s*s?\s*\]\s*")
 MAX_SEGMENTS = 400
+# A timestamp or total narration beyond this would allocate gigabytes of audio.
+MAX_SECONDS = 3600.0
+# Kokoro reads at most 510 phonemes per pass. Longer paragraphs are cut into
+# spoken-sentence chunks well below that, joined with natural pauses.
+CHUNK_CHARS = 280
+CACHE_VERSION = "1"
+LINE_CACHE_LIMIT = 400 * 1024 * 1024
+VIDEO_CACHE_KEEP = 3
+VIDEO_CACHE_MAX_BYTES = 2 * 1024**3
 
 
 class NarrationError(Exception):
@@ -141,6 +153,11 @@ def parse_timeline(text: str) -> list[dict]:
             current = None
             continue
         match = TIMESTAMP.match(line)
+        if match and parse_timestamp(match[1]) > MAX_SECONDS:
+            raise NarrationError(
+                f"Narration line {number} starts after {int(MAX_SECONDS // 60)} minutes; "
+                "use a time within the first hour."
+            )
         if match or current is None:
             current = {
                 "start": parse_timestamp(match[1]) if match else None,
@@ -395,12 +412,12 @@ def master(track):
     )
     window = int(0.05 * SAMPLE_RATE)
     smooth = np.ones(window) / window
-    envelope = np.sqrt(np.convolve(voice**2, smooth, mode="same") + 1e-12)
+    envelope = np.sqrt(fftconvolve(voice**2, smooth, mode="same") + 1e-12)
     threshold = 10 ** (-24 / 20) * float(np.max(envelope))
     gain = np.ones_like(envelope)
     loud = envelope > threshold
     gain[loud] = (envelope[loud] / threshold) ** (1 / 2.0 - 1)  # 2:1 compression
-    voice *= np.convolve(gain, smooth, mode="same")
+    voice *= fftconvolve(gain, smooth, mode="same")
     wet = fftconvolve(voice, _room())
     voice = np.concatenate([voice, np.zeros(wet.size - voice.size)]) + 0.07 * wet
     frames = voice[: voice.size // window * window].reshape(-1, window)
@@ -419,8 +436,117 @@ def master(track):
     return voice.astype(np.float32)
 
 
-def synthesize(segments, *, voice, speed, engine, report=print):
-    """Return a mastered mono 24 kHz track plus timing warnings."""
+def split_text(text: str, limit: int = CHUNK_CHARS) -> list[str]:
+    """Cut a paragraph into chunks of at most `limit` characters.
+
+    Prefers sentence ends, then clause marks, then spaces, and only slices a
+    word when there is no other choice, so each chunk reads naturally.
+    """
+    text = text.strip()
+    if len(text) <= limit:
+        return [text] if text else []
+    for pattern in (
+        r"(?<=[.!?…])[\"')\]]*\s+",
+        r"(?<=[,;:—–])\s+",
+        r"\s+",
+    ):
+        pieces = [piece for piece in re.split(pattern, text) if piece.strip()]
+        if len(pieces) < 2:
+            continue
+        chunks, current = [], ""
+        for piece in pieces:
+            if len(piece) > limit:
+                if current:
+                    chunks.append(current)
+                    current = ""
+                chunks.extend(split_text(piece, limit))
+            elif not current:
+                current = piece
+            elif len(current) + 1 + len(piece) <= limit:
+                current = f"{current} {piece}"
+            else:
+                chunks.append(current)
+                current = piece
+        if current:
+            chunks.append(current)
+        return chunks
+    return [text[start : start + limit] for start in range(0, len(text), limit)]
+
+
+def _speak(engine, text, *, voice, speed, lang, warnings, line):
+    """Speak one paragraph as mono 24 kHz samples; never fails on unspeakable text."""
+    import numpy as np
+
+    pieces = []
+    gap = np.zeros(int(SENTENCE_PAUSE * SAMPLE_RATE), dtype=np.float32)
+    for chunk in split_text(text):
+        try:
+            samples, rate = engine.create(
+                chunk,
+                voice=voice,
+                speed=float(speed),
+                lang=lang,
+                sentence_pause=SENTENCE_PAUSE,
+                clause_pause=CLAUSE_PAUSE,
+            )
+        except ValueError as error:
+            # Symbols, emoji or punctuation alone have no phonemes to speak.
+            if "phoneme" in str(error).lower() or "synthesize" in str(error).lower():
+                warnings.append(
+                    f"Narration line {line} has text Kokoro cannot pronounce "
+                    f"({chunk[:40]!r}); it was skipped."
+                )
+                continue
+            raise
+        if rate != SAMPLE_RATE:
+            raise NarrationError("The voice model returned an unexpected sample rate.")
+        if pieces:
+            pieces.append(gap)
+        pieces.append(np.asarray(samples, dtype=np.float32).reshape(-1))
+    return np.concatenate(pieces) if pieces else np.zeros(0, dtype=np.float32)
+
+
+def _line_path(cache_dir, quality, voice, speed, text):
+    key = hashlib.sha256(
+        json.dumps([CACHE_VERSION, quality, voice, float(speed), text]).encode()
+    ).hexdigest()
+    return Path(cache_dir) / f"{key}.npy"
+
+
+def _prune(directory: Path, limit: int):
+    """Drop the least recently used files once the cache exceeds `limit` bytes."""
+    try:
+        files = sorted(
+            directory.glob("*.npy"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        total = 0
+        for path in files:
+            total += path.stat().st_size
+            if total > limit:
+                path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def synthesize(
+    segments,
+    *,
+    voice,
+    speed,
+    engine=None,
+    report=print,
+    load=None,
+    cache_dir=None,
+    quality="standard",
+):
+    """Return a mastered mono 24 kHz track plus timing warnings.
+
+    Finished lines are checkpointed in `cache_dir`, so after a failure only the
+    lines that changed or never finished are generated again. `engine` is
+    loaded lazily through `load` so a fully cached narration needs no model.
+    """
     import numpy as np
 
     lang = language(voice)
@@ -437,21 +563,48 @@ def synthesize(segments, *, voice, speed, engine, report=print):
             )
             start = cursor
         text = prepare_text(segment["text"]) or segment["text"]
-        samples, rate = engine.create(
-            text,
-            voice=voice,
-            speed=float(speed),
-            lang=lang,
-            sentence_pause=SENTENCE_PAUSE,
-            clause_pause=CLAUSE_PAUSE,
-            # Overlapping windows keep intonation flowing across long paragraphs.
-            continuous=len(text) > 300,
+        samples = None
+        cached = (
+            _line_path(cache_dir, quality, voice, speed, text) if cache_dir else None
         )
-        if rate != SAMPLE_RATE:
-            raise NarrationError("The voice model returned an unexpected sample rate.")
-        samples = _shape(np.asarray(samples, dtype=np.float32).reshape(-1))
+        if cached is not None and cached.is_file():
+            try:
+                samples = np.load(cached, allow_pickle=False)
+                cached.touch()
+            except (OSError, ValueError):
+                samples = None
+        if samples is None:
+            if engine is None:
+                engine = load()
+            samples = _shape(
+                _speak(
+                    engine,
+                    text,
+                    voice=voice,
+                    speed=speed,
+                    lang=lang,
+                    warnings=warnings,
+                    line=segment["line"],
+                )
+            )
+            if cached is not None:
+                try:
+                    cached.parent.mkdir(parents=True, exist_ok=True)
+                    temporary = cached.with_name(uuid.uuid4().hex + ".tmp")
+                    with temporary.open("wb") as output:
+                        np.save(output, samples, allow_pickle=False)
+                    temporary.replace(cached)
+                except OSError:
+                    pass
         placed.append((int(round(start * SAMPLE_RATE)), samples))
         cursor = start + len(samples) / SAMPLE_RATE
+        if cursor > MAX_SECONDS:
+            raise NarrationError(
+                f"Narration is longer than {int(MAX_SECONDS // 60)} minutes at line "
+                f"{segment['line']}. Split it into shorter videos."
+            )
+    if cache_dir:
+        _prune(Path(cache_dir), LINE_CACHE_LIMIT)
     length = max((offset + len(samples) for offset, samples in placed), default=0)
     track = np.zeros(length, dtype=np.float32)
     for offset, samples in placed:
@@ -553,25 +706,99 @@ def mux(video: Path, track, output: Path) -> dict:
     return {"video": duration, "narration": track.size / SAMPLE_RATE}
 
 
-def narrate_render(spec: dict, report=print, warn=print):
-    """Called by the render worker after Manim writes its video."""
+def prepare_track(spec: dict, report=print):
+    """Synthesize the narration before the animation renders.
+
+    Problems with the script or voice then surface in seconds instead of after
+    a long render, and finished lines are checkpointed for the next attempt.
+    Returns (track, warnings), or None when there is nothing to say.
+    """
     segments = parse_timeline(spec["text"])
     if not segments:
+        return None
+    data_root = Path(spec["data_root"])
+
+    def load():
+        report("Loading the narration voice…")
+        return load_engine(data_root, spec["quality"])
+
+    return synthesize(
+        segments,
+        voice=spec["voice"],
+        speed=spec["speed"],
+        load=load,
+        report=report,
+        cache_dir=spec.get("line_cache"),
+        quality=spec["quality"],
+    )
+
+
+def restore_video(spec: dict, report=print) -> bool:
+    """Reuse the animation checkpointed by an earlier identical render."""
+    cache = spec.get("video_cache")
+    if not cache:
+        return False
+    cached = Path(cache) / "video.mp4"
+    try:
+        if not cached.is_file() or cached.stat().st_size == 0:
+            return False
+        target = Path(spec["media_dir"]) / "videos" / "checkpoint" / "video.mp4"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(cached, target)
+        os.utime(cached)
+    except OSError:
+        return False
+    report("Reusing the animation from your previous render…")
+    return True
+
+
+def checkpoint_video(spec: dict):
+    """Save the silent animation so a narration failure never repeats Manim."""
+    cache = spec.get("video_cache")
+    if not cache:
         return
-    media = Path(spec["media_dir"])
-    videos = [
-        path
-        for path in media.rglob("video.mp4")
-        if "partial_movie_files" not in path.parts
-    ]
+    videos = _rendered_videos(spec)
     if not videos:
         return
     video = max(videos, key=lambda path: path.stat().st_mtime_ns)
-    report("Loading the narration voice…")
-    engine = load_engine(Path(spec["data_root"]), spec["quality"])
-    track, warnings = synthesize(
-        segments, voice=spec["voice"], speed=spec["speed"], engine=engine, report=report
-    )
+    directory = Path(cache)
+    try:
+        if video.stat().st_size > VIDEO_CACHE_MAX_BYTES:
+            return
+        directory.mkdir(parents=True, exist_ok=True)
+        temporary = directory / (uuid.uuid4().hex + ".tmp")
+        shutil.copy2(video, temporary)
+        temporary.replace(directory / "video.mp4")
+        siblings = sorted(
+            (path for path in directory.parent.iterdir() if path.is_dir()),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        for old in siblings[VIDEO_CACHE_KEEP:]:
+            shutil.rmtree(old, ignore_errors=True)
+    except OSError:
+        pass
+
+
+def _rendered_videos(spec: dict) -> list[Path]:
+    return [
+        path
+        for path in Path(spec["media_dir"]).rglob("video.mp4")
+        if "partial_movie_files" not in path.parts
+    ]
+
+
+def narrate_render(spec: dict, report=print, warn=print, prepared=None):
+    """Called by the render worker once the (silent) video exists."""
+    if prepared is None:
+        prepared = prepare_track(spec, report)
+    if prepared is None:
+        return
+    track, warnings = prepared
+    videos = _rendered_videos(spec)
+    if not videos:
+        return
+    video = max(videos, key=lambda path: path.stat().st_mtime_ns)
     report("Adding narration to your video…")
     staged = video.with_name("narrated.mp4")
     try:
@@ -610,6 +837,8 @@ def main():
         speed=spec["speed"],
         engine=engine,
         report=lambda message: None,
+        cache_dir=spec.get("line_cache"),
+        quality=spec["quality"],
     )
     write_wav(args.output, track)
 

@@ -251,6 +251,36 @@ class UpdateTests(unittest.TestCase):
                     manager.snapshot()["can_download"], edition != "source"
                 )
 
+    def test_actions_are_offered_only_when_they_can_run(self):
+        manager = self.manager()
+        state = manager.snapshot()
+        self.assertFalse(state["can_download"])
+        self.assertFalse(state["can_install"])
+        self.assertIsNone(state["last_checked"])
+        network = Network()
+        with patch.object(updates, "open_github", network.open):
+            self.available(manager, network)
+            state = manager.snapshot()
+            self.assertTrue(state["can_download"])
+            self.assertFalse(state["can_install"])
+            manager.download()
+            self.wait(manager, "ready")
+            state = manager.snapshot()
+            self.assertFalse(state["can_download"])
+            self.assertTrue(state["can_install"])
+            self.assertIsNotNone(state["last_checked"])
+
+    def test_up_to_date_offers_no_download_or_install(self):
+        manager = self.manager()
+        network = Network(version=manager.current_version)
+        with patch.object(updates, "open_github", network.open):
+            manager.check()
+            self.wait(manager, "current")
+        state = manager.snapshot()
+        self.assertFalse(state["can_download"])
+        self.assertFalse(state["can_install"])
+        self.assertIsNotNone(state["last_checked"])
+
     def test_check_cache_and_error_retry(self):
         manager = self.manager()
         network = Network()
@@ -265,8 +295,10 @@ class UpdateTests(unittest.TestCase):
             network.download_payload = b"broken package!"
             manager.download()
             self.wait(manager, "error")
-            with self.assertRaises(updates.UpdateError):
-                manager.download()
+            # A failed download can be retried directly, and offers only that.
+            state = manager.snapshot()
+            self.assertTrue(state["can_download"])
+            self.assertFalse(state["can_install"])
             manager.check()
             self.wait(manager, "available")
             self.assertEqual(network.calls.count(updates.LATEST_API), 3)

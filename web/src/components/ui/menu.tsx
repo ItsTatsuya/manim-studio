@@ -6,7 +6,6 @@ import { cn } from "~/lib/utils";
 
 export const Menu = MenuPrimitive.Root;
 export const MenuTrigger = MenuPrimitive.Trigger;
-export const MenuGroup = MenuPrimitive.Group;
 export const MenuRadioGroup = MenuPrimitive.RadioGroup;
 
 export const popupSurface =

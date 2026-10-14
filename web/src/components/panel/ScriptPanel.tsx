@@ -1,5 +1,5 @@
 import { CopyIcon, SearchIcon, SparklesIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "~/lib/api";
 import { latestRender } from "~/lib/render";
@@ -9,7 +9,12 @@ import { useProjectBusy } from "~/state/useProjectBusy";
 import { Button } from "../ui/button";
 import { toast } from "../ui/toast";
 import { Tooltip } from "../ui/tooltip";
-import { CodeEditor, type CodeEditorHandle, type Problem } from "./CodeEditor";
+import type { CodeEditorHandle, Problem } from "./CodeEditor";
+
+// CodeMirror is the largest dependency; load it when a script is first shown.
+const CodeEditor = lazy(() =>
+  import("./CodeEditor").then((module) => ({ default: module.CodeEditor })),
+);
 
 export function ScriptPanel({ projectId }: { projectId: string }) {
   const source = useProjectDoc((state) => state.source);
@@ -97,15 +102,17 @@ export function ScriptPanel({ projectId }: { projectId: string }) {
           </Button>
         </div>
       </div>
-      <CodeEditor
-        ref={editor}
-        value={source}
-        revision={revision}
-        readOnly={busy}
-        problems={problems}
-        onChange={(value) => useProjectDoc.getState().setSource(value)}
-        onCursor={(line, column) => setCursor({ line, column })}
-      />
+      <Suspense fallback={<div className="min-h-0 flex-1" />}>
+        <CodeEditor
+          ref={editor}
+          value={source}
+          revision={revision}
+          readOnly={busy}
+          problems={problems}
+          onChange={(value) => useProjectDoc.getState().setSource(value)}
+          onCursor={(line, column) => setCursor({ line, column })}
+        />
+      </Suspense>
       <div
         className="flex h-7 shrink-0 items-center gap-3 border-t px-3 text-[11px] text-muted-foreground"
         id="script-status"

@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { ChevronDownIcon, SettingsIcon } from "lucide-react";
 
 import type { ProviderId, ProviderStatus } from "~/lib/api";
+import { effortInfo, effortName, modelName } from "~/lib/models";
 import { useStudio } from "~/state/studio";
 import { ProviderIcon } from "../icons";
 import { Badge } from "../ui/input";
@@ -36,11 +37,6 @@ export function providerReadiness(status: ProviderStatus | undefined) {
   return { ready: true, label: "" };
 }
 
-function modelLabel(status: ProviderStatus | undefined, model: string) {
-  if (!model) return "Default model";
-  return status?.models.find((item) => item.id === model)?.name ?? model;
-}
-
 export function ModelPicker({
   value,
   onChange,
@@ -58,19 +54,26 @@ export function ModelPicker({
   const models = current?.models ?? [];
   const efforts =
     models.find((model) => model.id === value.model)?.efforts ?? [];
+  const label = modelName(providers, value.provider, value.model);
+  const effort = effortInfo(
+    providers,
+    value.provider,
+    value.model,
+    value.effort,
+  );
 
   return (
     <div className="flex min-w-0 items-center gap-0.5">
       <Menu>
         <MenuTrigger
-          aria-label={`Choose agent and model: ${modelLabel(current, value.model)}`}
+          aria-label={`Choose agent and model: ${label}`}
           className="flex h-7 min-w-0 items-center gap-1.5 rounded-md px-2 text-[13px] text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[popup-open]:bg-accent data-[popup-open]:text-foreground"
         >
           <ProviderIcon provider={value.provider} className="size-3.5" />
-          <span className="truncate">{modelLabel(current, value.model)}</span>
+          <span className="truncate">{label}</span>
           <ChevronDownIcon className="size-3 shrink-0 opacity-60" />
         </MenuTrigger>
-        <MenuPopup side="top" className="w-72">
+        <MenuPopup side="top" className="w-80">
           <MenuRadioGroup
             value={`${value.provider}:${value.model}`}
             onValueChange={(next: string) => {
@@ -122,7 +125,29 @@ export function ModelPicker({
                       value={`${provider.id}:${model.id}`}
                       disabled={!readiness.ready || locked}
                     >
-                      <span className="truncate">{model.name}</span>
+                      <span className="flex min-w-0 flex-col">
+                        <span className="flex items-center gap-1.5">
+                          <span className="truncate">{model.name}</span>
+                          {model.id === configured && (
+                            <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                              Default
+                            </span>
+                          )}
+                          {model.custom && (
+                            <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                              Custom
+                            </span>
+                          )}
+                        </span>
+                        {model.description && (
+                          <span className="truncate text-[11px] text-muted-foreground">
+                            {model.description}
+                          </span>
+                        )}
+                        <span className="font-mono text-[10px] text-muted-foreground/70">
+                          {model.id}
+                        </span>
+                      </span>
                     </MenuRadioItem>
                   ))}
                 </div>
@@ -143,13 +168,15 @@ export function ModelPicker({
           value={value.effort}
           onChange={(effort) => onChange({ ...value, effort })}
           options={[
-            { value: "", label: "Default effort" },
-            ...efforts.map((effort) => ({
-              value: effort,
-              label:
-                effort === "xhigh"
-                  ? "Extra high"
-                  : effort[0].toUpperCase() + effort.slice(1),
+            {
+              value: "",
+              label: effort.isDefault
+                ? `Effort: ${effort.label}`
+                : "Default effort",
+            },
+            ...efforts.map((level) => ({
+              value: level,
+              label: effortName(level),
             })),
           ]}
         />

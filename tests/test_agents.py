@@ -120,7 +120,7 @@ class ProviderProbeTests(FakeCliCase):
         claude = agents.probe("claude", settings)
         self.assertEqual(claude["status"], "ready")
         self.assertEqual(claude["auth"]["label"], "Claude Pro")
-        self.assertIn("sonnet", [model["id"] for model in claude["models"]])
+        self.assertIn("claude-sonnet-5-5", [model["id"] for model in claude["models"]])
 
     def test_signed_out_disabled_and_missing_providers(self):
         settings = agents.clean_settings({})
@@ -512,6 +512,78 @@ class TurnTests(FakeCliCase):
         self.assertIn("model is unavailable", thread["items"][-1]["text"])
         thread = self.start("claude", text="FAIL please")
         self.assertEqual(thread["turns"][-1]["error"], "Ran out of turns")
+
+    def test_limit_failures_get_stable_error_codes(self):
+        cases = {
+            "You've hit your limit · resets 3pm": ("usage_limit", None),
+            "429 Too Many Requests: rate limit exceeded": ("rate_limited", 429),
+            "Error: prompt is too long: 250000 tokens": ("context_too_long", None),
+            "The model `gpt-9` does not exist": ("model_unavailable", None),
+            "401 Unauthorized": ("auth_required", 401),
+            "API Error: 529 overloaded_error": ("overloaded", 529),
+            "getaddrinfo ENOTFOUND api.anthropic.com": ("network_error", None),
+            "something unexpected": ("agent_error", None),
+        }
+        for message, (code, status) in cases.items():
+            with self.subTest(message=message):
+                info = agents.classify_error(message)
+                self.assertEqual(info["code"], code)
+                self.assertEqual(info.get("http_status"), status)
+        self.assertEqual(
+            agents.classify_error("Usage limit reached. Try again in 4 hours.")[
+                "reset"
+            ],
+            "Try again in 4 hours",
+        )
+
+    def test_failed_turn_records_its_error_code(self):
+        thread = self.start("codex", text="FAIL please")
+        item = thread["items"][-1]
+        self.assertEqual(item["kind"], "error")
+        self.assertEqual(item["code"], thread["turns"][-1]["error_code"])
+        self.assertEqual(item["code"], "model_unavailable")
+        self.assertIn("title", item)
+
+    def test_fork_copies_history_and_replays_it_once(self):
+        thread = self.start("codex", model="gpt-test", effort="high")
+        pid = self.project["id"]
+        fork = self.manager.fork(pid, thread["id"], title="Try blue")
+        self.assertNotEqual(fork["id"], thread["id"])
+        self.assertEqual(fork["title"], "Try blue")
+        self.assertEqual(fork["forked_from"]["thread"], thread["id"])
+        self.assertEqual(
+            [item["kind"] for item in fork["items"]],
+            [item["kind"] for item in thread["items"]],
+        )
+        self.assertEqual((fork["model"], fork["effort"]), ("gpt-test", "high"))
+        self.assertFalse(fork["locked"])
+        self.manager.send(pid, fork["id"], "Make it blue")
+        self.wait_idle(fork["id"])
+        prompt = self.invocations()[-1]["prompt"]
+        self.assertIn("<forked_conversation>", prompt)
+        self.assertIn("Make an intro", prompt)
+        self.assertTrue(prompt.endswith("Make it blue"))
+        # The context is replayed on the first message only; the source is untouched.
+        self.manager.send(pid, fork["id"], "And bigger")
+        self.wait_idle(fork["id"])
+        self.assertNotIn("<forked_conversation>", self.invocations()[-1]["prompt"])
+        self.assertEqual(
+            len(self.manager.view(pid, thread["id"])["turns"]),
+            len(thread["turns"]),
+        )
+        with self.assertRaises(agents.AgentError):
+            self.manager.fork(pid, thread["id"], turn_id="missing")
+
+    def test_fork_can_stop_at_an_earlier_turn_and_switch_agent(self):
+        thread = self.start("codex")
+        pid = self.project["id"]
+        first = thread["turns"][0]["id"]
+        self.manager.send(pid, thread["id"], "Second request")
+        self.wait_idle(thread["id"])
+        fork = self.manager.fork(pid, thread["id"], turn_id=first, provider="claude")
+        self.assertEqual(len(fork["turns"]), 1)
+        self.assertEqual(fork["provider"], "claude")
+        self.assertNotIn("Second request", [item.get("text") for item in fork["items"]])
 
     def test_interrupt_stops_the_process_tree(self):
         thread = self.manager.create(self.project["id"], provider="codex")

@@ -14,7 +14,7 @@ import {
   type UpdateState,
 } from "~/lib/api";
 
-export interface CompletedTurn {
+interface CompletedTurn {
   project: string;
   thread: string;
   turn: Turn;
@@ -53,7 +53,7 @@ interface StudioState {
   handleEvent(event: StudioEvent): void;
 }
 
-export type StudioEvent =
+type StudioEvent =
   | { type: "hello"; version: string }
   | {
       type: "providers";

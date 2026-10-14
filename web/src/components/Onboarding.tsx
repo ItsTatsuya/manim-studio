@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { api, type ProviderId, type ProviderStatus } from "~/lib/api";
+import { formatBytes } from "~/lib/utils";
 import { useStudio } from "~/state/studio";
 import { ProviderIcon, StudioMark } from "./icons";
 import { Button } from "./ui/button";
@@ -22,7 +23,7 @@ import {
 import { Badge, Spinner } from "./ui/input";
 import { toast } from "./ui/toast";
 
-const steps = ["Connect", "Quick guide", "Get started"];
+const steps = ["Connect", "Voice", "Quick guide", "Get started"];
 const example =
   "Create a 15-second animation explaining the Pythagorean theorem with clear labels and calm voice narration. Generate the script and any assets, then check and render it.";
 const guide = [
@@ -113,15 +114,19 @@ export function Onboarding({
             {step === 0
               ? "Welcome to Manim Studio"
               : step === 1
-                ? "From an idea to a video"
-                : "Make your first animation"}
+                ? "Download the narration voice"
+                : step === 2
+                  ? "From an idea to a video"
+                  : "Make your first animation"}
           </DialogTitle>
           <DialogDescription>
             {step === 0
               ? "Connect a coding assistant to generate scripts, narration and assets. You only need one."
               : step === 1
-                ? "A quick tour of your workspace."
-                : "Start with a small idea, then refine it in chat."}
+                ? "Narrated videos use a voice that runs on your computer. Download it now so it is ready when you need it."
+                : step === 2
+                  ? "A quick tour of your workspace."
+                  : "Start with a small idea, then refine it in chat."}
           </DialogDescription>
           <ol aria-label="Setup progress" className="mt-3 flex gap-2">
             {steps.map((label, index) => (
@@ -188,7 +193,8 @@ export function Onboarding({
               </p>
             </>
           )}
-          {step === 1 && (
+          {step === 1 && <VoiceStep />}
+          {step === 2 && (
             <>
               <ol className="space-y-4">
                 {guide.map(([heading, body], index) => (
@@ -206,14 +212,13 @@ export function Onboarding({
                 ))}
               </ol>
               <p className="rounded-lg border bg-muted/40 p-3 text-xs leading-relaxed text-muted-foreground">
-                Voice models download the first time you use narration. Files
-                and renders stay in your project. AI generation sends your
+                Files and renders stay in your project. AI generation sends your
                 prompt and any references the assistant reads to your chosen
                 provider.
               </p>
             </>
           )}
-          {step === 2 && (
+          {step === 3 && (
             <>
               <div className="rounded-xl border bg-card p-4">
                 <h2 className="text-sm font-medium">Try this prompt</h2>
@@ -263,10 +268,10 @@ export function Onboarding({
           )}
           <Button
             disabled={busy}
-            onClick={() => (step < 2 ? setStep(step + 1) : void finish())}
+            onClick={() => (step < 3 ? setStep(step + 1) : void finish())}
           >
             {busy && <Spinner />}
-            {step === 2 ? "Open Studio" : "Continue"}
+            {step === 3 ? "Open Studio" : "Continue"}
           </Button>
         </DialogFooter>
       </DialogPopup>
@@ -415,5 +420,127 @@ function SetupProvider({
         </a>
       </div>
     </section>
+  );
+}
+
+function VoiceStep() {
+  const status = useStudio((state) => state.narration);
+  const [quality, setQuality] = useState<"standard" | "high">("standard");
+  const [busy, setBusy] = useState(false);
+  const download = status?.download;
+  const downloading = download?.status === "downloading";
+  const installed = status?.models[quality].installed;
+  const anyInstalled =
+    !!status &&
+    (status.models.standard.installed || status.models.high.installed);
+
+  useEffect(() => {
+    if (!status)
+      void useStudio
+        .getState()
+        .loadNarration()
+        .catch(() => undefined);
+  }, [status]);
+  useEffect(() => {
+    if (!downloading) return;
+    const timer = window.setInterval(
+      () =>
+        void useStudio
+          .getState()
+          .loadNarration()
+          .catch(() => undefined),
+      700,
+    );
+    return () => window.clearInterval(timer);
+  }, [downloading]);
+
+  const start = async () => {
+    setBusy(true);
+    try {
+      const narration = downloading
+        ? await api.cancelVoiceDownload()
+        : await api.downloadVoice(quality);
+      useStudio.setState({ narration });
+    } catch (error) {
+      toast.error("Voice download failed", (error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!status) return <Spinner />;
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {(
+          [
+            ["standard", "Standard", "Good quality, smaller download"],
+            ["high", "High", "Richer voice, larger download"],
+          ] as const
+        ).map(([id, label, detail]) => (
+          <button
+            key={id}
+            type="button"
+            aria-pressed={quality === id}
+            disabled={downloading}
+            onClick={() => setQuality(id)}
+            className={`rounded-xl border p-4 text-left ${quality === id ? "border-primary bg-primary/5" : "bg-card"}`}
+          >
+            <div className="flex items-center gap-2 text-sm font-medium">
+              {label}
+              {status.models[id].installed && (
+                <Badge tone="success">Installed</Badge>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {status.models[id].installed
+                ? "Ready to use"
+                : `${formatBytes(status.models[id].download_size)} download`}
+            </p>
+          </button>
+        ))}
+      </div>
+      {installed ? (
+        <p className="text-sm text-muted-foreground" role="status">
+          The {quality === "high" ? "High" : "Standard"} voice is installed.
+          Narration is ready to use.
+        </p>
+      ) : (
+        <div className="space-y-2 rounded-xl border bg-card p-4">
+          {downloading && (
+            <>
+              <p className="text-xs text-muted-foreground" role="status">
+                Downloading · {formatBytes(download.done)} /{" "}
+                {formatBytes(download.total)}. You can continue; it keeps
+                downloading in the background.
+              </p>
+              <progress
+                aria-label="Voice download progress"
+                value={download.done}
+                max={download.total || 1}
+                className="h-1.5 w-full"
+              />
+            </>
+          )}
+          {download?.status === "failed" && (
+            <p className="text-xs text-destructive-foreground" role="alert">
+              {download.error}
+            </p>
+          )}
+          <Button disabled={busy} onClick={() => void start()}>
+            {busy ? <Spinner /> : downloading ? null : <DownloadIcon />}
+            {downloading
+              ? "Cancel download"
+              : `Download ${quality === "high" ? "High" : "Standard"} voice`}
+          </Button>
+        </div>
+      )}
+      {!anyInstalled && !downloading && (
+        <p className="text-xs text-muted-foreground">
+          Skipping is fine: you can download it later from the Narration tab,
+          but renders with narration will wait until a voice is installed.
+        </p>
+      )}
+    </>
   );
 }

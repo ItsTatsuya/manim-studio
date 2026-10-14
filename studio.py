@@ -6,6 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from fractions import Fraction
+import hashlib
 import importlib.metadata
 import importlib.util
 import json
@@ -517,13 +518,36 @@ async def event_stream():
     )
 
 
+_TOOLS = {"checked": 0.0, "latex": False, "typst": False, "manim": ""}
+TOOLS_TTL = 30.0
+
+
+def installed_tools() -> dict:
+    """Probe the PATH and package metadata at most every TOOLS_TTL seconds.
+
+    These lookups scan the disk (several milliseconds), and /api/health runs on
+    every page load and render start.
+    """
+    now = time.monotonic()
+    with LOCK:
+        if now - _TOOLS["checked"] >= TOOLS_TTL or not _TOOLS["manim"]:
+            _TOOLS.update(
+                checked=now,
+                manim=_TOOLS["manim"] or importlib.metadata.version("manim"),
+                latex=bool(shutil.which("latex") and shutil.which("dvisvgm")),
+                typst=importlib.util.find_spec("typst") is not None,
+            )
+        return dict(_TOOLS)
+
+
 @app.get("/api/health")
 def health():
+    tools = installed_tools()
     return {
-        "manim": importlib.metadata.version("manim"),
+        "manim": tools["manim"],
         "python": sys.version.split()[0],
-        "latex": bool(shutil.which("latex") and shutil.which("dvisvgm")),
-        "typst": importlib.util.find_spec("typst") is not None,
+        "latex": tools["latex"],
+        "typst": tools["typst"],
         "active": ACTIVE,
         "assets": str(ROOT / "assets"),
         "outputs": str(OUTPUTS),
@@ -667,6 +691,54 @@ def output_quality(width: int, height: int, fps: float) -> str:
     )
 
 
+def video_cache_key(job: dict, source: str, working: Path) -> str:
+    """Identify an animation by everything that can change its frames."""
+    parts = [
+        "1",
+        source,
+        job["scene"],
+        job["quality"],
+        job.get("width"),
+        job.get("height"),
+        job.get("fps"),
+        job.get("_requested_rate"),
+        job.get("project"),
+    ]
+    files = []
+    if job.get("project"):
+        # Assets and helper modules beside the script affect the render too.
+        # Compiled caches change on every run and must not invalidate it.
+        try:
+            for current, folders, names in os.walk(working):
+                folders[:] = sorted(
+                    name
+                    for name in folders
+                    if name != "__pycache__" and not name.startswith(".")
+                )
+                for name in sorted(names):
+                    if name in {"script.py", "narration.txt", "project.json"}:
+                        continue
+                    path = Path(current) / name
+                    info = path.stat()
+                    files.append(
+                        [
+                            path.relative_to(working).as_posix(),
+                            info.st_size,
+                            info.st_mtime_ns,
+                        ]
+                    )
+                    if len(files) >= 5000:
+                        raise StopIteration
+        except StopIteration:
+            pass
+        except OSError:
+            files.append("unreadable")
+    parts.append(files)
+    return hashlib.sha256(json.dumps(parts, default=str).encode("utf-8")).hexdigest()[
+        :32
+    ]
+
+
 def render_worker(job_id: str, source: str):
     global ACTIVE, PROCESS, WORKER
     job = JOBS[job_id]
@@ -743,6 +815,15 @@ def render_worker(job_id: str, source: str):
                         **job["_narration"],
                         "media_dir": str(directory / "media"),
                         "data_root": str(ROOT),
+                        # Checkpoints outlive this job so a retry resumes.
+                        "line_cache": str(ROOT / ".studio" / "render-cache" / "lines"),
+                        "video_cache": str(
+                            ROOT
+                            / ".studio"
+                            / "render-cache"
+                            / "videos"
+                            / video_cache_key(job, source, working)
+                        ),
                     }
                 ),
                 encoding="utf-8",
@@ -1588,6 +1669,29 @@ def read_thread(project_id: str, thread_id: str):
 @app.post("/api/projects/{project_id}/threads/{thread_id}")
 def update_thread(project_id: str, thread_id: str, body: ThreadUpdate):
     return agent_call(lambda: AGENTS.update(project_id, thread_id, **body.model_dump()))
+
+
+class ThreadFork(BaseModel):
+    turn: str | None = Field(default=None, max_length=40)
+    title: str = Field(default="", max_length=80)
+    provider: str | None = Field(default=None, max_length=20)
+    model: str | None = Field(default=None, max_length=100)
+    effort: str | None = Field(default=None, max_length=20)
+
+
+@app.post("/api/projects/{project_id}/threads/{thread_id}/fork")
+def fork_thread(project_id: str, thread_id: str, body: ThreadFork):
+    return agent_call(
+        lambda: AGENTS.fork(
+            project_id,
+            thread_id,
+            turn_id=body.turn,
+            title=body.title,
+            provider=body.provider,
+            model=body.model,
+            effort=body.effort,
+        )
+    )
 
 
 @app.delete("/api/projects/{project_id}/threads/{thread_id}")

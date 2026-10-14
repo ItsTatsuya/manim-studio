@@ -137,7 +137,10 @@ export function latestRender(renders: Render[], projectId: string | undefined) {
 }
 
 /** Render a project: the open editor's text when it is the current project, otherwise what is on disk. */
-export async function renderProject(projectId: string): Promise<Render> {
+export async function renderProject(
+  projectId: string,
+  options: { narration?: boolean } = {},
+): Promise<Render> {
   const doc = useProjectDoc.getState();
   const open = doc.id === projectId && doc.project;
   if (open && !(await doc.flush()))
@@ -160,7 +163,10 @@ export async function renderProject(projectId: string): Promise<Render> {
     project: projectId,
     name: project.name,
     quality: preset.quality,
-    narration: project.narration.enabled ? project.narration : undefined,
+    narration:
+      project.narration.enabled && options.narration !== false
+        ? project.narration
+        : undefined,
     ...(custom
       ? { width: preset.width, height: preset.height, fps: preset.fps }
       : {}),

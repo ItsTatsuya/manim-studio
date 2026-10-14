@@ -424,7 +424,8 @@ def _package_narration(entries: dict, manifest: dict) -> dict:
                         "Use increasing narration start times between 0 and 3600 seconds."
                     )
                 previous = start
-                lines.append(f"[{start:g}s] {segment['text'].strip()}")
+                stamp = f"{start:.3f}".rstrip("0").rstrip(".") or "0"
+                lines.append(f"[{stamp}s] {segment['text'].strip()}")
             settings["text"] = "\n\n".join(lines)
         elif value is not None:
             raise ProjectError(

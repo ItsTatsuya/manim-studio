@@ -1,13 +1,46 @@
 import { useEffect, useState } from "react";
-import { api } from "~/lib/api";
+import { api, type UpdateState } from "~/lib/api";
+import { runUpdateAction, type UpdateAction } from "~/lib/updates";
 import { useStudio } from "~/state/studio";
-import { useProjectDoc } from "~/state/project";
 import { Button } from "../ui/button";
-import { confirmAction } from "../ui/dialog";
 import { Spinner } from "../ui/input";
 import { Switch } from "../ui/switch";
-import { toast } from "../ui/toast";
 import { SettingsHeading, SettingsRow } from "./SettingsLayout";
+
+function checkedAgo(seconds: number | null | undefined) {
+  if (!seconds) return "";
+  const minutes = Math.floor((Date.now() / 1000 - seconds) / 60);
+  if (minutes < 1) return " Checked just now.";
+  if (minutes < 60) return ` Checked ${minutes} min ago.`;
+  return ` Checked ${Math.floor(minutes / 60)} h ago.`;
+}
+
+function updateMessage(updates: UpdateState | null | undefined) {
+  if (!updates) return "Checking for updates…";
+  const latest = updates.latest_version;
+  switch (updates.status) {
+    case "checking":
+      return "Checking for updates…";
+    case "current":
+      return `You're up to date. Version ${updates.current_version} is the latest.${checkedAgo(updates.last_checked)}`;
+    case "available":
+      return updates.can_download
+        ? `Version ${latest} is available. You have ${updates.current_version}.`
+        : `Version ${latest} is available. Download the desktop app to install it.`;
+    case "downloading":
+      return `Downloading version ${latest}… ${Math.round(updates.progress)}%`;
+    case "ready":
+      return `Version ${latest} is downloaded and ready to install.`;
+    case "installing":
+      return `Installing version ${latest}…`;
+    case "error":
+      return latest
+        ? `Version ${latest} is available, but the last attempt failed.`
+        : "Couldn't check for updates.";
+    default:
+      return "Not checked yet. Select Check for updates.";
+  }
+}
 
 export function AboutSettings() {
   const health = useStudio((state) => state.health);
@@ -50,41 +83,10 @@ export function AboutSettings() {
     );
     return () => window.clearInterval(timer);
   }, [polling]);
-  const action = async (kind: "check" | "download" | "cancel" | "install") => {
-    if (
-      kind === "install" &&
-      !(await confirmAction({
-        title: "Install update and restart?",
-        description:
-          "Studio will close and reopen. Your projects, assets and render history are preserved.",
-        confirm: "Install and restart",
-      }))
-    )
-      return;
+  const action = async (kind: UpdateAction) => {
     setBusy(true);
     try {
-      if (kind === "install") {
-        if (
-          !(await useProjectDoc.getState().flush()) ||
-          !(await useStudio.getState().flushPrefs())
-        )
-          throw new Error(
-            "Your changes couldn't be saved. Retry saving before updating.",
-          );
-        useStudio.setState({ installing: true });
-      }
-      const state = await {
-        check: api.checkUpdates,
-        download: api.downloadUpdate,
-        cancel: api.cancelUpdate,
-        install: api.installUpdate,
-      }[kind]();
-      useStudio.getState().setUpdates(state);
-      if (kind === "install" && state.status !== "installing")
-        useStudio.setState({ installing: false });
-    } catch (error) {
-      useStudio.setState({ installing: false });
-      toast.error("Update action failed", (error as Error).message);
+      await runUpdateAction(kind);
     } finally {
       setBusy(false);
     }
@@ -97,13 +99,7 @@ export function AboutSettings() {
       <div className="rounded-xl border bg-card p-5">
         <h2 className="font-medium text-sm">Updates</h2>
         <p className="mt-2 text-sm text-muted-foreground" role="status">
-          {updates?.status === "current"
-            ? "You're up to date."
-            : updates?.latest_version
-              ? `Latest version: ${updates.latest_version} · ${updates.status}`
-              : updates?.status === "checking"
-                ? "Checking for updates…"
-                : "Check for a new version of Studio."}
+          {updateMessage(updates)}
         </p>
         {updates?.edition === "source" && (
           <p className="mt-2 text-xs text-muted-foreground">
@@ -165,7 +161,7 @@ export function AboutSettings() {
               Install and restart
             </Button>
           )}
-          {updates?.release_url && (
+          {updates?.latest_version && updates.release_url && (
             <a
               href={updates.release_url}
               target="_blank"

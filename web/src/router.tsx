@@ -1,5 +1,6 @@
 import {
   createHashHistory,
+  lazyRouteComponent,
   createRootRoute,
   createRoute,
   createRouter,
@@ -9,12 +10,7 @@ import {
 import { AppShell } from "~/components/AppShell";
 import { HomeRedirect } from "~/components/HomeRedirect";
 import { ProjectView } from "~/components/ProjectView";
-import { RendersView } from "~/components/RendersView";
 import { SettingsLayout } from "~/components/settings/SettingsLayout";
-import { GeneralSettings } from "~/components/settings/GeneralSettings";
-import { ProvidersSettings } from "~/components/settings/ProvidersSettings";
-import { NarrationSettingsPage } from "~/components/settings/NarrationSettingsPage";
-import { AboutSettings } from "~/components/settings/AboutSettings";
 
 const rootRoute = createRootRoute({ component: AppShell });
 
@@ -24,11 +20,11 @@ const indexRoute = createRoute({
   component: HomeRedirect,
 });
 
-export interface ProjectSearch {
+interface ProjectSearch {
   thread?: string;
 }
 
-export const projectRoute = createRoute({
+const projectRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/projects/$projectId",
   validateSearch: (search: Record<string, unknown>): ProjectSearch =>
@@ -41,7 +37,10 @@ export const projectRoute = createRoute({
 const rendersRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/renders",
-  component: RendersView,
+  component: lazyRouteComponent(
+    () => import("~/components/RendersView"),
+    "RendersView",
+  ),
 });
 
 const settingsRoute = createRoute({
@@ -62,22 +61,34 @@ const settingsChildren = [
   createRoute({
     getParentRoute: () => settingsRoute,
     path: "general",
-    component: GeneralSettings,
+    component: lazyRouteComponent(
+      () => import("~/components/settings/GeneralSettings"),
+      "GeneralSettings",
+    ),
   }),
   createRoute({
     getParentRoute: () => settingsRoute,
     path: "providers",
-    component: ProvidersSettings,
+    component: lazyRouteComponent(
+      () => import("~/components/settings/ProvidersSettings"),
+      "ProvidersSettings",
+    ),
   }),
   createRoute({
     getParentRoute: () => settingsRoute,
     path: "narration",
-    component: NarrationSettingsPage,
+    component: lazyRouteComponent(
+      () => import("~/components/settings/NarrationSettingsPage"),
+      "NarrationSettingsPage",
+    ),
   }),
   createRoute({
     getParentRoute: () => settingsRoute,
     path: "about",
-    component: AboutSettings,
+    component: lazyRouteComponent(
+      () => import("~/components/settings/AboutSettings"),
+      "AboutSettings",
+    ),
   }),
 ];
 

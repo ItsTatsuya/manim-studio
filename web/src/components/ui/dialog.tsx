@@ -7,7 +7,6 @@ import { cn } from "~/lib/utils";
 import { Button } from "./button";
 
 export const Dialog = DialogPrimitive.Root;
-export const DialogClose = DialogPrimitive.Close;
 
 export function DialogPopup({
   className,

@@ -28,6 +28,7 @@ def audit():
                     "about",
                     "renders",
                     "onboarding-connect",
+                    "onboarding-voice",
                     "onboarding-guide",
                     "onboarding-start",
                 ):
@@ -62,8 +63,9 @@ def audit():
                         for _ in range(
                             {
                                 "onboarding-connect": 0,
-                                "onboarding-guide": 1,
-                                "onboarding-start": 2,
+                                "onboarding-voice": 1,
+                                "onboarding-guide": 2,
+                                "onboarding-start": 3,
                             }[view]
                         ):
                             page.get_by_role(

@@ -1,6 +1,6 @@
 [project]
 name = "manim-studio"
-version = "1.0.0"
+version = "1.1.0"
 description = "Standalone Manim Studio with CLI agents, narration and a video workspace"
 requires-python = ">=3.12,<3.13"
 dependencies = [

@@ -2,7 +2,7 @@ import type * as React from "react";
 
 import { cn } from "~/lib/utils";
 
-export const fieldClass =
+const fieldClass =
   "w-full min-w-0 rounded-[var(--control-radius)] border border-input bg-background px-2.5 text-sm text-foreground shadow-xs/5 outline-none transition-[box-shadow,border-color] placeholder:text-muted-foreground/70 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/20 disabled:opacity-50 aria-invalid:border-destructive/60 dark:bg-input/30";
 
 export function Input({ className, ...props }: React.ComponentProps<"input">) {
@@ -28,39 +28,11 @@ export function Textarea({
   );
 }
 
-export function Label({ className, ...props }: React.ComponentProps<"label">) {
-  return (
-    <label
-      className={cn("font-medium text-[13px] text-foreground", className)}
-      {...props}
-    />
-  );
-}
-
 export function Kbd({ className, ...props }: React.ComponentProps<"kbd">) {
   return (
     <kbd
       className={cn(
         "inline-flex h-5 min-w-5 items-center justify-center gap-0.5 rounded border border-border bg-muted px-1 font-sans text-[11px] text-muted-foreground",
-        className,
-      )}
-      {...props}
-    />
-  );
-}
-
-export function Separator({
-  className,
-  vertical,
-  ...props
-}: React.ComponentProps<"div"> & { vertical?: boolean }) {
-  return (
-    <div
-      role="separator"
-      aria-orientation={vertical ? "vertical" : "horizontal"}
-      className={cn(
-        "shrink-0 bg-border",
-        vertical ? "w-px self-stretch" : "h-px w-full",
         className,
       )}
       {...props}

@@ -49,27 +49,48 @@ PROVIDERS = {
 }
 CLAUDE_MODELS = [
     {
-        "id": "opus",
-        "name": "Claude Opus",
+        "id": "claude-fable-5-1",
+        "name": "Claude Fable 5.1",
+        "description": "Most capable. Best for complex, multi-scene animations.",
         "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "default_effort": None,
     },
     {
-        "id": "sonnet",
-        "name": "Claude Sonnet",
+        "id": "claude-opus-5-5",
+        "name": "Claude Opus 5.5",
+        "description": "Deep reasoning for demanding scripts.",
         "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "default_effort": None,
     },
-    {"id": "haiku", "name": "Claude Haiku", "efforts": ["low", "medium", "high"]},
     {
-        "id": "fable",
-        "name": "Claude Fable",
+        "id": "claude-sonnet-5-5",
+        "name": "Claude Sonnet 5.5",
+        "description": "Balanced speed and quality. Recommended for most videos.",
         "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "default_effort": None,
+    },
+    {
+        "id": "claude-haiku-5-5",
+        "name": "Claude Haiku 5.5",
+        "description": "Fastest and lightest. Good for quick edits.",
+        "efforts": ["low", "medium", "high"],
+        "default_effort": None,
     },
 ]
+# Earlier releases stored these moving aliases; they keep working.
+CLAUDE_ALIASES = {
+    "opus": "Claude Opus (latest)",
+    "sonnet": "Claude Sonnet (latest)",
+    "haiku": "Claude Haiku (latest)",
+    "fable": "Claude Fable (latest)",
+}
 CODEX_FALLBACK_MODELS = [
     {
         "id": "gpt-5.6-sol",
         "name": "GPT-5.6-Sol",
+        "description": "OpenAI's coding model for Codex.",
         "efforts": ["low", "medium", "high", "xhigh"],
+        "default_effort": "medium",
     },
 ]
 EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")
@@ -89,7 +110,7 @@ DEFAULT_SETTINGS = {
         "claude": {
             "enabled": True,
             "binary": "",
-            "model": "sonnet",
+            "model": "claude-sonnet-5-5",
             "effort": "",
             "custom_models": [],
         },
@@ -103,6 +124,120 @@ MAX_PROMPT = 40_000
 MAX_DETAIL = 6_000
 MAX_ITEMS = 3_000
 MAX_STDERR = 20_000
+
+
+ERROR_CODES = [
+    (
+        "usage_limit",
+        "Usage limit reached",
+        "Your plan's usage allowance is used up. Wait for it to reset, or switch to another model or agent.",
+        re.compile(
+            r"usage limit|hit your (?:usage |weekly |5-hour |session )?limit|limit reached"
+            r"|out of (?:credits|usage|messages)|(?:5-hour|weekly|session|daily) limit"
+            r"|exceeded your (?:current )?(?:usage|plan|quota)",
+            re.I,
+        ),
+    ),
+    (
+        "quota_exceeded",
+        "Billing or quota problem",
+        "The account behind this agent has no remaining credit or quota. Check its billing settings.",
+        re.compile(
+            r"insufficient[_ ]quota|credit balance|billing|payment required|\b402\b",
+            re.I,
+        ),
+    ),
+    (
+        "rate_limited",
+        "Rate limited",
+        "The provider is receiving too many requests. Wait a minute and send the message again.",
+        re.compile(r"rate[ _-]?limit|too many requests|\b429\b", re.I),
+    ),
+    (
+        "context_too_long",
+        "Conversation too long",
+        "This chat has outgrown the model's context window. Start a new chat or fork from an earlier point.",
+        re.compile(
+            r"context (?:length|window)|prompt is too long|maximum context|too many tokens"
+            r"|token limit|context_length_exceeded",
+            re.I,
+        ),
+    ),
+    (
+        "model_unavailable",
+        "Model not available",
+        "This model isn't available to your account. Choose another model from the picker.",
+        re.compile(
+            r"model[^.\n]{0,60}(?:not found|not available|unavailable|does not exist|unsupported|"
+            r"unknown|no access|not supported)|invalid model|unknown model",
+            re.I,
+        ),
+    ),
+    (
+        "auth_required",
+        "Sign-in required",
+        "The agent isn't signed in or its session expired. Sign in again in Settings → Providers.",
+        re.compile(
+            r"not logged in|please (?:log|sign) ?in|unauthori[sz]ed|invalid api key"
+            r"|authentication|\b401\b|expired (?:token|session)|/login",
+            re.I,
+        ),
+    ),
+    (
+        "overloaded",
+        "Provider is overloaded",
+        "The provider is temporarily at capacity. Try again in a few minutes.",
+        re.compile(
+            r"overloaded|\b529\b|\b503\b|service unavailable|at capacity|try again later",
+            re.I,
+        ),
+    ),
+    (
+        "network_error",
+        "Connection problem",
+        "Studio couldn't reach the provider. Check your internet connection and try again.",
+        re.compile(
+            r"ENOTFOUND|ECONNRESET|ECONNREFUSED|ETIMEDOUT|network|connection (?:error|refused|reset|closed)"
+            r"|fetch failed|timed out|could not resolve|dns",
+            re.I,
+        ),
+    ),
+]
+RESET_HINT = re.compile(
+    r"((?:resets?|try again|available again|retry)[^.\n|]{0,80})", re.I
+)
+HTTP_STATUS = re.compile(r"\b([45]\d\d)\b")
+
+
+def classify_error(message: str, status=None) -> dict:
+    """Turn a provider failure into a stable code, headline and next step."""
+    text = str(message or "")
+    probe = f"{status} {text}" if status else text
+    for code, title, hint, pattern in ERROR_CODES:
+        if pattern.search(probe):
+            break
+    else:
+        code, title, hint = (
+            "agent_error",
+            "The agent stopped with an error",
+            "Open the details below, then retry or start a new chat.",
+        )
+    info = {"code": code, "title": title, "hint": hint}
+    if isinstance(status, int):
+        info["http_status"] = status
+    else:
+        found = HTTP_STATUS.search(text)
+        if found and code != "agent_error":
+            info["http_status"] = int(found[1])
+    reset = RESET_HINT.search(text)
+    if reset and code in {
+        "usage_limit",
+        "rate_limited",
+        "overloaded",
+        "quota_exceeded",
+    }:
+        info["reset"] = reset[1].strip(" .,:;")[:120]
+    return info
 
 
 class AgentError(Exception):
@@ -347,6 +482,18 @@ def _models(provider: str, binary: str | None, config: dict) -> list[dict]:
             models = []
     if not models and provider == "codex":
         models = [dict(model) for model in CODEX_FALLBACK_MODELS]
+    if provider == "claude":
+        for alias, label in CLAUDE_ALIASES.items():
+            models.append(
+                {
+                    "id": alias,
+                    "name": label,
+                    "description": "Moving alias that follows the newest release.",
+                    "efforts": list(EFFORTS[:5]),
+                    "default_effort": None,
+                    "alias": True,
+                }
+            )
     known = {model["id"] for model in models}
     for custom in config["custom_models"]:
         if custom not in known:
@@ -579,13 +726,26 @@ class ClaudeStream:
                 for key in ("usage", "total_cost_usd", "num_turns", "duration_ms")
             }
             if event.get("is_error") or event.get("subtype") not in (None, "success"):
-                self.turn.fail(
-                    str(
-                        event.get("result")
-                        or event.get("subtype")
-                        or "Claude reported an error."
-                    )
+                status = event.get("api_error_status")
+                message = str(
+                    event.get("result")
+                    or event.get("subtype")
+                    or "Claude reported an error."
                 )
+                if isinstance(status, int):
+                    self.turn.fail(message, status)
+                else:
+                    self.turn.fail(message)
+        elif kind == "rate_limit_event":
+            info = event.get("rate_limit_info")
+            if isinstance(info, dict) and info.get("status") == "rejected":
+                resets = info.get("resetsAt")
+                kind_name = str(info.get("rateLimitType") or "usage").replace("_", " ")
+                label = f"{kind_name} limit"
+                if isinstance(resets, (int, float)) and resets > 0:
+                    moment = datetime.fromtimestamp(resets).strftime("%b %d, %H:%M")
+                    label += f" resets {moment}"
+                self.turn.limit = label
 
     def _text_key(self, message_id: str, ordinal: int) -> str:
         return f"claude:{message_id}:text:{ordinal}"
@@ -726,9 +886,10 @@ class Turn:
         self.items_by_key: dict[str, dict] = {}
         self.usage = None
         self.error = None
+        self.error_info = None
+        self.limit = None
         self.process: subprocess.Popen | None = None
         self.cancelled = False
-        self.last_save = 0.0
 
     def set_session(self, session_id: str):
         if SESSION_PATTERN.fullmatch(session_id):
@@ -764,8 +925,42 @@ class Turn:
             snapshot = dict(item)
         self.manager.emit_item(self.thread, snapshot, save=False)
 
-    def fail(self, message: str):
+    def fail(self, message: str, status=None):
         self.error = message[:4000]
+        self.error_info = classify_error(message, status)
+        # A structured rate-limit event knows exactly when the limit resets.
+        if self.limit and self.error_info["code"] in {"usage_limit", "rate_limited"}:
+            self.error_info["reset"] = self.limit
+
+
+TRANSCRIPT_LIMIT = 24_000
+
+
+def transcript(items: list[dict]) -> str:
+    """A readable replay of a chat, newest content kept when it is long."""
+    lines = []
+    for item in items:
+        kind = item.get("kind")
+        if kind == "user" and item.get("text"):
+            lines.append(f"User: {item['text'].strip()}")
+        elif kind == "assistant" and item.get("text", "").strip():
+            lines.append(f"Assistant: {item['text'].strip()}")
+        elif kind == "file_change":
+            paths = ", ".join(
+                change.get("path", "") for change in item.get("files", [])
+            )
+            if paths:
+                lines.append(f"(Assistant changed: {paths})")
+    text = "\n\n".join(lines)
+    if len(text) > TRANSCRIPT_LIMIT:
+        text = "…(earlier messages omitted)\n\n" + text[-TRANSCRIPT_LIMIT:]
+    if not text:
+        return ""
+    return (
+        "<forked_conversation>\nThis chat was forked from an earlier conversation "
+        "about the same project. The files in the project folder are the current "
+        "state. Earlier messages:\n\n" + text + "\n</forked_conversation>"
+    )
 
 
 def _thread_summary(thread: dict) -> dict:
@@ -782,6 +977,7 @@ def _thread_summary(thread: dict) -> dict:
         "updated": thread["updated"],
         "status": last["status"] if last else "idle",
         "locked": bool(thread.get("session")),
+        "forked_from": thread.get("forked_from"),
     }
 
 
@@ -1108,6 +1304,83 @@ class AgentManager:
         self.emit_meta(thread)
         return _thread_summary(thread)
 
+    def fork(
+        self,
+        project_id: str,
+        thread_id: str,
+        *,
+        turn_id=None,
+        title="",
+        provider=None,
+        model=None,
+        effort=None,
+    ) -> dict:
+        """Copy a chat (up to and including `turn_id`) into a new, independent one.
+
+        Provider sessions cannot be split, so the new chat starts a fresh session
+        and replays the copied conversation as context on its first message.
+        """
+        with self.lock:
+            source = self.get(project_id, thread_id)
+            turns = [dict(turn) for turn in source["turns"]]
+            if turn_id is not None:
+                position = next(
+                    (i for i, turn in enumerate(turns) if turn["id"] == turn_id), None
+                )
+                if position is None:
+                    raise AgentError("That message is no longer in this chat.")
+                turns = turns[: position + 1]
+            if not turns:
+                raise AgentError("Send a message before forking this chat.")
+            if any(turn.get("status") == "running" for turn in turns):
+                raise AgentError("Wait for the agent to finish before forking.")
+            included = {turn["id"] for turn in turns}
+            items = [dict(item) for item in source["items"] if item["turn"] in included]
+            provider_id, chosen_model, chosen_effort = self._choose(
+                provider or source["provider"],
+                model
+                if model is not None
+                else (
+                    source["model"]
+                    if not provider or provider == source["provider"]
+                    else None
+                ),
+                effort
+                if effort is not None
+                else (
+                    source["effort"]
+                    if not provider or provider == source["provider"]
+                    else None
+                ),
+            )
+            for turn in turns:
+                turn.pop("usage", None)
+            now = _now()
+            thread = {
+                "id": uuid.uuid4().hex,
+                "project": project_id,
+                "title": (title or "").strip()[:80]
+                or f"Fork of {source['title']}"[:80],
+                "provider": provider_id,
+                "model": chosen_model,
+                "effort": chosen_effort,
+                "session": None,
+                "created": now,
+                "updated": now,
+                "items": items,
+                "turns": turns,
+                "forked_from": {
+                    "thread": source["id"],
+                    "title": source["title"],
+                    "turn": turns[-1]["id"],
+                },
+                "fork_context": transcript(items),
+            }
+            self.threads[thread["id"]] = thread
+        self.save(thread)
+        self.emit_meta(thread)
+        return self.view(project_id, thread["id"])
+
     def delete(self, project_id: str, thread_id: str):
         self.interrupt(project_id, thread_id, wait=True)
         with self.lock:
@@ -1206,6 +1479,10 @@ class AgentManager:
                 raise AgentError(
                     f"Sign in to {PROVIDERS[thread['provider']]['name']} in Settings → Providers."
                 )
+            fork_context = thread.get("fork_context") or ""
+            if fork_context:
+                context = f"{fork_context}\n\n{context}" if context else fork_context
+                thread["fork_context"] = ""
             turn_record = {
                 "id": uuid.uuid4().hex,
                 "status": "running",
@@ -1488,7 +1765,12 @@ class AgentManager:
         if status == "interrupted":
             turn.upsert(f"notice:{record['id']}", kind="notice", text="Stopped.")
         elif turn.error:
-            turn.upsert(f"error:{record['id']}", kind="error", text=turn.error)
+            turn.upsert(
+                f"error:{record['id']}",
+                kind="error",
+                text=turn.error,
+                **(turn.error_info or {}),
+            )
         # Close any rows that were still open when the process ended.
         with self.lock:
             unfinished = {
@@ -1515,6 +1797,7 @@ class AgentManager:
                 finished=_now(),
                 changed=changed,
                 error=turn.error,
+                error_code=(turn.error_info or {}).get("code"),
                 usage=turn.usage,
             )
             thread["updated"] = _now()

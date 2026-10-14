@@ -65,6 +65,13 @@ class WorkspaceTests(unittest.TestCase):
         expect(dialog).to_be_visible()
         dialog.get_by_role("button", name="Use Claude Code", exact=True).click()
         dialog.get_by_role("button", name="Continue", exact=True).click()
+        expect(
+            p.get_by_role("dialog", name="Download the narration voice")
+        ).to_be_visible()
+        expect(
+            p.get_by_role("button", name=re.compile("^Download .* voice$"))
+        ).to_be_visible()
+        p.get_by_role("button", name="Continue", exact=True).click()
         expect(p.get_by_role("dialog", name="From an idea to a video")).to_be_visible()
         expect(p.get_by_text("Add your references", exact=True)).to_be_visible()
         p.get_by_role("button", name="Continue", exact=True).click()
@@ -368,12 +375,12 @@ class WorkspaceTests(unittest.TestCase):
         p = self.page
         files = documents()
         for provider, option, reply in (
-            ("codex", "GPT-Test", "Created an intro scene."),
-            ("claude", "Claude Sonnet", "Done."),
+            ("codex", re.compile("^GPT-Test"), "Created an intro scene."),
+            ("claude", re.compile("^Claude Sonnet 5.5"), "Done."),
         ):
             value = project(p, self.url, f"Document contract {provider}")
             p.get_by_role("button", name=re.compile("^Choose agent and model")).click()
-            p.get_by_role("menuitemradio", name=option, exact=True).click()
+            p.get_by_role("menuitemradio", name=option).click()
             p.get_by_label("Upload reference files").set_input_files(files)
             for file in files:
                 expect(
@@ -647,12 +654,12 @@ class WorkspaceTests(unittest.TestCase):
     def test_codex_and_claude_generation_resume_and_interrupt(self):
         p = self.page
         for provider, option, reply in (
-            ("codex", "GPT-Test", "Created an intro scene."),
-            ("claude", "Claude Sonnet", "Done."),
+            ("codex", re.compile("^GPT-Test"), "Created an intro scene."),
+            ("claude", re.compile("^Claude Sonnet 5.5"), "Done."),
         ):
             value = project(p, self.url, f"CLI {provider}")
             p.get_by_role("button", name=re.compile("^Choose agent and model")).click()
-            p.get_by_role("menuitemradio", name=option, exact=True).click()
+            p.get_by_role("menuitemradio", name=option).click()
             p.get_by_role("textbox", name="Message the agent").fill(
                 "Create a narrated intro scene and an SVG asset"
             )
@@ -1051,6 +1058,95 @@ class WorkspaceTests(unittest.TestCase):
             p, self.url, path, lambda value: "# recovered draft" in value["source"]
         )
 
+    def test_sidebar_update_notice_downloads_from_the_sidebar(self):
+        p = self.page
+        state = {
+            "status": "available",
+            "progress": 0,
+            "bytes_downloaded": 0,
+            "total_bytes": 100,
+            "error": None,
+            "current_version": "1.2.1",
+            "edition": "portable",
+            "latest_version": "1.2.2",
+            "release_url": "https://github.com/ItsTatsuya/manim-studio/releases",
+            "last_checked": 1,
+            "can_download": True,
+            "can_install": False,
+            "can_cancel": False,
+        }
+        calls = []
+
+        def updates(route):
+            kind = route.request.url.split("/api/updates")[-1].strip("/")
+            if route.request.method == "POST":
+                calls.append(kind)
+                if kind == "download":
+                    state.update(
+                        status="downloading",
+                        progress=40,
+                        can_download=False,
+                        can_cancel=True,
+                    )
+                if kind == "cancel":
+                    state.update(status="available", progress=0, can_cancel=False)
+                    state.update(can_download=True)
+            route.fulfill(json=state)
+
+        p.route("**/api/updates**", updates)
+        p.reload()
+        sidebar = p.get_by_role("complementary", name="Studio sidebar")
+        expect(sidebar.get_by_text("Update 1.2.2 available")).to_be_visible()
+        sidebar.get_by_role("button", name="Download update").click()
+        expect(
+            sidebar.get_by_role("progressbar", name="Update progress")
+        ).to_have_attribute("value", "40")
+        sidebar.get_by_role("button", name="Cancel download").click()
+        expect(sidebar.get_by_role("button", name="Download update")).to_be_visible()
+        self.assertEqual(calls, ["download", "cancel"])
+
+    def test_up_to_date_sidebar_offers_a_manual_check_only(self):
+        p = self.page
+        state = {
+            "status": "current",
+            "progress": 0,
+            "bytes_downloaded": 0,
+            "total_bytes": 0,
+            "error": None,
+            "current_version": "1.0.0",
+            "edition": "portable",
+            "latest_version": None,
+            "release_url": "https://github.com/ItsTatsuya/manim-studio/releases",
+            "last_checked": 1,
+            "can_download": False,
+            "can_install": False,
+            "can_cancel": False,
+        }
+        p.route("**/api/updates**", lambda route: route.fulfill(json=state))
+        p.reload()
+        sidebar = p.get_by_role("complementary", name="Studio sidebar")
+        expect(sidebar.get_by_role("button", name="Download update")).to_have_count(0)
+        expect(
+            sidebar.get_by_role("button", name=re.compile("Check for updates"))
+        ).to_be_visible()
+
+    def test_chat_shows_model_effort_and_forks_from_a_turn(self):
+        p = self.page
+        value = project(p, self.url, "Fork check")
+        p.get_by_role("button", name=re.compile("^Choose agent and model")).click()
+        p.get_by_role("menuitemradio", name=re.compile("^Claude Sonnet 5.5")).click()
+        p.get_by_role("textbox", name="Message the agent").fill("Create an intro")
+        p.get_by_role("button", name="Send", exact=True).click()
+        expect(p.get_by_text("Done.", exact=True)).to_be_visible(timeout=15000)
+        log = p.get_by_role("log", name="Conversation")
+        expect(log.get_by_text(re.compile("Claude Sonnet 5.5 ·"))).to_be_visible()
+        before = p.url
+        log.get_by_role("button", name="Fork from here").click()
+        expect(log.get_by_text(re.compile("^Forked from"))).to_be_visible()
+        self.assertNotEqual(p.url, before)
+        threads = api(p, self.url, f"/api/projects/{value['id']}/threads")["threads"]
+        self.assertEqual(len(threads), 2)
+
     def test_update_progress_cancel_confirmation_and_failed_restart(self):
         p = self.page
         state = {
@@ -1094,21 +1190,22 @@ class WorkspaceTests(unittest.TestCase):
         p.reload()
         p.get_by_role("link", name="Settings", exact=True).click()
         p.get_by_role("link", name="About & updates", exact=True).click()
-        p.get_by_role("button", name="Download update", exact=True).click()
-        expect(p.get_by_role("progressbar", name="Update progress")).to_have_attribute(
-            "value", "25"
-        )
-        p.get_by_role("button", name="Cancel download", exact=True).click()
-        p.get_by_role("button", name="Install and restart", exact=True).click()
+        main = p.get_by_role("main")
+        main.get_by_role("button", name="Download update", exact=True).click()
+        expect(
+            main.get_by_role("progressbar", name="Update progress")
+        ).to_have_attribute("value", "25")
+        main.get_by_role("button", name="Cancel download", exact=True).click()
+        main.get_by_role("button", name="Install and restart", exact=True).click()
         expect(p.get_by_role("alertdialog")).to_be_visible()
         p.get_by_role("button", name="Cancel", exact=True).click()
         self.assertNotIn("install", calls)
-        p.get_by_role("button", name="Install and restart", exact=True).click()
+        main.get_by_role("button", name="Install and restart", exact=True).click()
         p.get_by_role("alertdialog").get_by_role(
             "button", name="Install and restart", exact=True
         ).click()
-        expect(p.get_by_text("Studio could not close", exact=True)).to_be_visible()
+        expect(main.get_by_text("Studio could not close", exact=True)).to_be_visible()
         expect(
-            p.get_by_role("button", name="Install and restart", exact=True)
+            main.get_by_role("button", name="Install and restart", exact=True)
         ).to_be_enabled()
         self.assertEqual(calls.count("install"), 1)

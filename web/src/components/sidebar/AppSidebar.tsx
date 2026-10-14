@@ -3,6 +3,7 @@ import {
   ChevronRightIcon,
   ClapperboardIcon,
   EllipsisIcon,
+  GitForkIcon,
   FolderIcon,
   FolderOpenIcon,
   FolderPlusIcon,
@@ -35,6 +36,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { toast } from "../ui/toast";
+import { UpdateNotice } from "./UpdateNotice";
 import { Tooltip } from "../ui/tooltip";
 
 function useExpansion() {
@@ -66,7 +68,6 @@ export function AppSidebar({
 }) {
   const projects = useStudio((state) => state.projects);
   const connected = useStudio((state) => state.connected);
-  const updates = useStudio((state) => state.updates);
   const location = useRouterState({ select: (state) => state.location });
   const currentProject = location.pathname.match(
     /^\/projects\/([0-9a-f]{32})/,
@@ -75,8 +76,6 @@ export function AppSidebar({
   const [expanded, setExpanded] = useExpansion();
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
-  const updateReady =
-    updates && ["available", "ready"].includes(updates.status);
 
   return (
     <aside
@@ -229,24 +228,7 @@ export function AppSidebar({
             </div>
           </Tooltip>
         )}
-        {updateReady && (
-          <Tooltip
-            content={`Update ${updates?.latest_version} available`}
-            side={collapsed ? "right" : "top"}
-          >
-            <Link
-              to="/settings/about"
-              aria-label={`Update ${updates?.latest_version} available`}
-              className={cn(
-                "mb-1 flex items-center gap-2 rounded-md bg-primary/10 px-2 py-1.5 font-medium text-info-foreground text-xs hover:bg-primary/15",
-                collapsed && "justify-center",
-              )}
-            >
-              <StatusDot tone="info" />{" "}
-              {!collapsed && `Update ${updates?.latest_version} available`}
-            </Link>
-          </Tooltip>
-        )}
+        <UpdateNotice collapsed={collapsed} />
         <SidebarLink
           to="/renders"
           icon={<ClapperboardIcon />}
@@ -496,6 +478,22 @@ function ThreadRow({
 }) {
   const navigate = useNavigate();
   const [renaming, setRenaming] = useState(false);
+  const fork = async () => {
+    try {
+      const forked = await api.forkThread(thread.project, thread.id);
+      useStudio.getState().upsertThreadSummary(forked);
+      useStudio.setState((state) => ({
+        details: { ...state.details, [forked.id]: forked },
+      }));
+      void navigate({
+        to: "/projects/$projectId",
+        params: { projectId: thread.project },
+        search: { thread: forked.id },
+      });
+    } catch (error) {
+      toast.error("Couldn't fork the chat", (error as Error).message);
+    }
+  };
   const remove = async () => {
     const ok = await confirmAction({
       title: "Delete this chat?",
@@ -560,6 +558,9 @@ function ThreadRow({
           <MenuPopup align="end">
             <MenuItem onClick={() => setRenaming(true)}>
               <PencilIcon /> Rename
+            </MenuItem>
+            <MenuItem onClick={() => void fork()}>
+              <GitForkIcon /> Fork chat
             </MenuItem>
             <MenuItem destructive onClick={() => void remove()}>
               <Trash2Icon /> Delete chat

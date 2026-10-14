@@ -6,7 +6,7 @@ import { cn } from "~/lib/utils";
 type IconProps = SVGProps<SVGSVGElement>;
 
 // Brand marks as drawn in T3 Code's Icons.tsx (MIT).
-export function OpenAIIcon({ className, ...props }: IconProps) {
+function OpenAIIcon({ className, ...props }: IconProps) {
   return (
     <svg
       {...props}
@@ -23,7 +23,7 @@ export function OpenAIIcon({ className, ...props }: IconProps) {
   );
 }
 
-export function ClaudeIcon({ className, ...props }: IconProps) {
+function ClaudeIcon({ className, ...props }: IconProps) {
   return (
     <svg
       {...props}

@@ -285,6 +285,12 @@ class FakeEngine:
         return tone.astype(np.float32), narration.SAMPLE_RATE
 
 
+def _tone(seconds: float):
+    count = int(seconds * narration.SAMPLE_RATE)
+    wave = 0.2 * np.sin(np.arange(count) * 2 * np.pi * 220 / narration.SAMPLE_RATE)
+    return wave.astype(np.float32)
+
+
 def write_video(path: Path, seconds: float, with_audio: bool):
     with av.open(str(path), "w") as output:
         video = output.add_stream("libx264", rate=10)
@@ -312,20 +318,127 @@ class NarrationTests(unittest.TestCase):
     def test_timeline_parsing(self):
         segments = narration.parse_timeline(
             "# note, not spoken\nFirst line\ncontinues here.\n\n"
-            "[0:02.5] Pinned.\n[1:01:03] Hours work.\n[7s] Seconds.\n\n\n"
+            "[0:02.5] Pinned.\n[0:59:03] Hours work.\n[7s] Seconds.\n\n\n"
         )
         self.assertEqual(
             [(item["start"], item["text"]) for item in segments],
             [
                 (None, "First line continues here."),
                 (2.5, "Pinned."),
-                (3663.0, "Hours work."),
+                (3543.0, "Hours work."),
                 (7.0, "Seconds."),
             ],
         )
         self.assertEqual(narration.parse_timeline("# only notes\n\n"), [])
         with self.assertRaises(narration.NarrationError):
             narration.parse_timeline("\n\n".join(["word"] * 401))
+
+    def test_long_paragraphs_are_chunked_at_sentences(self):
+        sentence = "The derivative measures how fast a function changes. "
+        chunks = narration.split_text(sentence * 40)
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(len(chunk) <= narration.CHUNK_CHARS for chunk in chunks))
+        self.assertTrue(all(chunk.endswith(".") for chunk in chunks))
+        self.assertEqual(" ".join(chunks).split(), (sentence * 40).split())
+        # Text with no punctuation or spaces still splits instead of failing.
+        giant = narration.split_text("a" * 1000)
+        self.assertTrue(all(len(chunk) <= narration.CHUNK_CHARS for chunk in giant))
+        self.assertEqual("".join(giant), "a" * 1000)
+
+    def test_long_paragraph_works_without_duration_output(self):
+        class Plain:
+            """Like the bundled Kokoro models: `continuous=True` is unsupported."""
+
+            def __init__(self):
+                self.calls = []
+
+            def create(self, text, **options):
+                if options.get("continuous"):
+                    raise ValueError(
+                        "continuous synthesis needs a model that reports durations"
+                    )
+                self.calls.append(text)
+                return _tone(0.2), narration.SAMPLE_RATE
+
+        engine = Plain()
+        paragraph = "A sentence that keeps going and going. " * 30
+        track, _ = narration.synthesize(
+            [{"start": None, "text": paragraph, "line": 1}],
+            voice="af_heart",
+            speed=1.0,
+            engine=engine,
+        )
+        self.assertGreater(len(engine.calls), 1)
+        self.assertGreater(track.size, 0)
+
+    def test_unspeakable_text_is_skipped_with_a_warning(self):
+        class Silent:
+            def create(self, text, **options):
+                raise ValueError(f"No phonemes of {text!r} are in the model vocabulary")
+
+        track, warnings = narration.synthesize(
+            [{"start": None, "text": "...", "line": 4}],
+            voice="af_heart",
+            speed=1.0,
+            engine=Silent(),
+        )
+        self.assertEqual(track.size, 0)
+        self.assertIn("line 4", warnings[0])
+
+    def test_finished_lines_are_checkpointed(self):
+        import tempfile
+
+        class Counting:
+            calls = 0
+
+            def create(self, text, **options):
+                Counting.calls += 1
+                return _tone(0.2), narration.SAMPLE_RATE
+
+        segments = narration.parse_timeline("One line.\n\nSecond line.")
+        with tempfile.TemporaryDirectory() as folder:
+            for _ in range(2):
+                narration.synthesize(
+                    segments,
+                    voice="af_heart",
+                    speed=1.0,
+                    engine=Counting(),
+                    cache_dir=folder,
+                )
+            self.assertEqual(Counting.calls, 2)
+            # A changed line is the only one generated again.
+            changed = narration.parse_timeline("One line.\n\nSecond line, edited.")
+            narration.synthesize(
+                changed,
+                voice="af_heart",
+                speed=1.0,
+                engine=Counting(),
+                cache_dir=folder,
+            )
+            self.assertEqual(Counting.calls, 3)
+
+    def test_video_checkpoint_round_trip(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            media = root / "media" / "videos" / "x"
+            media.mkdir(parents=True)
+            (media / "video.mp4").write_bytes(b"silent animation")
+            spec = {
+                "media_dir": str(root / "media"),
+                "video_cache": str(root / "cache" / "videos" / "abc"),
+            }
+            narration.checkpoint_video(spec)
+            fresh = {**spec, "media_dir": str(root / "second")}
+            self.assertTrue(narration.restore_video(fresh, report=lambda m: None))
+            restored = list((root / "second").rglob("video.mp4"))
+            self.assertEqual(restored[0].read_bytes(), b"silent animation")
+            self.assertFalse(
+                narration.restore_video(
+                    {**fresh, "video_cache": str(root / "cache" / "videos" / "none")}
+                )
+            )
 
     def test_voices_and_languages(self):
         voices = {voice["id"]: voice for voice in narration.voices()}

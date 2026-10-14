@@ -60,22 +60,52 @@ def report_exception(*args, **kwargs):
 
 
 error_console.print_exception = report_exception
-if narration_spec is None:
-    runpy.run_module("manim", run_name="__main__", alter_sys=True)
-else:
+
+
+def run_manim():
     try:
         runpy.run_module("manim", run_name="__main__", alter_sys=True)
     except SystemExit as finished:
         if finished.code not in (0, None):
             raise
+
+
+if narration_spec is None:
+    runpy.run_module("manim", run_name="__main__", alter_sys=True)
+else:
     import narration
 
+    def stage(message):
+        print("STUDIO_STAGE|" + message, flush=True)
+
+    spec = json.loads(Path(narration_spec).read_text(encoding="utf-8"))
     try:
-        narration.narrate_render(
-            json.loads(Path(narration_spec).read_text(encoding="utf-8")),
-            report=lambda message: print("STUDIO_STAGE|" + message, flush=True),
-            warn=lambda message: print("STUDIO_WARNING|" + message, flush=True),
-        )
+        # Narrate first: a bad line fails in seconds, and every finished line
+        # is checkpointed so the retry only generates what changed.
+        try:
+            prepared = narration.prepare_track(spec, report=stage)
+        except narration.NarrationError:
+            raise
+        except Exception as error:
+            raise narration.NarrationError(
+                f"The narration voice failed ({type(error).__name__}: {error})."
+            ) from error
+        if not narration.restore_video(spec, report=stage):
+            run_manim()
+            narration.checkpoint_video(spec)
+        try:
+            narration.narrate_render(
+                spec,
+                report=stage,
+                warn=lambda message: print("STUDIO_WARNING|" + message, flush=True),
+                prepared=prepared,
+            )
+        except narration.NarrationError:
+            raise
+        except Exception as error:
+            raise narration.NarrationError(
+                f"Adding narration to the video failed ({type(error).__name__}: {error})."
+            ) from error
     except narration.NarrationError as error:
         print(f"STUDIO_NARRATION_ERROR|{error}", flush=True)
         raise SystemExit(3)

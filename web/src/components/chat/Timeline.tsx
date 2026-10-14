@@ -2,6 +2,7 @@ import {
   BrainIcon,
   ChevronRightIcon,
   CircleAlertIcon,
+  GitForkIcon,
   FilePenIcon,
   FilePlusIcon,
   FileMinusIcon,
@@ -13,21 +14,27 @@ import {
   XCircleIcon,
 } from "lucide-react";
 import {
+  lazy,
   memo,
+  Suspense,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { useNavigate } from "@tanstack/react-router";
 
-import type { Thread, ThreadItem, Turn } from "~/lib/api";
+import { api, type Thread, type ThreadItem, type Turn } from "~/lib/api";
+import { effortInfo, modelName } from "~/lib/models";
+import { useStudio } from "~/state/studio";
 import { cn, formatDuration } from "~/lib/utils";
 import type { PanelTab } from "../panel/RightPanel";
 import { Spinner } from "../ui/input";
+import { toast } from "../ui/toast";
 import { useElapsed } from "./useElapsed";
+
+const Markdown = lazy(() => import("./Markdown"));
 
 const WORK_KINDS = new Set([
   "reasoning",
@@ -99,11 +106,20 @@ export function Timeline({
         role="log"
         aria-label="Conversation"
       >
+        {thread.forked_from && (
+          <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
+            <GitForkIcon className="size-3" />
+            Forked from {thread.forked_from.title}. The earlier conversation is
+            included as context.
+          </div>
+        )}
         {turns.map(({ turn, blocks }) => (
           <TurnView
             key={turn.id}
             turn={turn}
             blocks={blocks}
+            project={thread.project}
+            threadId={thread.id}
             onShowPanel={onShowPanel}
           />
         ))}
@@ -115,13 +131,18 @@ export function Timeline({
 function TurnView({
   turn,
   blocks,
+  project,
+  threadId,
   onShowPanel,
 }: {
   turn: Turn;
   blocks: Block[];
+  project: string;
+  threadId: string;
   onShowPanel: (tab: PanelTab) => void;
 }) {
   const running = turn.status === "running";
+  const providers = useStudio((state) => state.agents?.providers);
   const lastWork = blocks.findLastIndex((block) => block.type === "work");
   const hasReply = blocks.some(
     (block) => block.type === "item" && block.item.kind === "assistant",
@@ -139,8 +160,21 @@ function TurnView({
           <ItemView key={block.item.id} item={block.item} />
         ),
       )}
-      {running && <WorkingIndicator started={turn.started} quiet={hasReply} />}
-      {!running && <TurnFooter turn={turn} onShowPanel={onShowPanel} />}
+      {running && (
+        <WorkingIndicator
+          started={turn.started}
+          quiet={hasReply}
+          detail={`${modelName(providers, turn.provider, turn.model)} · ${effortInfo(providers, turn.provider, turn.model, turn.effort).label}`}
+        />
+      )}
+      {!running && (
+        <TurnFooter
+          turn={turn}
+          project={project}
+          threadId={threadId}
+          onShowPanel={onShowPanel}
+        />
+      )}
     </div>
   );
 }
@@ -148,9 +182,11 @@ function TurnView({
 function WorkingIndicator({
   started,
   quiet,
+  detail,
 }: {
   started: string;
   quiet: boolean;
+  detail: string;
 }) {
   const elapsed = useElapsed(started);
   return (
@@ -162,24 +198,61 @@ function WorkingIndicator({
       <span className="text-muted-foreground text-xs tabular-nums">
         {formatDuration(elapsed)}
       </span>
+      <span className="text-muted-foreground/70 text-xs">· {detail}</span>
     </div>
   );
 }
 
 function TurnFooter({
   turn,
+  project,
+  threadId,
   onShowPanel,
 }: {
   turn: Turn;
+  project: string;
+  threadId: string;
   onShowPanel: (tab: PanelTab) => void;
 }) {
-  if (turn.status === "interrupted" || !turn.finished) return null;
+  const providers = useStudio((state) => state.agents?.providers);
+  const navigate = useNavigate();
+  const [forking, setForking] = useState(false);
+  if (!turn.finished) return null;
   const seconds =
     (new Date(turn.finished).getTime() - new Date(turn.started).getTime()) /
     1000;
+  const effort = effortInfo(providers, turn.provider, turn.model, turn.effort);
+  const fork = async () => {
+    setForking(true);
+    try {
+      const thread = await api.forkThread(project, threadId, { turn: turn.id });
+      useStudio.getState().upsertThreadSummary(thread);
+      useStudio.setState((state) => ({
+        details: { ...state.details, [thread.id]: thread },
+      }));
+      void navigate({
+        to: "/projects/$projectId",
+        params: { projectId: project },
+        search: { thread: thread.id },
+      });
+    } catch (error) {
+      toast.error("Couldn't fork the chat", (error as Error).message);
+    } finally {
+      setForking(false);
+    }
+  };
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-muted-foreground text-xs">
-      <span>Worked for {formatDuration(seconds)}</span>
+      <span
+        title={`${modelName(providers, turn.provider, turn.model)} · reasoning effort: ${effort.label}`}
+      >
+        {modelName(providers, turn.provider, turn.model)} · {effort.label}
+      </span>
+      <span className="text-muted-foreground/50">·</span>
+      <span>
+        {turn.status === "interrupted" ? "Stopped after" : "Worked for"}{" "}
+        {formatDuration(seconds)}
+      </span>
       {turn.changed.length > 0 && (
         <span className="text-muted-foreground/50">·</span>
       )}
@@ -202,6 +275,14 @@ function TurnFooter({
         </button>
       ))}
       {turn.changed.length > 6 && <span>+{turn.changed.length - 6} more</span>}
+      <button
+        type="button"
+        disabled={forking}
+        onClick={() => void fork()}
+        className="ms-auto flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-accent hover:text-foreground"
+      >
+        <GitForkIcon className="size-3" /> Fork from here
+      </button>
     </div>
   );
 }
@@ -218,9 +299,9 @@ const ItemView = memo(function ItemView({ item }: { item: ThreadItem }) {
   if (item.kind === "assistant")
     return (
       <div className="chat-markdown text-[14px]">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-          {item.text || ""}
-        </ReactMarkdown>
+        <Suspense fallback={<p className="whitespace-pre-wrap">{item.text}</p>}>
+          <Markdown>{item.text || ""}</Markdown>
+        </Suspense>
         {item.streaming && (
           <span className="ms-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-foreground/60 align-middle" />
         )}
@@ -233,8 +314,34 @@ const ItemView = memo(function ItemView({ item }: { item: ThreadItem }) {
         className="flex gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[13px] text-destructive-foreground"
       >
         <CircleAlertIcon className="mt-0.5 size-4 shrink-0" />
-        <div className="min-w-0 whitespace-pre-wrap break-words">
-          {item.text}
+        <div className="min-w-0 flex-1">
+          {item.title && item.code ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2 font-medium">
+                {item.title}
+                <code className="rounded bg-destructive/20 px-1.5 py-0.5 font-mono text-[10.5px] uppercase tracking-wide">
+                  {item.code}
+                  {item.http_status ? ` · ${item.http_status}` : ""}
+                </code>
+              </div>
+              {item.hint && <p className="mt-1">{item.hint}</p>}
+              {item.reset && (
+                <p className="mt-1 font-medium">Resets: {item.reset}</p>
+              )}
+              {item.text && (
+                <details className="mt-1.5 opacity-80">
+                  <summary className="cursor-pointer text-xs">
+                    Provider message
+                  </summary>
+                  <div className="mt-1 whitespace-pre-wrap break-words text-xs">
+                    {item.text}
+                  </div>
+                </details>
+              )}
+            </>
+          ) : (
+            <div className="whitespace-pre-wrap break-words">{item.text}</div>
+          )}
         </div>
       </div>
     );

@@ -4,7 +4,7 @@ const token =
   document.querySelector<HTMLMetaElement>('meta[name="studio-token"]')
     ?.content ?? "";
 
-export class ApiError extends Error {
+class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
@@ -44,7 +44,7 @@ async function errorMessage(response: Response) {
     : "Studio couldn't complete that action. Please try again.";
 }
 
-export async function request<T>(
+async function request<T>(
   path: string,
   options: {
     method?: string;
@@ -155,7 +155,7 @@ export interface Render {
   log?: string;
 }
 
-export interface Voice {
+interface Voice {
   id: string;
   name: string;
   language: string;
@@ -186,6 +186,7 @@ export interface ProviderModel {
   efforts: string[];
   default_effort?: string | null;
   custom?: boolean;
+  alias?: boolean;
 }
 
 export interface ProviderStatus {
@@ -229,8 +230,7 @@ export interface AgentSnapshot {
   probing: boolean;
 }
 
-export type ThreadStatus =
-  "idle" | "running" | "completed" | "failed" | "interrupted";
+type ThreadStatus = "idle" | "running" | "completed" | "failed" | "interrupted";
 
 export interface ThreadSummary {
   id: string;
@@ -243,6 +243,7 @@ export interface ThreadSummary {
   updated: string;
   status: ThreadStatus;
   locked: boolean;
+  forked_from?: { thread: string; title: string; turn: string } | null;
 }
 
 export interface ThreadItem {
@@ -266,6 +267,11 @@ export interface ThreadItem {
   streaming?: boolean;
   files?: { path: string; kind: string }[];
   entries?: { text: string; done: boolean }[];
+  /** Stable machine-readable failure code on `error` items. */
+  code?: string;
+  hint?: string;
+  reset?: string;
+  http_status?: number;
 }
 
 export interface Turn {
@@ -278,6 +284,7 @@ export interface Turn {
   finished: string | null;
   changed: string[];
   error: string | null;
+  error_code?: string | null;
 }
 
 export interface Thread extends ThreadSummary {
@@ -303,6 +310,7 @@ export interface UpdateState {
   edition: "portable" | "installed" | "source";
   latest_version: string | null;
   release_url: string;
+  last_checked: number | null;
   can_download: boolean;
   can_install: boolean;
   can_cancel: boolean;
@@ -415,6 +423,20 @@ export const api = {
     },
   ) =>
     request<ThreadSummary>(`/api/projects/${projectId}/threads/${threadId}`, {
+      body,
+    }),
+  forkThread: (
+    projectId: string,
+    threadId: string,
+    body: {
+      turn?: string;
+      title?: string;
+      provider?: ProviderId;
+      model?: string;
+      effort?: string;
+    } = {},
+  ) =>
+    request<Thread>(`/api/projects/${projectId}/threads/${threadId}/fork`, {
       body,
     }),
   deleteThread: (projectId: string, threadId: string) =>
