@@ -11,6 +11,7 @@ dependencies = [
     "python-multipart>=0.0.32",
     "pywebview>=6.2.1 ; sys_platform == 'win32'",
     "typst==0.15.0",
+    "tzdata>=2026.5 ; sys_platform == 'win32'",
     "uvicorn>=0.54.0",
 ]
 

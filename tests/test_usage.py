@@ -22,6 +22,19 @@ IST = timezone(timedelta(hours=5, minutes=30))
 
 
 class ClaudeUsageTests(unittest.TestCase):
+    def test_named_reset_zones_are_independent_of_the_host_timezone(self):
+        now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+        for zone, expected in (
+            ("Asia/Kolkata", datetime(2026, 7, 15, 18, 19, tzinfo=timezone.utc)),
+            ("America/New_York", datetime(2026, 7, 16, 3, 49, tzinfo=timezone.utc)),
+            ("Europe/London", datetime(2026, 7, 15, 22, 49, tzinfo=timezone.utc)),
+        ):
+            with self.subTest(zone=zone):
+                self.assertEqual(
+                    usage.parse_claude_reset(f"Jul 15, 11:49pm ({zone})", now),
+                    int(expected.timestamp()),
+                )
+
     def test_session_and_weekly_windows_are_read(self):
         now = datetime(2026, 10, 15, 19, 0, tzinfo=IST)
         state = usage.parse_claude_usage(CLAUDE_OUTPUT, now)
