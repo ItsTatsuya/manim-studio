@@ -59,7 +59,7 @@ def verify():
             "fetch('/api/projects', {method:'POST',headers:{'Content-Type':'application/json','X-Studio-Token':document.querySelector('meta[name=studio-token]').content},body:JSON.stringify({name:'Native verification'})}).then(r=>{if(!r.ok)throw new Error('Project creation failed');return r.json()}).then(p=>p.id)"
         )
         assert pid, "No project ID returned"
-        window.evaluate_js(f"location.hash='/projects/{pid}'")
+        window.evaluate_js(f"location.hash='/projects/{pid}';location.reload()")
         wait("document.querySelector('#tab-script')")
         script = json.dumps(SOURCE)
         assert asynchronous(
