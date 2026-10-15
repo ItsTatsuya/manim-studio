@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { choosePreset, type OutputPreset } from "~/lib/render";
 import { Button } from "../ui/button";
+import { Field } from "../ui/field";
 import {
   Dialog,
   DialogBody,
@@ -24,6 +25,15 @@ export function OutputSettings({
   const [height, setHeight] = useState(String(value.height));
   const [fps, setFps] = useState(String(value.fps));
   const [error, setError] = useState("");
+  // The dialog stays mounted so it can animate out; start from the current
+  // preset each time it opens.
+  useEffect(() => {
+    if (!open) return;
+    setWidth(String(value.width));
+    setHeight(String(value.height));
+    setFps(String(value.fps));
+    setError("");
+  }, [open, value.width, value.height, value.fps]);
   const save = () => {
     const dimensions = [Number(width), Number(height)];
     if (
@@ -68,8 +78,7 @@ export function OutputSettings({
           </DialogHeader>
           <DialogBody>
             <div className="grid grid-cols-2 gap-3">
-              <label className="space-y-1 text-xs">
-                Width
+              <Field label="Width">
                 <Input
                   aria-label="Width"
                   type="number"
@@ -79,9 +88,8 @@ export function OutputSettings({
                   value={width}
                   onChange={(event) => setWidth(event.target.value)}
                 />
-              </label>
-              <label className="space-y-1 text-xs">
-                Height
+              </Field>
+              <Field label="Height">
                 <Input
                   aria-label="Height"
                   type="number"
@@ -91,10 +99,9 @@ export function OutputSettings({
                   value={height}
                   onChange={(event) => setHeight(event.target.value)}
                 />
-              </label>
+              </Field>
             </div>
-            <label className="mt-3 block space-y-1 text-xs">
-              Frame rate
+            <Field label="Frame rate" className="mt-3">
               <Input
                 aria-label="Frame rate"
                 type="number"
@@ -102,7 +109,7 @@ export function OutputSettings({
                 value={fps}
                 onChange={(event) => setFps(event.target.value)}
               />
-            </label>
+            </Field>
             {error && (
               <p
                 role="alert"

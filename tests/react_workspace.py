@@ -35,7 +35,12 @@ class WorkspaceTests(unittest.TestCase):
 
     def setUp(self):
         self.context, self.page, self.errors = open_page(self.browser, self.url)
-        api(self.page, self.url, "/api/agents/settings", {"auto_render": False})
+        api(
+            self.page,
+            self.url,
+            "/api/agents/settings",
+            {"auto_render": False, "queue_start": "auto", "queue_on_error": "fix"},
+        )
         api(
             self.page,
             self.url,
@@ -57,6 +62,839 @@ class WorkspaceTests(unittest.TestCase):
         self.context.close()
         self.assertFalse(self.errors, self.errors)
 
+    def test_panel_motion_clips_fixed_content_and_respects_reduced_motion(self):
+        p = self.page
+        project(p, self.url, "Panel animation")
+        result = p.evaluate("""async () => {
+          const shell = document.querySelector('.studio-panel-shell');
+          const inner = shell.firstElementChild;
+          const samples = [];
+          document.querySelector('[aria-label="Hide panel"]').click();
+          const start = performance.now();
+          await new Promise(resolve => {
+            const frame = () => {
+              samples.push([shell.getBoundingClientRect().width, inner.getBoundingClientRect().width]);
+              if (performance.now() - start < 320) requestAnimationFrame(frame); else resolve();
+            }; requestAnimationFrame(frame);
+          });
+          return { samples, inert: shell.inert };
+        }""")
+        widths = [round(width) for width, _ in result["samples"]]
+        self.assertGreater(len(set(widths)), 3, widths)
+        self.assertEqual(widths[-1], 0)
+        self.assertTrue(result["inert"])
+        self.assertLess(
+            max(w for _, w in result["samples"]) - min(w for _, w in result["samples"]),
+            1,
+        )
+        p.get_by_role("button", name="Show panel", exact=True).click()
+        expect(p.get_by_role("tab", name="Preview", exact=True)).to_be_visible()
+        p.emulate_media(reduced_motion="reduce")
+        self.assertEqual(
+            p.locator(".studio-panel-shell").evaluate(
+                "el => getComputedStyle(el).transitionDuration"
+            ),
+            "0s",
+        )
+
+    def test_folder_search_selection_and_renders_back(self):
+        p = self.page
+        first = project(p, self.url, "Folder Alpha")
+        project(p, self.url, "Folder Beta")
+        search = p.get_by_role("textbox", name="Search projects", exact=True)
+        search.fill("Alpha")
+        nav = p.get_by_role("navigation", name="Projects", exact=True)
+        expect(nav.get_by_role("link", name="Folder Alpha", exact=True)).to_be_visible()
+        expect(nav.get_by_role("link", name="Folder Beta", exact=True)).to_have_count(0)
+        search.fill("")
+        p.get_by_role("button", name="Select folders", exact=True).click()
+        p.get_by_role("button", name="Clear", exact=True).click()
+        p.get_by_role("textbox", name="Search folders", exact=True).fill("Alpha")
+        p.get_by_role("checkbox", name="Folder Alpha", exact=True).check()
+        p.keyboard.press("Escape")
+        expect(nav.get_by_role("link", name="Folder Alpha", exact=True)).to_be_visible()
+        expect(nav.get_by_role("link", name="Folder Beta", exact=True)).to_have_count(0)
+        nav.get_by_role("link", name="Folder Alpha", exact=True).click()
+        p.get_by_role("link", name="My renders", exact=True).click()
+        expect(p.get_by_role("heading", name="My renders", exact=True)).to_be_visible()
+        p.get_by_role("complementary", name="Studio sidebar").get_by_role(
+            "link", name="Back", exact=True
+        ).click()
+        expect(p.locator("main header").first).to_contain_text("Folder Alpha")
+        self.assertIn(first["id"], p.url)
+
+    def test_sidebar_text_and_back_do_not_reflow_during_expansion(self):
+        p = self.page
+        p.route("**/api/projects", lambda route: route.fulfill(json={"projects": []}))
+        p.goto(self.url + "/#/")
+        p.reload()
+        sidebar = p.get_by_role("complementary", name="Studio sidebar")
+        empty = sidebar.get_by_text("No projects yet. Create one to start.", exact=True)
+        expect(empty).to_be_visible()
+        original = empty.bounding_box()
+        sample = """async selector => {
+          const aside = document.querySelector('aside[aria-label="Studio sidebar"]');
+          const frames = [];
+          // Pause before painting so CPU load cannot skip the intermediate widths.
+          let transition;
+          const observer = new MutationObserver(() => {
+            transition = aside.getAnimations().find(a => a.transitionProperty === 'width');
+            transition?.pause();
+          });
+          observer.observe(aside, {attributes:true, attributeFilter:['class']});
+          aside.querySelector('[aria-label="Expand sidebar"]').click();
+          await new Promise(requestAnimationFrame);
+          observer.disconnect();
+          if (!transition) throw new Error('The sidebar width transition did not start');
+          for (const progress of [0, .25, .5, .75, 1]) {
+            transition.currentTime = progress * Number(transition.effect.getTiming().duration);
+            const box = aside.querySelector(selector).getBoundingClientRect();
+            frames.push({sidebar:aside.getBoundingClientRect().width,
+              x:box.x,y:box.y,width:box.width,height:box.height});
+          }
+          transition.finish();
+          return frames;
+        }"""
+        p.get_by_role("button", name="Collapse sidebar", exact=True).click()
+        expect(sidebar).to_have_css("width", "56px")
+        frames = p.evaluate(sample, 'nav[aria-label="Projects"] p')
+        self.assertGreater(len({round(frame["sidebar"]) for frame in frames}), 3)
+        for frame in frames:
+            for key in ("x", "y", "width", "height"):
+                self.assertAlmostEqual(
+                    frame[key], original[key], delta=0.5, msg=str(frame)
+                )
+        for path in ("/settings/providers", "/renders"):
+            p.goto(self.url + "/#" + path)
+            back = sidebar.get_by_role("link", name="Back", exact=True)
+            expect(back).to_be_visible()
+            original = back.bounding_box()
+            self.assertGreater(original["width"], 150)
+            p.get_by_role("button", name="Collapse sidebar", exact=True).click()
+            expect(sidebar).to_have_css("width", "56px")
+            frames = p.evaluate(sample, "[data-workspace-back]")
+            self.assertGreater(len(frames), 3)
+            for frame in frames:
+                self.assertAlmostEqual(frame["width"], original["width"], delta=0.5)
+                self.assertAlmostEqual(frame["height"], original["height"], delta=0.5)
+
+    def test_generation_repairs_syntax_and_runtime_errors_without_an_open_editor(self):
+        p = self.page
+        api(p, self.url, "/api/agents/settings", {"auto_render": True})
+        api(
+            p,
+            self.url,
+            "/api/preferences",
+            {
+                "values": {
+                    "manim-quality": "preview",
+                    "manim-resolution": "854x480",
+                    "manim-fps": "15",
+                }
+            },
+        )
+        for provider, marker in (
+            ("codex", "BROKEN_SYNTAX"),
+            ("claude", "BROKEN_RUNTIME"),
+        ):
+            value = api(p, self.url, "/api/projects", {"name": f"Recover {provider}"})
+            thread = api(
+                p,
+                self.url,
+                f"/api/projects/{value['id']}/threads",
+                {"provider": provider},
+            )
+            api(
+                p,
+                self.url,
+                f"/api/projects/{value['id']}/threads/{thread['id']}/turns",
+                {"text": f"Create a video {marker}"},
+            )
+            # No Studio window is present to react to turn completion or errors.
+            p.goto("about:blank")
+            videos = wait_api(
+                p,
+                self.url,
+                "/api/videos",
+                lambda values: any(
+                    video["project"] == value["id"]
+                    and video["status"] in {"completed", "failed"}
+                    for video in values
+                ),
+                timeout=60,
+            )
+            video = next(video for video in videos if video["project"] == value["id"])
+            self.assertEqual(video["status"], "completed", video)
+            self.assertEqual(video["attempt"], 1)
+            self.assertEqual(video["thread"], thread["id"])
+            detail = api(
+                p, self.url, f"/api/projects/{value['id']}/threads/{thread['id']}"
+            )
+            self.assertEqual(len(detail["turns"]), 2)
+            self.assertTrue(
+                all(turn["status"] == "completed" for turn in detail["turns"])
+            )
+            renders = [
+                render
+                for render in api(p, self.url, "/api/renders")
+                if render.get("project") == value["id"]
+            ]
+            self.assertEqual(len(renders), 1 if marker == "BROKEN_SYNTAX" else 2)
+            self.assertTrue(any(render["status"] == "completed" for render in renders))
+            invocations = [
+                json.loads(line)
+                for line in (self.folder / "cli.jsonl").read_text("utf-8").splitlines()
+                if value["folder"] in json.loads(line)["cwd"]
+            ]
+            self.assertEqual(len(invocations), 2)
+            self.assertIn("Studio automatic video repair", invocations[-1]["prompt"])
+            self.assertIn(
+                "Line 2"
+                if marker == "BROKEN_SYNTAX"
+                else "fixture runtime error to repair",
+                invocations[-1]["prompt"],
+            )
+            p.goto(self.url + f"/#/projects/{value['id']}?thread={thread['id']}")
+            expect(
+                p.get_by_role("region", name="Project panel").get_by_label(
+                    re.compile("^Rendered video:")
+                )
+            ).to_be_visible()
+
+    def test_manual_queue_holds_reorders_then_fixes_failures_and_finishes(self):
+        p = self.page
+        api(
+            p,
+            self.url,
+            "/api/agents/settings",
+            {"auto_render": True, "queue_start": "manual", "queue_on_error": "fix"},
+        )
+        api(
+            p,
+            self.url,
+            "/api/preferences",
+            {
+                "values": {
+                    "manim-quality": "preview",
+                    "manim-resolution": "854x480",
+                    "manim-fps": "15",
+                }
+            },
+        )
+        names = {}
+        for name, marker in (
+            ("Queue first", ""),
+            ("Queue broken", "BROKEN_RUNTIME"),
+            ("Queue last", ""),
+        ):
+            value = api(p, self.url, "/api/projects", {"name": name})
+            names[value["id"]] = name
+            thread = api(
+                p,
+                self.url,
+                f"/api/projects/{value['id']}/threads",
+                {"provider": "claude"},
+            )
+            api(
+                p,
+                self.url,
+                f"/api/projects/{value['id']}/threads/{thread['id']}/turns",
+                {"text": f"Create a video {marker}".strip()},
+            )
+        queue = wait_api(
+            p,
+            self.url,
+            "/api/queue",
+            lambda value: len(value["waiting"]) == 3,
+            timeout=90,
+        )
+        # Manual start: nothing renders until the queue is started.
+        self.assertTrue(queue["paused"])
+        self.assertIsNone(queue["active"])
+        p.goto(self.url + "/#/renders")
+        bar = p.get_by_role("region", name="Render queue")
+        expect(bar).to_contain_text("3 videos waiting")
+        expect(bar.get_by_role("button", name="Start queue")).to_be_visible()
+        rows = {item["id"]: item["name"] for item in api(p, self.url, "/api/renders")}
+        last = queue["waiting"][-1]
+        p.get_by_role("button", name=f"Move {rows[last]} up").click()
+        reordered = wait_api(
+            p,
+            self.url,
+            "/api/queue",
+            lambda value: value["waiting"][-2] == last,
+        )
+        self.assertEqual(set(reordered["waiting"]), set(queue["waiting"]))
+        bar.get_by_role("button", name="Start queue").click()
+        wait_api(
+            p,
+            self.url,
+            "/api/videos",
+            lambda values: (
+                len(values) >= 3
+                and all(video["status"] == "completed" for video in values)
+            ),
+            timeout=180,
+        )
+        settled = wait_api(
+            p,
+            self.url,
+            "/api/queue",
+            lambda value: value["active"] is None and not value["waiting"],
+        )
+        # Back to holding new videos once the started queue is done.
+        self.assertTrue(settled["paused"])
+        renders = api(p, self.url, "/api/renders")
+        for project_id, name in names.items():
+            mine = [item for item in renders if item.get("project") == project_id]
+            self.assertTrue(
+                any(item["status"] == "completed" for item in mine), (name, mine)
+            )
+            if name == "Queue broken":
+                self.assertEqual(len(mine), 2, mine)
+
+    def test_skip_policy_leaves_a_failed_video_and_keeps_going(self):
+        p = self.page
+        api(
+            p,
+            self.url,
+            "/api/agents/settings",
+            {"auto_render": True, "queue_start": "auto", "queue_on_error": "skip"},
+        )
+        api(
+            p,
+            self.url,
+            "/api/preferences",
+            {"values": {"manim-quality": "preview", "manim-resolution": "854x480"}},
+        )
+        ids = {}
+        for name, marker in (("Skip broken", "BROKEN_RUNTIME"), ("Skip fine", "")):
+            value = api(p, self.url, "/api/projects", {"name": name})
+            ids[name] = value["id"]
+            thread = api(
+                p,
+                self.url,
+                f"/api/projects/{value['id']}/threads",
+                {"provider": "claude"},
+            )
+            api(
+                p,
+                self.url,
+                f"/api/projects/{value['id']}/threads/{thread['id']}/turns",
+                {"text": f"Create a video {marker}".strip()},
+            )
+        videos = wait_api(
+            p,
+            self.url,
+            "/api/videos",
+            lambda values: (
+                len([v for v in values if v["project"] in ids.values()]) == 2
+                and all(
+                    v["status"] in {"completed", "failed"}
+                    for v in values
+                    if v["project"] in ids.values()
+                )
+            ),
+            timeout=120,
+        )
+        by_project = {video["project"]: video for video in videos}
+        self.assertEqual(by_project[ids["Skip broken"]]["status"], "failed")
+        self.assertEqual(
+            by_project[ids["Skip broken"]]["stage"], "Skipped after an error"
+        )
+        self.assertEqual(by_project[ids["Skip broken"]]["attempt"], 0)
+        self.assertEqual(by_project[ids["Skip fine"]]["status"], "completed")
+
+    def test_send_to_llm_repairs_a_script_and_finishes_the_video(self):
+        p = self.page
+        value = project(
+            p,
+            self.url,
+            "Repair from script",
+            source="from manim import *\nclass Broken(Scene)\n    pass\n",
+        )
+        panel = p.get_by_role("region", name="Project panel")
+        expect(
+            panel.get_by_role("combobox", name=re.compile("^Animation"))
+        ).to_have_count(0)
+        panel.get_by_role("tab", name="Script", exact=True).click()
+        panel.get_by_role("button", name="Send to LLM", exact=True).click()
+        videos = wait_api(
+            p,
+            self.url,
+            "/api/videos",
+            lambda values: any(
+                video["project"] == value["id"]
+                and video["status"] in {"completed", "failed"}
+                for video in values
+            ),
+            timeout=60,
+        )
+        video = next(video for video in videos if video["project"] == value["id"])
+        self.assertEqual(video["status"], "completed", video)
+        self.assertEqual(video["attempt"], 1)
+        self.assertIn("thread=" + video["thread"], p.url)
+        panel.get_by_role("tab", name="Preview", exact=True).click()
+        expect(panel.get_by_label(re.compile("^Rendered video:"))).to_be_visible()
+        expect(
+            panel.get_by_role("combobox", name=re.compile("^Animation"))
+        ).to_have_count(0)
+        api(
+            p,
+            self.url,
+            f"/api/projects/{value['id']}",
+            {"narration": {"enabled": False}},
+        )
+        p.reload()
+        editor(
+            p,
+            SOURCE
+            + "\nclass Outro(Scene):\n    def construct(self):\n        self.wait(.1)\n",
+        )
+        panel.get_by_role("tab", name="Preview", exact=True).click()
+        select(p, "Animation", "Outro")
+        panel.get_by_role("button", name="Render", exact=True).click()
+        wait_api(
+            p,
+            self.url,
+            "/api/renders",
+            lambda values: any(
+                render.get("project") == value["id"]
+                and render["scene"] == "Outro"
+                and render["status"] == "completed"
+                for render in values
+            ),
+            timeout=60,
+        )
+
+    def test_repair_from_render_history_preserves_the_pdf_workspace(self):
+        p = self.page
+        parent = project(p, self.url, "History repair parent")
+        pdf = documents()[0]
+        response = p.request.post(
+            self.url + f"/api/projects/from-pdf?project={parent['id']}",
+            data=pdf["buffer"],
+            headers={
+                "Content-Type": "application/pdf",
+                "X-Filename": "History video.pdf",
+            },
+        )
+        self.assertTrue(response.ok, response.text())
+        video = response.json()
+        workspace = video["workspace"]
+        thread = api(
+            p,
+            self.url,
+            f"/api/projects/{parent['id']}/threads",
+            {"workspace": workspace, "provider": "claude"},
+        )
+        broken = "from manim import *\nclass Broken(Scene):\n    def construct(self):\n        raise ValueError('history repair fixture')\n"
+        api(
+            p,
+            self.url,
+            f"/api/projects/{parent['id']}?workspace={workspace}",
+            {"source": broken, "narration": {"enabled": False}},
+        )
+        failed = api(
+            p,
+            self.url,
+            "/api/render",
+            {
+                "source": broken,
+                "scene": "Broken",
+                "quality": "preview",
+                "project": parent["id"],
+                "workspace": workspace,
+            },
+        )
+        wait_api(
+            p,
+            self.url,
+            f"/api/renders/{failed['id']}",
+            lambda render: render["status"] == "failed",
+            timeout=60,
+        )
+        p.goto(self.url + "/#/renders")
+        p.locator("article").filter(
+            has=p.get_by_role("button", name="View log", exact=True)
+        ).get_by_role("button", name="Send to LLM", exact=True).first.click()
+        values = wait_api(
+            p,
+            self.url,
+            "/api/videos",
+            lambda values: any(
+                value["workspace"] == workspace
+                and value["status"] in {"completed", "failed"}
+                for value in values
+            ),
+            timeout=60,
+        )
+        repaired = next(value for value in values if value["workspace"] == workspace)
+        self.assertEqual(repaired["status"], "completed", repaired)
+        self.assertEqual(repaired["thread"], thread["id"])
+        self.assertEqual(
+            api(p, self.url, f"/api/projects/{parent['id']}")["source"], SOURCE
+        )
+
+    def test_back_controls_match_in_settings_and_renders(self):
+        p = self.page
+        value = project(p, self.url, "Consistent return")
+        sidebar = p.get_by_role("complementary", name="Studio sidebar")
+        measure = """async el => { await document.fonts.ready; await Promise.all(document.getAnimations().filter(a=>a.effect?.getTiming().iterations!==Infinity).map(a=>a.finished.catch(()=>{}))); const box=el.getBoundingClientRect(), style=getComputedStyle(el); return {x:box.x,y:box.y,width:box.width,height:box.height,radius:style.borderRadius,background:style.backgroundColor,font:style.fontSize}; }"""
+        for collapsed in (False, True):
+            if collapsed:
+                p.get_by_role("button", name="Collapse sidebar", exact=True).click()
+                expect(sidebar).to_have_css("width", "56px")
+            baseline = None
+            for path in ("/settings/general", "/renders"):
+                p.goto(self.url + "/#" + path)
+                back = sidebar.get_by_role("link", name="Back", exact=True)
+                expect(back).to_be_visible()
+                self.assertEqual(
+                    p.get_by_role("link", name="Back", exact=True).count(), 1
+                )
+                p.mouse.move(0, 0)
+                bounds = back.evaluate(measure)
+                if baseline is None:
+                    baseline = bounds
+                else:
+                    self.assertEqual(bounds, baseline)
+                self.assertEqual(bounds["height"], 36)
+        for width in (400, 320):
+            p.set_viewport_size({"width": width, "height": 800})
+            baseline = None
+            for path in ("/settings/general", "/renders"):
+                p.goto(self.url + "/#" + path)
+                back = p.get_by_role("main").get_by_role(
+                    "link", name="Back", exact=True
+                )
+                expect(back).to_be_visible()
+                p.mouse.move(0, 0)
+                bounds = back.evaluate(measure)
+                if baseline is None:
+                    baseline = bounds
+                else:
+                    self.assertEqual(bounds, baseline)
+                back.click()
+                expect(p.locator("main header").first).to_contain_text(value["name"])
+
+    def test_collapsed_sidebar_groups_actions_and_switches_projects(self):
+        p = self.page
+        project(p, self.url, "Rail Alpha")
+        second = project(p, self.url, "Rail Beta")
+        sidebar = p.get_by_role("complementary", name="Studio sidebar")
+        p.get_by_role("button", name="Collapse sidebar", exact=True).click()
+        expect(sidebar).to_have_css("width", "56px")
+        expect(
+            sidebar.get_by_role("navigation", name="Projects", exact=True)
+        ).not_to_be_visible()
+        expect(
+            sidebar.get_by_role("textbox", name="Search projects", exact=True)
+        ).to_have_count(0)
+        p.get_by_role("button", name="Import and PDF videos", exact=True).click()
+        expect(
+            p.get_by_role("menuitem", name="Import project", exact=True)
+        ).to_be_visible()
+        p.get_by_role("menuitem", name="Videos from PDFs", exact=True).click()
+        expect(
+            p.get_by_role("dialog", name="Videos from PDFs", exact=True)
+        ).to_be_visible()
+        p.get_by_role("dialog").get_by_role(
+            "button", name="Close", exact=True
+        ).last.click()
+        p.get_by_role("button", name="Switch project", exact=True).click()
+        search = p.get_by_role("textbox", name="Search projects", exact=True)
+        expect(search).to_be_focused()
+        search.fill("Rail Alpha")
+        nav = p.get_by_role("navigation", name="Choose a project", exact=True)
+        expect(nav.get_by_role("link", name="Rail Beta", exact=True)).to_have_count(0)
+        nav.get_by_role("link", name="Rail Alpha", exact=True).click()
+        expect(p.locator("main header").first).to_contain_text("Rail Alpha")
+        self.assertNotIn(second["id"], p.url)
+        boxes = sidebar.evaluate(
+            """aside => [...aside.querySelectorAll('a,button')].filter(el=>el.getClientRects().length && getComputedStyle(el).visibility==='visible').map(el=>{ const b=el.getBoundingClientRect();return {label:el.getAttribute('aria-label'),x:b.x,y:b.y,width:b.width,height:b.height};})"""
+        )
+        self.assertLessEqual(len(boxes), 8)
+        for box in boxes:
+            self.assertEqual((box["width"], box["height"]), (36, 36), box)
+            self.assertAlmostEqual(
+                box["x"] + box["width"] / 2, 28, delta=0.5, msg=str(box)
+            )
+        for first, following in zip(boxes, boxes[1:]):
+            self.assertGreaterEqual(following["y"], first["y"] + first["height"])
+
+    def test_new_project_is_right_of_search_and_folder_row_toggles(self):
+        p = self.page
+        value = project(p, self.url, "Toggle folder")
+        search = p.get_by_role(
+            "textbox", name="Search projects", exact=True
+        ).bounding_box()
+        button = p.get_by_role("button", name="New project", exact=True).bounding_box()
+        self.assertGreaterEqual(button["x"], search["x"] + search["width"])
+        self.assertEqual(button["y"], search["y"])
+        thread = api(
+            p,
+            self.url,
+            f"/api/projects/{value['id']}/threads",
+            {"provider": "codex", "title": "Keep this chat"},
+        )
+        p.goto(self.url + f"/#/projects/{value['id']}?thread={thread['id']}")
+        row = p.get_by_role("navigation", name="Projects", exact=True).get_by_role(
+            "link", name="Toggle folder", exact=True
+        )
+        expect(row).to_have_attribute("aria-expanded", "true")
+        expect(
+            p.get_by_role("button", name="Collapse Toggle folder", exact=True)
+        ).to_have_count(0)
+        row.click()
+        expect(row).to_have_attribute("aria-expanded", "false")
+        self.assertIn(thread["id"], p.url)
+        row.press("Enter")
+        expect(row).to_have_attribute("aria-expanded", "true")
+        self.assertIn(thread["id"], p.url)
+        row.click()
+        wait_api(
+            p,
+            self.url,
+            "/api/preferences",
+            lambda prefs: (
+                json.loads(prefs.get("manim-project-expanded", "{}")).get(value["id"])
+                is False
+            ),
+        )
+        p.reload()
+        expect(row).to_have_attribute("aria-expanded", "false")
+        p.get_by_role("button", name="Collapse sidebar", exact=True).click()
+        expect(p.get_by_role("complementary", name="Studio sidebar")).to_have_css(
+            "width", "56px"
+        )
+        button = p.get_by_role("button", name="New project", exact=True).bounding_box()
+        self.assertAlmostEqual(button["x"] + button["width"] / 2, 28, delta=1)
+
+    def test_usage_popover_reports_real_values_and_provider_errors(self):
+        p = self.page
+        p.route(
+            "**/api/usage?*",
+            lambda route: route.fulfill(
+                json={
+                    "updated": 1792070000,
+                    "providers": [
+                        {
+                            "id": "codex",
+                            "name": "Codex",
+                            "available": True,
+                            "plan": "plus",
+                            "error": None,
+                            "windows": [
+                                {
+                                    "id": "weekly",
+                                    "label": "Weekly",
+                                    "used_percent": 39,
+                                    "left_percent": 61,
+                                    "resets_at": 1792652259,
+                                }
+                            ],
+                        },
+                        {
+                            "id": "claude",
+                            "name": "Claude Code",
+                            "available": False,
+                            "plan": None,
+                            "windows": [],
+                            "error": "Usage isn't available.",
+                        },
+                    ],
+                }
+            ),
+        )
+        p.get_by_role("button", name="Usage limits", exact=True).click()
+        expect(p.get_by_text("61% left", exact=True)).to_be_visible()
+        expect(
+            p.get_by_role("progressbar", name="Codex Weekly used", exact=True)
+        ).to_have_attribute("value", "39")
+        expect(p.get_by_text("Usage isn't available.", exact=True)).to_be_visible()
+        p.get_by_role("button", name="Refresh usage limits", exact=True).click()
+        expect(p.get_by_text("61% left", exact=True)).to_be_visible()
+
+    def test_pdf_shared_and_existing_folder_chats_keep_separate_files(self):
+        p = self.page
+        api(p, self.url, "/api/agents/settings", {"auto_render": True})
+        api(
+            p,
+            self.url,
+            "/api/preferences",
+            {
+                "values": {
+                    "manim-quality": "preview",
+                    "manim-resolution": "854x480",
+                    "manim-fps": "15",
+                }
+            },
+        )
+        p.reload()
+        p.get_by_role("button", name="Videos from PDFs", exact=True).click()
+        dialog = p.get_by_role("dialog", name="Videos from PDFs", exact=True)
+        dialog.get_by_role("textbox", name="Project folder name", exact=True).fill(
+            "Shared PDF lessons"
+        )
+        pdf = documents()[0]
+        dialog.get_by_label("PDF scripts", exact=True).set_input_files(
+            [{**pdf, "name": "Shared One.pdf"}, {**pdf, "name": "Shared Two.pdf"}]
+        )
+        dialog.get_by_role(
+            "button", name="Create and start 2 videos", exact=True
+        ).click()
+        expect(dialog.get_by_text("Chat started", exact=True)).to_have_count(
+            2, timeout=20000
+        )
+        [parent] = [
+            item
+            for item in api(p, self.url, "/api/projects")["projects"]
+            if item["name"] == "Shared PDF lessons"
+        ]
+        threads = api(p, self.url, f"/api/projects/{parent['id']}/threads")["threads"]
+        self.assertEqual(len(threads), 2)
+        self.assertEqual(len({thread["workspace"] for thread in threads}), 2)
+        for index, thread in enumerate(threads):
+            wait_api(
+                p,
+                self.url,
+                f"/api/projects/{parent['id']}/threads/{thread['id']}",
+                lambda value: value["status"] == "completed",
+            )
+        workspaces = {thread["workspace"] for thread in threads}
+        rendered = wait_api(
+            p,
+            self.url,
+            "/api/renders",
+            lambda renders: all(
+                any(
+                    render.get("workspace") == workspace
+                    and render["status"] == "completed"
+                    for render in renders
+                )
+                for workspace in workspaces
+            ),
+            timeout=60,
+        )
+        self.assertEqual(
+            len(
+                [render for render in rendered if render.get("workspace") in workspaces]
+            ),
+            2,
+        )
+        for index, thread in enumerate(threads):
+            path = f"/api/projects/{parent['id']}?workspace={thread['workspace']}"
+            api(p, self.url, path, {"source": SOURCE + f"\n# video marker {index}\n"})
+        dialog.get_by_role("button", name="Close", exact=True).last.click()
+        for index, thread in enumerate(threads):
+            p.goto(self.url + f"/#/projects/{parent['id']}?thread={thread['id']}")
+            p.get_by_role("tab", name="Script", exact=True).click()
+            expect(p.locator(".cm-content")).to_contain_text(f"video marker {index}")
+        self.assertEqual(
+            api(p, self.url, f"/api/projects/{parent['id']}")["source"], ""
+        )
+        p.get_by_role("button", name="Videos from PDFs", exact=True).click()
+        dialog.get_by_role("button", name="Remove Shared One.pdf", exact=True).click()
+        dialog.get_by_role("button", name="Remove Shared Two.pdf", exact=True).click()
+        # Start a fresh dialog state by reloading; the saved parent remains available.
+        dialog.get_by_role("button", name="Close", exact=True).last.click()
+        p.reload()
+        p.get_by_role("button", name="Videos from PDFs", exact=True).click()
+        dialog.get_by_role("radio", name=re.compile("^Existing folder")).check()
+        select(p, "Project folder", "Shared PDF lessons")
+        dialog.get_by_label("PDF scripts", exact=True).set_input_files(
+            [{**pdf, "name": "Existing Three.pdf"}]
+        )
+        dialog.get_by_role(
+            "button", name="Create and start 1 video", exact=True
+        ).click()
+        expect(dialog.get_by_text("Chat started", exact=True)).to_be_visible(
+            timeout=20000
+        )
+        self.assertEqual(
+            len(api(p, self.url, f"/api/projects/{parent['id']}/threads")["threads"]), 3
+        )
+
+    def test_pdf_batch_starts_isolated_chats_and_queues_every_completion(self):
+        p = self.page
+        api(p, self.url, "/api/agents/settings", {"auto_render": True})
+        api(
+            p,
+            self.url,
+            "/api/preferences",
+            {
+                "values": {
+                    "manim-quality": "preview",
+                    "manim-resolution": "854x480",
+                    "manim-fps": "15",
+                }
+            },
+        )
+        p.reload()
+        p.get_by_role("button", name="Videos from PDFs", exact=True).click()
+        dialog = p.get_by_role("dialog", name="Videos from PDFs", exact=True)
+        dialog.get_by_role("radio", name=re.compile("^Separate folders")).check()
+        pdf = documents()[0]
+        dialog.get_by_label("PDF scripts", exact=True).set_input_files(
+            [{**pdf, "name": "Batch One.pdf"}, {**pdf, "name": "Batch Two.pdf"}]
+        )
+        dialog.get_by_role(
+            "button", name="Create and start 2 videos", exact=True
+        ).click()
+        expect(dialog.get_by_text("Chat started", exact=True)).to_have_count(
+            2, timeout=20000
+        )
+        projects = api(p, self.url, "/api/projects")["projects"]
+        batch = [
+            item for item in projects if item["name"] in ("Batch One", "Batch Two")
+        ]
+        self.assertEqual(len(batch), 2)
+        for item in batch:
+            threads = api(p, self.url, f"/api/projects/{item['id']}/threads")["threads"]
+            self.assertEqual(len(threads), 1)
+            wait_api(
+                p,
+                self.url,
+                f"/api/projects/{item['id']}/threads/{threads[0]['id']}",
+                lambda thread: thread["status"] == "completed",
+            )
+        ids = {item["id"] for item in batch}
+        renders = wait_api(
+            p,
+            self.url,
+            "/api/renders",
+            lambda values: all(
+                any(render.get("project") == project_id for render in values)
+                for project_id in ids
+            ),
+        )
+        self.assertEqual(
+            len([render for render in renders if render.get("project") in ids]), 2
+        )
+        finished = wait_api(
+            p,
+            self.url,
+            "/api/renders",
+            lambda values: all(
+                any(
+                    render.get("project") == project_id
+                    and render["status"] in ("completed", "failed")
+                    for render in values
+                )
+                for project_id in ids
+            ),
+            timeout=60,
+        )
+        self.assertTrue(
+            all(
+                render["status"] == "completed"
+                for render in finished
+                if render.get("project") in ids
+            ),
+            finished,
+        )
+
     def test_onboarding_ready_provider_guide_persistence_and_reopen(self):
         p = self.page
         api(p, self.url, "/api/preferences", {"values": {"studio-onboarding": ""}})
@@ -68,9 +906,15 @@ class WorkspaceTests(unittest.TestCase):
         expect(
             p.get_by_role("dialog", name="Download the narration voice")
         ).to_be_visible()
-        expect(
-            p.get_by_role("button", name=re.compile("^Download .* voice$"))
-        ).to_be_visible()
+        if os.environ.get("MANIM_STUDIO_TEST_KOKORO"):
+            # The fixture pre-installs the Standard voice: nothing to download.
+            expect(
+                p.get_by_text("The Standard voice is installed.", exact=False)
+            ).to_be_visible()
+        else:
+            expect(
+                p.get_by_role("button", name=re.compile("^Download .* voice$"))
+            ).to_be_visible()
         p.get_by_role("button", name="Continue", exact=True).click()
         expect(p.get_by_role("dialog", name="From an idea to a video")).to_be_visible()
         expect(p.get_by_text("Add your references", exact=True)).to_be_visible()
@@ -789,11 +1633,72 @@ class WorkspaceTests(unittest.TestCase):
         p.reload()
         expect(p.locator("html")).not_to_have_class(re.compile("dark"))
 
+    def test_provider_switch_applies_immediately_and_save_tracks_edits(self):
+        p = self.page
+        p.get_by_role("link", name="Settings", exact=True).click()
+        save = p.get_by_role("button", name="Save provider", exact=True).first
+        expect(save).to_be_disabled()
+        switch = p.get_by_role("switch", name="Enable Codex", exact=True)
+        was = switch.get_attribute("aria-checked") == "true"
+        try:
+            switch.click()
+            wait_api(
+                p,
+                self.url,
+                "/api/agents",
+                lambda agents: (
+                    agents["settings"]["providers"]["codex"]["enabled"] is (not was)
+                ),
+            )
+            # Toggling saves on its own, so there is nothing left to Save.
+            expect(save).to_be_disabled()
+            p.get_by_role("textbox", name="Codex binary").fill("codex-custom")
+            expect(save).to_be_enabled()
+            p.get_by_role("button", name="Check again", exact=True).click()
+            expect(
+                p.get_by_role("button", name="Check again", exact=True)
+            ).to_be_enabled()
+            expect(p.get_by_role("textbox", name="Codex binary")).to_have_value(
+                "codex-custom"
+            )
+            expect(save).to_be_enabled()
+        finally:
+            api(
+                p,
+                self.url,
+                "/api/agents/settings",
+                {"providers": {"codex": {"enabled": was}}},
+            )
+
+    def test_dragging_files_highlights_the_assets_drop_zone(self):
+        p = self.page
+        project(p, self.url, "Drop zone")
+        p.get_by_role("tab", name="Assets", exact=True).click()
+        zone = p.get_by_role("tabpanel", name="Assets").locator("> div").first
+        shadow = "el => getComputedStyle(el).boxShadow"
+        self.assertEqual(zone.evaluate(shadow), "none")
+        zone.evaluate(
+            """el => {
+              const data = new DataTransfer();
+              data.items.add(new File(["x"], "a.txt"));
+              el.dispatchEvent(new DragEvent("dragenter", {bubbles: true, dataTransfer: data}));
+            }"""
+        )
+        expect(zone).not_to_have_css("box-shadow", "none")
+        zone.evaluate(
+            """el => {
+              const data = new DataTransfer();
+              data.items.add(new File(["x"], "a.txt"));
+              el.dispatchEvent(new DragEvent("dragleave", {bubbles: true, dataTransfer: data}));
+            }"""
+        )
+        expect(zone).to_have_css("box-shadow", "none")
+
     def test_navigation_highlights_follow_selection_and_reload(self):
         p = self.page
         value = project(p, self.url, "Selected tabs")
 
-        def assert_highlight(selected, other):
+        def assert_highlight(selected, other, underlined=True):
             p.mouse.move(0, 0)
             p.evaluate(
                 "async () => { await Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => {}))); }"
@@ -806,8 +1711,9 @@ class WorkspaceTests(unittest.TestCase):
             ]
             self.assertNotEqual(styles[0]["background"], styles[1]["background"])
             self.assertNotEqual(styles[0]["color"], styles[1]["color"])
-            self.assertNotEqual(styles[0]["shadow"], "none")
-            self.assertNotEqual(styles[0]["border"], "rgba(0, 0, 0, 0)")
+            if underlined:
+                self.assertNotEqual(styles[0]["shadow"], "none")
+                self.assertNotEqual(styles[0]["border"], "rgba(0, 0, 0, 0)")
 
         for theme in ("dark", "light"):
             api(p, self.url, "/api/preferences", {"values": {"manim-theme": theme}})
@@ -823,15 +1729,13 @@ class WorkspaceTests(unittest.TestCase):
                 selected.click()
                 expect(selected).to_have_attribute("aria-current", "page")
                 expect(nav.locator('[aria-current="page"]')).to_have_count(1)
-                expect(
-                    p.get_by_role("link", name="Settings", exact=True)
-                ).to_have_attribute("aria-current", "page")
+                expect(p.get_by_role("link", name="Back", exact=True)).to_be_visible()
                 other = nav.get_by_role(
                     "link",
                     name="General" if label == "Providers" else "Providers",
                     exact=True,
                 )
-                assert_highlight(selected, other)
+                assert_highlight(selected, other, underlined=False)
             p.reload()
             expect(
                 nav.get_by_role("link", name="About & updates", exact=True)
@@ -851,7 +1755,7 @@ class WorkspaceTests(unittest.TestCase):
             tab_bounds = tabs.evaluate(
                 "tabs => [...tabs.querySelectorAll('[role=tab]')].map(tab => { const rect = tab.getBoundingClientRect(); return {x: rect.x, width: rect.width}; })"
             )
-            for label in ("Preview", "Script", "Narration", "Assets", "Output"):
+            for label in ("Preview", "Script", "Narration", "Assets", "Log"):
                 selected = tabs.get_by_role("tab", name=label, exact=True)
                 selected.click()
                 expect(selected).to_have_attribute("aria-selected", "true")
@@ -875,9 +1779,9 @@ class WorkspaceTests(unittest.TestCase):
                 tabs.get_by_role("tab", name="Preview", exact=True)
             ).to_have_attribute("aria-selected", "true")
             p.keyboard.press("End")
-            expect(
-                tabs.get_by_role("tab", name="Output", exact=True)
-            ).to_have_attribute("aria-selected", "true")
+            expect(tabs.get_by_role("tab", name="Log", exact=True)).to_have_attribute(
+                "aria-selected", "true"
+            )
             wait_api(
                 p,
                 self.url,
@@ -887,7 +1791,7 @@ class WorkspaceTests(unittest.TestCase):
                 ),
             )
             p.reload()
-            expect(p.get_by_role("tab", name="Output", exact=True)).to_have_attribute(
+            expect(p.get_by_role("tab", name="Log", exact=True)).to_have_attribute(
                 "aria-selected", "true"
             )
 
@@ -949,12 +1853,12 @@ class WorkspaceTests(unittest.TestCase):
         p = self.page
         value = project(p, self.url, "Collapsible sidebar")
         sidebar = p.get_by_role("complementary", name="Studio sidebar")
-        self.assertEqual(round(sidebar.bounding_box()["width"]), 264)
+        expect(sidebar).to_have_css("width", "264px")
         p.get_by_role("button", name="Collapse sidebar", exact=True).click()
         expect(
             p.get_by_role("button", name="Expand sidebar", exact=True)
         ).to_be_visible()
-        self.assertEqual(round(sidebar.bounding_box()["width"]), 56)
+        expect(sidebar).to_have_css("width", "56px")
         wait_api(
             p,
             self.url,
@@ -965,34 +1869,111 @@ class WorkspaceTests(unittest.TestCase):
         expect(
             p.get_by_role("button", name="Expand sidebar", exact=True)
         ).to_be_visible()
-        self.assertEqual(round(sidebar.bounding_box()["width"]), 56)
+        expect(sidebar).to_have_css("width", "56px")
         p.get_by_role("link", name="Settings", exact=True).click()
         expect(p.get_by_role("heading", name="Providers", exact=True)).to_be_visible()
         expect(
             p.get_by_role("button", name="Expand sidebar", exact=True)
         ).to_be_visible()
-        p.get_by_role("link", name="Collapsible sidebar", exact=True).click()
+        p.get_by_role("link", name="Back", exact=True).click()
+        expect(
+            p.get_by_role("button", name="Switch project", exact=True)
+        ).to_be_visible()
         self.assertIn(value["id"], p.url)
         p.get_by_role("button", name="Expand sidebar", exact=True).focus()
         p.keyboard.press("Enter")
         expect(
             p.get_by_role("button", name="Collapse sidebar", exact=True)
         ).to_be_focused()
-        self.assertEqual(round(sidebar.bounding_box()["width"]), 264)
+        expect(sidebar).to_have_css("width", "264px")
         p.get_by_role("button", name="Collapse sidebar", exact=True).click()
         p.set_viewport_size({"width": 320, "height": 800})
         p.get_by_role("button", name="Projects", exact=True).click()
         expect(
             p.get_by_role("link", name="Collapsible sidebar", exact=True)
         ).to_be_visible()
-        self.assertEqual(round(sidebar.bounding_box()["width"]), 264)
+        expect(sidebar).to_have_css("width", "264px")
         p.get_by_role("link", name="Settings", exact=True).click()
         expect(sidebar).not_to_be_visible()
         p.set_viewport_size({"width": 1366, "height": 768})
         expect(
             p.get_by_role("button", name="Expand sidebar", exact=True)
         ).to_be_visible()
-        self.assertEqual(round(sidebar.bounding_box()["width"]), 56)
+        expect(sidebar).to_have_css("width", "56px")
+
+    def test_sidebar_icons_keep_their_position_when_toggled(self):
+        p = self.page
+        project(p, self.url, "Stable icons")
+        sidebar = p.get_by_role("complementary", name="Studio sidebar")
+        expect(sidebar).to_have_css("width", "264px")
+        script = """aside => Object.fromEntries(
+          ['Collapse sidebar', 'Expand sidebar', 'Settings']
+            .map(name => {
+              const icon = aside.querySelector(`[aria-label="${name}"] svg`);
+              if (!icon || !icon.getClientRects().length) return null;
+              const box = icon.getBoundingClientRect();
+              return [name.replace('Expand', 'Collapse'),
+                      [Math.round(box.left + box.width / 2), Math.round(box.top + box.height / 2)]];
+            })
+            .filter(Boolean))"""
+        folder = """aside => {
+          const box = aside.querySelector('nav a svg').getBoundingClientRect();
+          return [Math.round(box.left + box.width / 2), Math.round(box.top + box.height / 2)];
+        }"""
+        open_icons = sidebar.evaluate(script)
+        open_folder = sidebar.evaluate(folder)
+        p.get_by_role("button", name="Collapse sidebar", exact=True).click()
+        expect(sidebar).to_have_css("width", "56px")
+        rail_icons = sidebar.evaluate(script)
+        self.assertEqual(rail_icons["Collapse sidebar"], open_icons["Collapse sidebar"])
+        self.assertEqual(rail_icons["Settings"][0], open_icons["Settings"][0])
+        self.assertAlmostEqual(
+            p.get_by_role("button", name="Switch project", exact=True).bounding_box()[
+                "x"
+            ]
+            + 18,
+            open_folder[0],
+            delta=0.5,
+        )
+        # Every icon is centred in the 56px rail.
+        self.assertTrue(all(x == 28 for x, _ in open_icons.values()), open_icons)
+        self.assertEqual(open_folder[0], 28)
+        # The footer is a row when open and one column in the rail.
+        footer = """aside => ['My renders', 'Settings'].map(name => {
+          const box = aside.querySelector(`[aria-label="${name}"]`).getBoundingClientRect();
+          return [Math.round(box.left), Math.round(box.top)];
+        })"""
+        rail = sidebar.evaluate(footer)
+        self.assertEqual(rail[0][0], rail[1][0])
+        self.assertLess(rail[1][1], rail[0][1])
+        p.get_by_role("button", name="Expand sidebar", exact=True).click()
+        expect(sidebar).to_have_css("width", "264px")
+        row = sidebar.evaluate(footer)
+        self.assertEqual(row[0][1], row[1][1])
+        self.assertLess(row[1][0], row[0][0])
+
+    def test_mobile_sidebar_slides_instead_of_disappearing(self):
+        p = self.page
+        project(p, self.url, "Drawer motion")
+        p.set_viewport_size({"width": 400, "height": 800})
+        sidebar = p.get_by_role("complementary", name="Studio sidebar")
+        wrapper = p.locator("#studio-sidebar")
+        expect(sidebar).not_to_be_visible()
+        # Closed: parked off-screen by a transform, not removed with display:none.
+        self.assertEqual(
+            wrapper.evaluate("el => getComputedStyle(el).display"), "block"
+        )
+        self.assertNotEqual(
+            wrapper.evaluate("el => getComputedStyle(el).transform"), "none"
+        )
+        p.get_by_role("button", name="Projects", exact=True).click()
+        expect(sidebar).to_be_visible()
+        expect(wrapper).to_have_css("transform", "none")
+        p.keyboard.press("Escape")
+        expect(sidebar).not_to_be_visible()
+        self.assertNotEqual(
+            wrapper.evaluate("el => getComputedStyle(el).transform"), "none"
+        )
 
     def test_narration_controls_align_and_save_at_narrow_widths(self):
         p = self.page
@@ -1035,6 +2016,56 @@ class WorkspaceTests(unittest.TestCase):
         )
         self.assertEqual(saved["narration"]["speed"], 1.15)
 
+    def test_speed_field_accepts_typed_values_and_repairs_on_blur(self):
+        p = self.page
+        value = project(p, self.url, "Speed typing")
+        p.get_by_role("tab", name=re.compile("^Narration")).click()
+        speed = p.get_by_role("spinbutton", name="Speaking speed", exact=True)
+        speed.click()
+        p.keyboard.press("Control+A")
+        # "0" and "0." are out of range on their own; they must stay typed.
+        p.keyboard.type("0.75", delay=40)
+        expect(speed).to_have_value("0.75")
+        saved = wait_api(
+            p,
+            self.url,
+            f"/api/projects/{value['id']}",
+            lambda doc: doc["narration"]["speed"] == 0.75,
+        )
+        self.assertEqual(saved["narration"]["speed"], 0.75)
+        p.keyboard.press("Control+A")
+        p.keyboard.type("9")
+        expect(speed).to_have_value("9")
+        p.get_by_role("textbox", name="Narration script", exact=True).click()
+        expect(speed).to_have_value("0.75")
+
+    def test_confirm_dialog_keeps_its_content_while_closing(self):
+        p = self.page
+        project(p, self.url, "Confirm exit")
+        p.get_by_role("tab", name="Assets", exact=True).click()
+        svg = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"/>'
+        p.locator('input[type="file"][aria-label="Upload assets"]').set_input_files(
+            {"name": "dot.svg", "mimeType": "image/svg+xml", "buffer": svg.encode()}
+        )
+        expect(p.get_by_text("1 asset", exact=True)).to_be_visible()
+        p.get_by_role("button", name="Delete dot.svg", exact=True).click()
+        dialog = p.get_by_role("alertdialog")
+        expect(dialog).to_be_visible()
+        p.evaluate(
+            """() => {
+              const node = document.querySelector('[role=alertdialog]');
+              window.__seen = [node.textContent];
+              new MutationObserver(() => window.__seen.push(node.textContent))
+                .observe(node, {subtree: true, childList: true, characterData: true});
+            }"""
+        )
+        dialog.get_by_role("button", name="Cancel", exact=True).click()
+        expect(dialog).to_have_count(0)
+        seen = p.evaluate("window.__seen")
+        for text in seen:
+            self.assertIn("Delete dot.svg?", text)
+            self.assertIn("Delete asset", text)
+
     def test_failed_save_recovers_draft_after_reload(self):
         p = self.page
         value = project(p, self.url, "Recovery check")
@@ -1070,6 +2101,8 @@ class WorkspaceTests(unittest.TestCase):
             "edition": "portable",
             "latest_version": "1.2.2",
             "release_url": "https://github.com/ItsTatsuya/manim-studio/releases",
+            "release_summary": "Calmer sidebar and faster renders.",
+            "release_notes": [f"fix(web): change number {n}" for n in range(1, 12)],
             "last_checked": 1,
             "can_download": True,
             "can_install": False,
@@ -1096,13 +2129,29 @@ class WorkspaceTests(unittest.TestCase):
         p.route("**/api/updates**", updates)
         p.reload()
         sidebar = p.get_by_role("complementary", name="Studio sidebar")
-        expect(sidebar.get_by_text("Update 1.2.2 available")).to_be_visible()
-        sidebar.get_by_role("button", name="Download update").click()
+        # The update button carries a dot and opens a popover with the notes.
+        sidebar.get_by_role("button", name="Update 1.2.2 available").click()
+        popup = p.get_by_role("dialog")
         expect(
-            sidebar.get_by_role("progressbar", name="Update progress")
+            popup.get_by_role("heading", name="Update ready to download")
+        ).to_be_visible()
+        expect(popup.get_by_text("1.2.1 → 1.2.2")).to_be_visible()
+        expect(popup.get_by_text("Calmer sidebar and faster renders.")).to_be_visible()
+        expect(popup.get_by_role("heading", name="What's changed")).to_be_visible()
+        # Eight changes are listed; the rest are a link to the release.
+        expect(popup.get_by_role("listitem")).to_have_count(8)
+        expect(
+            popup.get_by_text("fix(web): change number 1", exact=True)
+        ).to_be_visible()
+        expect(
+            popup.get_by_role("link", name="3 more changes on GitHub")
+        ).to_have_attribute("href", state["release_url"])
+        popup.get_by_role("button", name="Download update").click()
+        expect(
+            popup.get_by_role("progressbar", name="Update progress")
         ).to_have_attribute("value", "40")
-        sidebar.get_by_role("button", name="Cancel download").click()
-        expect(sidebar.get_by_role("button", name="Download update")).to_be_visible()
+        popup.get_by_role("button", name="Cancel download").click()
+        expect(popup.get_by_role("button", name="Download update")).to_be_visible()
         self.assertEqual(calls, ["download", "cancel"])
 
     def test_up_to_date_sidebar_offers_a_manual_check_only(self):

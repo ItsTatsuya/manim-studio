@@ -118,7 +118,13 @@ DEFAULT_SETTINGS = {
     "default_provider": "",
     "access": "full",
     "auto_render": True,
+    # How the render queue starts ("auto" or "manual") and what it does when a
+    # video fails ("fix" with the agent and re-queue, "skip" it, or "pause").
+    "queue_start": "auto",
+    "queue_on_error": "fix",
 }
+QUEUE_START_MODES = ("auto", "manual")
+QUEUE_ERROR_MODES = ("fix", "skip", "pause")
 PROBE_TIMEOUT = 20
 MAX_PROMPT = 40_000
 MAX_DETAIL = 6_000
@@ -297,6 +303,10 @@ def clean_settings(value) -> dict:
         result["access"] = value["access"]
     if isinstance(value.get("auto_render"), bool):
         result["auto_render"] = value["auto_render"]
+    if value.get("queue_start") in QUEUE_START_MODES:
+        result["queue_start"] = value["queue_start"]
+    if value.get("queue_on_error") in QUEUE_ERROR_MODES:
+        result["queue_on_error"] = value["queue_on_error"]
     return result
 
 
@@ -969,6 +979,7 @@ def _thread_summary(thread: dict) -> dict:
     return {
         "id": thread["id"],
         "project": thread["project"],
+        "workspace": thread.get("workspace"),
         "title": thread["title"],
         "provider": thread["provider"],
         "model": thread["model"],
@@ -996,6 +1007,7 @@ class AgentManager:
         self.probing = False
         self.probe_thread: threading.Thread | None = None
         self.settings = clean_settings(self._read(self.settings_path))
+        self.on_turn_finished = None
 
     # ---- storage
     @property
@@ -1246,13 +1258,25 @@ class AgentManager:
         return provider, model, effort
 
     def create(
-        self, project_id: str, *, provider=None, model=None, effort=None, title=""
+        self,
+        project_id: str,
+        *,
+        provider=None,
+        model=None,
+        effort=None,
+        title="",
+        workspace=None,
     ) -> dict:
+        if workspace is not None:
+            projects.workspace_folder(
+                self.data_root / "projects", project_id, workspace
+            )
         provider, model, effort = self._choose(provider, model, effort)
         self.thread_dir(project_id)
         thread = {
             "id": uuid.uuid4().hex,
             "project": project_id,
+            "workspace": workspace,
             "title": (title or "").strip()[:80] or "New chat",
             "provider": provider,
             "model": model,
@@ -1375,6 +1399,7 @@ class AgentManager:
                     "turn": turns[-1]["id"],
                 },
                 "fork_context": transcript(items),
+                "workspace": source.get("workspace"),
             }
             self.threads[thread["id"]] = thread
         self.save(thread)
@@ -1409,6 +1434,17 @@ class AgentManager:
         with self.lock:
             return any(
                 turn.thread["project"] == project_id for turn in self.running.values()
+            )
+
+    def busy_workspace(self, project_id: str, workspace: str | None = None) -> bool:
+        with self.lock:
+            return any(
+                turn.thread["project"] == project_id
+                and (
+                    workspace is None
+                    or turn.thread.get("workspace") in {None, workspace}
+                )
+                for turn in self.running.values()
             )
 
     # ---- events
@@ -1447,12 +1483,14 @@ class AgentManager:
             raise AgentError("Write a message for the agent.")
         if len(text) + len(context) > MAX_PROMPT:
             raise AgentError("Shorten the message and try again.")
-        project_dir = projects.folder(self.data_root / "projects", project_id)
         with self.lock:
             thread = self.get(project_id, thread_id)
+            project_dir = projects.workspace_folder(
+                self.data_root / "projects", project_id, thread.get("workspace")
+            )
             if thread_id in self.running:
                 raise AgentError("The agent is still working on this chat.")
-            if self.busy_project(project_id):
+            if self.busy_workspace(project_id, thread.get("workspace")):
                 raise AgentError(
                     "Another chat is editing this project. Wait for it or stop it first."
                 )
@@ -1790,7 +1828,7 @@ class AgentManager:
             if before.get(name) != after.get(name)
         )
         if projects.NARRATION_FILE in changed:
-            self._enable_narration(thread["project"])
+            self._enable_narration(thread["project"], thread.get("workspace"))
         with self.lock:
             record.update(
                 status=status,
@@ -1814,10 +1852,15 @@ class AgentManager:
                     "thread": thread["id"],
                 },
             )
+        if self.on_turn_finished:
+            try:
+                self.on_turn_finished(thread, dict(record))
+            except Exception:
+                logging.exception("Unable to continue the video workflow")
 
-    def _enable_narration(self, project_id: str):
+    def _enable_narration(self, project_id: str, workspace: str | None = None):
         try:
-            project = projects.read(self.data_root / "projects", project_id)
+            project = projects.read(self.data_root / "projects", project_id, workspace)
         except (KeyError, OSError):
             return
         narration = dict(project["narration"])
@@ -1825,7 +1868,10 @@ class AgentManager:
             narration["enabled"] = True
             try:
                 projects.update(
-                    self.data_root / "projects", project_id, narration=narration
+                    self.data_root / "projects",
+                    project_id,
+                    narration=narration,
+                    workspace=workspace,
                 )
             except (KeyError, OSError, projects.ProjectError):
                 logging.exception("Unable to turn on generated narration")

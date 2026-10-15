@@ -10,6 +10,11 @@ import { Button } from "../ui/button";
 import { toast } from "../ui/toast";
 import { Tooltip } from "../ui/tooltip";
 import type { CodeEditorHandle, Problem } from "./CodeEditor";
+import {
+  RepairVideoButton,
+  useVideoWorkflow,
+  videoIsActive,
+} from "../VideoWorkflow";
 
 // CodeMirror is the largest dependency; load it when a script is first shown.
 const CodeEditor = lazy(() =>
@@ -20,11 +25,23 @@ export function ScriptPanel({ projectId }: { projectId: string }) {
   const source = useProjectDoc((state) => state.source);
   const revision = useProjectDoc((state) => state.revision);
   const analysis = useProjectDoc((state) => state.analysis);
+  const workspace = useProjectDoc((state) => state.workspace);
   const loaded = useProjectDoc((state) => state.project?.id === projectId);
-  const last = useStudio((state) => latestRender(state.renders, projectId));
+  const last = useStudio((state) =>
+    latestRender(
+      state.renders.filter(
+        (render) => (render.workspace ?? null) === workspace,
+      ),
+      projectId,
+    ),
+  );
   const editor = useRef<CodeEditorHandle>(null);
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
   const busy = useProjectBusy(projectId);
+  const video = useVideoWorkflow(projectId);
+  const error =
+    analysis?.error ||
+    (last?.status === "failed" && (last.problem?.message || last.error));
 
   const problems = useMemo<Problem[]>(() => {
     const list: Problem[] = [];
@@ -51,7 +68,11 @@ export function ScriptPanel({ projectId }: { projectId: string }) {
         useProjectDoc.getState().source === source &&
         !useStudio.getState().installing &&
         !(useStudio.getState().threads[projectId] ?? []).some(
-          (thread) => thread.status === "running",
+          (thread) =>
+            thread.status === "running" &&
+            (workspace === null ||
+              !thread.workspace ||
+              thread.workspace === workspace),
         )
       )
         useProjectDoc.getState().replaceSource(result.source);
@@ -63,7 +84,7 @@ export function ScriptPanel({ projectId }: { projectId: string }) {
   const scenes = analysis?.scenes ?? [];
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-9 shrink-0 items-center gap-1 border-b px-2">
+      <div className="flex h-10 shrink-0 items-center gap-1 border-b px-2">
         <span className="px-1 font-mono text-muted-foreground text-xs">
           script.py
         </span>
@@ -113,8 +134,19 @@ export function ScriptPanel({ projectId }: { projectId: string }) {
           onCursor={(line, column) => setCursor({ line, column })}
         />
       </Suspense>
+      {error && !!source.trim() && !videoIsActive(video) && (
+        <div className="flex flex-wrap items-center gap-2 border-t px-3 py-2 text-xs">
+          <span className="min-w-0 flex-1 break-words text-destructive-foreground">
+            {error}
+          </span>
+          <RepairVideoButton
+            projectId={projectId}
+            renderId={last?.status === "failed" ? last.id : undefined}
+          />
+        </div>
+      )}
       <div
-        className="flex h-7 shrink-0 items-center gap-3 border-t px-3 text-[11px] text-muted-foreground"
+        className="flex h-7 shrink-0 items-center gap-3 border-t px-3 text-2xs text-muted-foreground"
         id="script-status"
       >
         {analysis?.error ? (

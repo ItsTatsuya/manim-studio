@@ -51,6 +51,18 @@ def log(prompt=""):
 
 
 def write_project():
+    repairing = "Studio automatic video repair" in prompt
+    if not repairing and "BROKEN_SYNTAX" in prompt:
+        Path("script.py").write_text(
+            "from manim import *\nclass Intro(Scene)\n    pass\n", encoding="utf-8"
+        )
+        return
+    if not repairing and "BROKEN_RUNTIME" in prompt:
+        Path("script.py").write_text(
+            "from manim import *\nclass Intro(Scene):\n    def construct(self):\n        raise ValueError('fixture runtime error to repair')\n",
+            encoding="utf-8",
+        )
+        return
     Path("script.py").write_text(
         "from manim import *\n\nclass Intro(Scene):\n    def construct(self):\n"
         "        self.play(Create(Circle()))\n        self.wait(2)\n",

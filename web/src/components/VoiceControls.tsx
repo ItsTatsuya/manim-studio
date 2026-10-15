@@ -1,11 +1,13 @@
 import { DownloadIcon, PlayIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api, type NarrationSettings } from "~/lib/api";
 import { formatBytes } from "~/lib/utils";
 import { useStudio } from "~/state/studio";
 import { Button } from "./ui/button";
+import { Field } from "./ui/field";
 import { Input, Spinner } from "./ui/input";
+import { Progress } from "./ui/progress";
 import { Select } from "./ui/select";
 import { toast } from "./ui/toast";
 
@@ -27,6 +29,15 @@ export function VoiceControls({
   const status = useStudio((state) => state.narration);
   const [busy, setBusy] = useState(false);
   const [audio, setAudio] = useState<string | null>(null);
+  const [speedText, setSpeedText] = useState(String(value.speed));
+  const lastSpeed = useRef(value.speed);
+  // Follow external changes (loading another project) without fighting typing.
+  useEffect(() => {
+    if (lastSpeed.current !== value.speed) {
+      lastSpeed.current = value.speed;
+      if (Number(speedText) !== value.speed) setSpeedText(String(value.speed));
+    }
+  }, [value.speed, speedText]);
   const downloading = status?.download.status === "downloading";
   const installed = status?.models[value.quality].installed;
   useEffect(() => {
@@ -72,8 +83,7 @@ export function VoiceControls({
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 items-end gap-x-3 gap-y-4">
-        <label className="flex min-w-0 flex-col gap-2 text-xs text-muted-foreground">
-          Voice
+        <Field label="Voice">
           <Select
             aria-label="Voice"
             className="w-full"
@@ -85,9 +95,8 @@ export function VoiceControls({
               group: voice.language,
             }))}
           />
-        </label>
-        <label className="flex min-w-0 flex-col gap-2 text-xs text-muted-foreground">
-          Model quality
+        </Field>
+        <Field label="Model quality">
           <Select
             aria-label="Voice quality"
             className="w-full"
@@ -106,26 +115,29 @@ export function VoiceControls({
               },
             ]}
           />
-        </label>
-        <label className="flex min-w-0 flex-col gap-2 text-xs text-muted-foreground">
-          Speaking speed
+        </Field>
+        <Field label="Speaking speed">
           <Input
             aria-label="Speaking speed"
             type="number"
             min="0.5"
             max="2"
             step="0.05"
-            value={value.speed}
+            value={speedText}
             onChange={(event) => {
+              // Keep what is typed so partial values like "0." can be edited;
+              // only a complete, in-range number is saved.
+              setSpeedText(event.target.value);
               const speed = event.target.valueAsNumber;
               if (Number.isFinite(speed) && speed >= 0.5 && speed <= 2)
                 onChange({ speed });
             }}
+            onBlur={() => setSpeedText(String(value.speed))}
           />
-        </label>
+        </Field>
         <Button
           variant="outline"
-          className="w-full min-w-0 text-[13px]"
+          className="w-full min-w-0 text-ui"
           disabled={busy || !installed}
           onClick={() => void preview()}
         >
@@ -144,15 +156,15 @@ export function VoiceControls({
       </p>
       {status && !installed && (
         <div className="rounded-lg border bg-muted/50 p-3 text-xs">
-          <p>
+          <p className="tabular-nums">
             {downloading
               ? `Downloading voice model · ${formatBytes(status.download.done)} / ${formatBytes(status.download.total)}`
               : `Download the local voice model (${formatBytes(status.models[value.quality].download_size)}). It runs on your CPU.`}
           </p>
           {downloading && (
-            <progress
+            <Progress
               aria-label="Voice download progress"
-              className="mt-2 w-full"
+              className="mt-2"
               value={status.download.done}
               max={status.download.total || 1}
             />

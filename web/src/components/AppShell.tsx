@@ -3,9 +3,9 @@ import { MenuIcon, XIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
 
 import { applyTheme, normalizeTheme, watchSystemTheme } from "~/lib/theme";
+import { cn } from "~/lib/utils";
 import { connectEvents, useStudio } from "~/state/studio";
 import { AppSidebar } from "./sidebar/AppSidebar";
-import { AutoRender } from "./AutoRender";
 import { ConfirmDialogHost } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Spinner } from "./ui/input";
@@ -34,9 +34,35 @@ export function AppShell() {
   );
   const [failed, setFailed] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // The rail only exists on desktop; the mobile drawer is always full width, so
+  // it never reshapes itself while it slides away.
+  const [desktop, setDesktop] = useState(
+    () => window.matchMedia("(min-width: 768px)").matches,
+  );
+  // Hidden from focus and assistive tech only after the drawer finished sliding
+  // out, so closing still animates and resizing never leaves it half-visible.
+  const [parked, setParked] = useState(true);
+  useEffect(() => {
+    if (sidebarOpen) {
+      setParked(false);
+      return;
+    }
+    const reduced = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    const timer = window.setTimeout(() => setParked(true), reduced ? 0 : 230);
+    return () => window.clearTimeout(timer);
+  }, [sidebarOpen]);
+  // Width animates only for a click on the toggle, never on load or resize.
+  const [animateSidebar, setAnimateSidebar] = useState(false);
   const sidebarCollapsed = useStudio(
     (state) => state.prefs["studio-sidebar-collapsed"] === "true",
   );
+  useEffect(() => {
+    if (!animateSidebar) return;
+    const timer = window.setTimeout(() => setAnimateSidebar(false), 300);
+    return () => window.clearTimeout(timer);
+  }, [animateSidebar, sidebarCollapsed]);
   const installing = useStudio((state) => state.installing);
   const completedSetup = useStudio(
     (state) => state.prefs["studio-onboarding"] === "2",
@@ -50,12 +76,21 @@ export function AppShell() {
   const location = useRouterState({ select: (state) => state.location.href });
   useEffect(() => setSidebarOpen(false), [location]);
   useEffect(() => {
-    const desktop = window.matchMedia("(min-width: 768px)");
-    const closeMobileSidebar = () => {
-      if (desktop.matches) setSidebarOpen(false);
+    if (!sidebarOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSidebarOpen(false);
     };
-    desktop.addEventListener("change", closeMobileSidebar);
-    return () => desktop.removeEventListener("change", closeMobileSidebar);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [sidebarOpen]);
+  useEffect(() => {
+    const query = window.matchMedia("(min-width: 768px)");
+    const onChange = () => {
+      setDesktop(query.matches);
+      if (query.matches) setSidebarOpen(false);
+    };
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
   }, []);
 
   useEffect(() => {
@@ -113,37 +148,41 @@ export function AppShell() {
   return (
     <TooltipProvider delay={400}>
       <div className="flex h-full min-h-0" inert={installing}>
-        {sidebarOpen && (
-          <button
-            aria-label="Close projects"
-            className="fixed inset-0 z-30 bg-black/50 md:hidden"
-            onClick={() => setSidebarOpen(false)}
-          />
-        )}
+        <button
+          aria-label="Close projects"
+          tabIndex={sidebarOpen ? 0 : -1}
+          className={cn(
+            "fixed inset-0 z-30 bg-black/50 transition-[opacity,visibility] duration-200 motion-reduce:transition-none md:hidden",
+            sidebarOpen ? "visible opacity-100" : "invisible opacity-0",
+          )}
+          onClick={() => setSidebarOpen(false)}
+        />
         <div
           id="studio-sidebar"
+          data-parked={parked && !sidebarOpen}
           className={`studio-sidebar h-full shrink-0 ${sidebarOpen ? "studio-sidebar-open" : ""}`}
         >
           <AppSidebar
-            collapsed={sidebarCollapsed && !sidebarOpen}
+            collapsed={desktop && sidebarCollapsed}
+            animate={animateSidebar}
             onCollapsedChange={(collapsed) => {
+              setAnimateSidebar(true);
               setSidebarOpen(false);
               useStudio
                 .getState()
                 .setPref("studio-sidebar-collapsed", String(collapsed));
             }}
           />
-          {sidebarOpen && (
-            <Button
-              aria-label="Close projects"
-              size="icon-sm"
-              variant="ghost"
-              className="absolute right-2 top-3 md:hidden"
-              onClick={() => setSidebarOpen(false)}
-            >
-              <XIcon />
-            </Button>
-          )}
+          <Button
+            aria-label="Close projects"
+            size="icon-sm"
+            variant="ghost"
+            className="absolute end-2 top-3 md:hidden"
+            tabIndex={sidebarOpen ? 0 : -1}
+            onClick={() => setSidebarOpen(false)}
+          >
+            <XIcon />
+          </Button>
         </div>
         <main className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-10 shrink-0 items-center border-b px-2 md:hidden">
@@ -170,7 +209,6 @@ export function AppShell() {
           </div>
         </div>
       )}
-      <AutoRender />
       {!installing && (!completedSetup || reopenSetup) && (
         <Suspense fallback={null}>
           <Onboarding open onClose={() => setReopenSetup(false)} />

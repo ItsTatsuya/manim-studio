@@ -6,7 +6,7 @@ import {
   RepeatIcon,
   SquareIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api } from "~/lib/api";
 import {
@@ -22,11 +22,22 @@ import { useProjectDoc } from "~/state/project";
 import { useStudio } from "~/state/studio";
 import { useElapsed } from "../chat/useElapsed";
 import { Button } from "../ui/button";
+import { Field } from "../ui/field";
 import { Spinner } from "../ui/input";
 import { Select } from "../ui/select";
 import { toast } from "../ui/toast";
 import type { PanelTab } from "./RightPanel";
 import { OutputSettings } from "./OutputSettings";
+import {
+  RepairVideoButton,
+  useVideoWorkflow,
+  videoIsActive,
+  VideoWorkflowNotice,
+} from "../VideoWorkflow";
+
+// Renders that already started playing on their own. The panel remounts on every
+// tab switch, so without this a fresh render would restart each time you return.
+const autoplayed = new Set<string>();
 
 export function PreviewPanel({
   projectId,
@@ -39,19 +50,38 @@ export function PreviewPanel({
 }) {
   const renders = useStudio((state) => state.renders);
   const prefs = useStudio((state) => state.prefs);
+  const queue = useStudio((state) => state.queue);
   const health = useStudio((state) => state.health);
   const analysis = useProjectDoc((state) => state.analysis);
   const scene = useProjectDoc((state) => state.scene);
+  const workspace = useProjectDoc((state) => state.workspace);
+  const scopedRenders = renders.filter(
+    (render) =>
+      render.project === projectId && (render.workspace ?? null) === workspace,
+  );
   const running = activeRender(renders);
-  const mine = running?.project === projectId ? running : null;
-  const last = latestRender(renders, projectId);
-  const shown = renders.find(
+  const mine = activeRender(scopedRenders);
+  const last = latestRender(scopedRenders, projectId);
+  const shown = scopedRenders.find(
     (render) => render.project === projectId && render.status === "completed",
   );
   const preset = currentPreset(prefs);
   const [loop, setLoop] = useState(false);
   const [custom, setCustom] = useState(false);
   const problem = renderProblem(analysis, health);
+  const video = useVideoWorkflow(projectId);
+  const activeVideo = videoIsActive(video);
+  const source = useProjectDoc((state) => state.source);
+  const multipleScenes = (analysis?.scenes.length ?? 0) > 1;
+  const autoPlay =
+    !!shown &&
+    !!last &&
+    last.id === shown.id &&
+    !autoplayed.has(shown.id) &&
+    Date.now() - new Date(shown.created).getTime() < 10 * 60_000;
+  useEffect(() => {
+    if (autoPlay && shown) autoplayed.add(shown.id);
+  }, [autoPlay, shown]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -63,11 +93,7 @@ export function PreviewPanel({
               src={`${shown.video}?v=${shown.id}`}
               controls
               loop={loop}
-              autoPlay={
-                !!last &&
-                last.id === shown.id &&
-                Date.now() - new Date(shown.created).getTime() < 10 * 60_000
-              }
+              autoPlay={autoPlay}
               className="size-full object-contain"
               aria-label={`Rendered video: ${shown.name}`}
             />
@@ -82,42 +108,50 @@ export function PreviewPanel({
           {mine && <RenderProgress render={mine} />}
         </div>
 
-        {last?.status === "failed" && !mine && (
-          <div
-            role="alert"
-            className="mt-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-[13px]"
-          >
-            <div className="flex items-start gap-2 text-destructive-foreground">
-              <CircleAlertIcon className="mt-0.5 size-4 shrink-0" />
-              <div className="min-w-0">
-                <div className="font-medium">The render needs attention</div>
-                <div className="mt-0.5 break-words text-foreground/80">
-                  {last.problem
-                    ? `Line ${last.problem.line}: ${last.problem.message}`
-                    : last.error}
+        <div className="mt-3">
+          <VideoWorkflowNotice projectId={projectId} />
+        </div>
+        {last?.status === "failed" &&
+          !mine &&
+          !problem &&
+          !activeVideo &&
+          video?.status !== "failed" && (
+            <div
+              role="alert"
+              className="mt-3 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-ui"
+            >
+              <div className="flex items-start gap-2 text-destructive-foreground">
+                <CircleAlertIcon className="mt-0.5 size-4 shrink-0" />
+                <div className="min-w-0">
+                  <div className="font-medium">The render needs attention</div>
+                  <div className="mt-0.5 break-words text-foreground/80">
+                    {last.problem
+                      ? `Line ${last.problem.line}: ${last.problem.message}`
+                      : last.error}
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="mt-2 flex gap-1.5 ps-6">
-              {last.problem && (
+              <div className="mt-2 flex gap-1.5 ps-6">
+                <RepairVideoButton projectId={projectId} renderId={last.id} />
+                {last.problem && (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => onShowTab("script")}
+                  >
+                    Go to line {last.problem.line}
+                  </Button>
+                )}
                 <Button
                   size="xs"
                   variant="outline"
-                  onClick={() => onShowTab("script")}
+                  onClick={() => onShowTab("output")}
                 >
-                  Go to line {last.problem.line}
+                  Show log
                 </Button>
-              )}
-              <Button
-                size="xs"
-                variant="outline"
-                onClick={() => onShowTab("output")}
-              >
-                Show log
-              </Button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
         {shown && (
           <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -165,25 +199,27 @@ export function PreviewPanel({
         )}
       </div>
 
-      <div className="mt-auto border-t p-3">
-        <div className="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
-          <label className="flex min-w-0 flex-col gap-1">
-            <span className="text-[11px] text-muted-foreground">Scene</span>
-            <Select
-              aria-label="Scene"
-              size="sm"
-              value={scene}
-              disabled={!analysis?.scenes.length}
-              placeholder={analysis?.error ? "No scene" : "Detecting…"}
-              onChange={(value) => useProjectDoc.getState().setScene(value)}
-              options={(analysis?.scenes ?? []).map((name) => ({
-                value: name,
-                label: name,
-              }))}
-            />
-          </label>
-          <label className="flex min-w-0 flex-col gap-1">
-            <span className="text-[11px] text-muted-foreground">Output</span>
+      <div className="sticky bottom-0 mt-auto border-t bg-card/60 p-3 backdrop-blur supports-[backdrop-filter]:bg-card/40">
+        <div
+          className={`grid ${multipleScenes ? "grid-cols-[1fr_1fr_auto]" : "grid-cols-[1fr_auto]"} items-end gap-3`}
+        >
+          {multipleScenes && (
+            <Field label="Animation">
+              <Select
+                aria-label="Animation"
+                size="sm"
+                value={scene}
+                disabled={!analysis?.scenes.length}
+                placeholder={analysis?.error ? "No scene" : "Detecting…"}
+                onChange={(value) => useProjectDoc.getState().setScene(value)}
+                options={(analysis?.scenes ?? []).map((name) => ({
+                  value: name,
+                  label: name,
+                }))}
+              />
+            </Field>
+          )}
+          <Field label="Quality">
             <Select
               aria-label="Output quality"
               size="sm"
@@ -207,22 +243,59 @@ export function PreviewPanel({
                 },
               ]}
             />
-          </label>
+          </Field>
           <Button
             size="sm"
+            className="min-w-28"
             onClick={onRender}
-            disabled={!!running || !!problem}
+            disabled={!!mine || !!problem || activeVideo}
           >
-            <PlayIcon className="fill-current" /> Render
+            <PlayIcon className="fill-current" />{" "}
+            {running && !mine ? "Add to queue" : "Render"}
           </Button>
         </div>
-        {problem && (
-          <p className="mt-2 text-destructive-foreground text-xs">{problem}</p>
+        {problem &&
+          !!source.trim() &&
+          !activeVideo &&
+          video?.status !== "failed" && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <p className="min-w-0 flex-1 text-destructive-foreground text-xs">
+                {problem}
+              </p>
+              {analysis && <RepairVideoButton projectId={projectId} />}
+            </div>
+          )}
+        {!source.trim() && !activeVideo && !mine && (
+          <p className="mt-2 text-muted-foreground text-xs">
+            Ask the agent for a scene, or add one in Script, to enable Render.
+          </p>
         )}
         {running && !mine && (
           <p className="mt-2 text-muted-foreground text-xs">
             Another project is rendering.
           </p>
+        )}
+        {queue?.paused && queue.waiting.length > 0 && (
+          <div className="mt-2 flex items-center justify-between gap-2 text-muted-foreground text-xs">
+            <span>
+              {queue.waiting.length}{" "}
+              {queue.waiting.length === 1 ? "video is" : "videos are"} waiting
+              in the render queue.
+            </span>
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={() =>
+                void api
+                  .startQueue()
+                  .catch((error: Error) =>
+                    toast.error("Couldn't start the queue", error.message),
+                  )
+              }
+            >
+              Start queue
+            </Button>
+          </div>
         )}
         {preset.id === "custom" && (
           <Button
@@ -233,13 +306,7 @@ export function PreviewPanel({
             Edit custom output
           </Button>
         )}
-        {custom && (
-          <OutputSettings
-            open={custom}
-            onOpenChange={setCustom}
-            value={preset}
-          />
-        )}
+        <OutputSettings open={custom} onOpenChange={setCustom} value={preset} />
       </div>
     </div>
   );

@@ -1,5 +1,3 @@
-import type { Render } from "./api";
-
 export interface QuickAction {
   id: string;
   label: string;
@@ -37,25 +35,6 @@ export const QUICK_ACTIONS: QuickAction[] = [
     immediate: true,
   },
 ];
-
-export function fixRenderContext(
-  render: Render | null | undefined,
-  log: string,
-) {
-  if (!render) return "";
-  const parts = [`The last Studio render of scene ${render.scene} failed.`];
-  if (render.error) parts.push(`Error: ${render.error}`);
-  if (render.problem)
-    parts.push(
-      `Problem at line ${render.problem.line}: ${render.problem.message}`,
-    );
-  const tail = log.trim().split("\n").slice(-60).join("\n");
-  if (tail) parts.push(`Render log (last lines):\n${tail}`);
-  return parts.join("\n");
-}
-
-export const FIX_RENDER_PROMPT =
-  "Fix the render error above in script.py, run the Studio check, and keep the narration in sync.";
 
 export const EXTERNAL_AI_PROMPT = `Create a downloadable ZIP project for Manim Studio based on the video details at the end of this message.
 

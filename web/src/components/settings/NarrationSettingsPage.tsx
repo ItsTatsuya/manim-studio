@@ -1,7 +1,8 @@
 import { useState } from "react";
+import { Field } from "../ui/field";
 import { Textarea } from "../ui/input";
 import { DEFAULT_VOICE, VoiceControls } from "../VoiceControls";
-import { SettingsHeading } from "./SettingsLayout";
+import { SettingsSection } from "./SettingsLayout";
 
 export function NarrationSettingsPage() {
   const [value, setValue] = useState({
@@ -9,14 +10,12 @@ export function NarrationSettingsPage() {
     text: "Let's explore the idea, one step at a time. Watch how the shapes move together. Now, take a closer look.",
   });
   return (
-    <>
-      <SettingsHeading title="Narration">
-        Try the local Kokoro voices. Choose the voice and script for each
-        project in its Narration panel.
-      </SettingsHeading>
-      <div className="space-y-5 rounded-xl border bg-card p-5">
-        <label className="block space-y-2 text-sm">
-          Preview text
+    <SettingsSection
+      title="Voice preview"
+      description="Try the local Kokoro voices. Choose the voice and script for each project in its Narration panel."
+    >
+      <div className="space-y-5 p-4">
+        <Field label="Preview text">
           <Textarea
             aria-label="Preview text"
             value={value.text}
@@ -24,7 +23,7 @@ export function NarrationSettingsPage() {
               setValue({ ...value, text: event.target.value })
             }
           />
-        </label>
+        </Field>
         <VoiceControls
           value={value}
           onChange={(changes) =>
@@ -32,6 +31,6 @@ export function NarrationSettingsPage() {
           }
         />
       </div>
-    </>
+    </SettingsSection>
   );
 }

@@ -1,5 +1,6 @@
 import { useProjectDoc } from "~/state/project";
 import { useProjectBusy } from "~/state/useProjectBusy";
+import { Field } from "../ui/field";
 import { Textarea } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { VoiceControls } from "../VoiceControls";
@@ -29,8 +30,7 @@ export function NarrationPanel() {
           onCheckedChange={(enabled) => change({ enabled })}
         />
       </div>
-      <label className="flex min-h-40 flex-1 flex-col gap-2 text-xs text-muted-foreground">
-        Narration script
+      <Field label="Narration script" className="min-h-40 flex-1">
         <Textarea
           aria-label="Narration script"
           className="min-h-40 flex-1"
@@ -38,7 +38,7 @@ export function NarrationPanel() {
           placeholder="Write your narration, or ask the agent to generate it…"
           onChange={(event) => change({ text: event.target.value })}
         />
-      </label>
+      </Field>
       <VoiceControls value={narration} onChange={change} />
     </fieldset>
   );

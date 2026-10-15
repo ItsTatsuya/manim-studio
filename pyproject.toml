@@ -1,12 +1,13 @@
 [project]
 name = "manim-studio"
-version = "1.1.0"
+version = "1.3.0"
 description = "Standalone Manim Studio with CLI agents, narration and a video workspace"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.142.2",
     "kokoro-onnx==0.6.1",
     "manim==0.21.0",
+    "pypdf>=6.20.1",
     "python-multipart>=0.0.32",
     "pywebview>=6.2.1 ; sys_platform == 'win32'",
     "typst==0.15.0",

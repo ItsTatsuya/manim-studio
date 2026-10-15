@@ -95,6 +95,72 @@ def open_github(url: str):
     )
 
 
+MAX_NOTES = 100
+MAX_NOTE_CHARS = 300
+MAX_SUMMARY_CHARS = 400
+_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_TAG = re.compile(r"<[^>]+>")
+_BULLET = re.compile(r"^\s{0,3}(?:[-*+]|\d{1,3}[.)])\s+(.*\S)\s*$")
+_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
+
+
+def _plain(text, limit):
+    """Release notes are untrusted text: keep words, drop markup."""
+    text = _LINK.sub(r"\1", text)
+    text = _TAG.sub("", text)
+    text = re.sub(r"\*\*|__|`", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def parse_release_notes(body):
+    """Turn a GitHub release body into a one-line summary and a list of changes.
+
+    The convention (see AGENTS.md): an optional opening sentence, then bullets,
+    optionally under headings. GitHub's own "New Contributors" section and the
+    "Full Changelog" link are dropped because the app links to the release.
+    """
+    if not isinstance(body, str):
+        return {"summary": "", "items": []}
+    summary, items = [], []
+    in_fence = False
+    skipping = False
+    seen_structure = False
+    for line in body.replace("\r\n", "\n").split("\n"):
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        heading = _HEADING.match(line)
+        if heading:
+            seen_structure = True
+            skipping = bool(re.search(r"new contributors?", heading.group(1), re.I))
+            continue
+        if skipping:
+            continue
+        bullet = _BULLET.match(line)
+        if bullet:
+            seen_structure = True
+            text = _plain(bullet.group(1), MAX_NOTE_CHARS)
+            if text and not text.lower().startswith("full changelog"):
+                items.append(text)
+            continue
+        text = line.strip()
+        if (
+            text
+            and not seen_structure
+            and not text.lower().startswith("full changelog")
+        ):
+            summary.append(text)
+        elif not text and summary:
+            seen_structure = True  # the summary is the first paragraph only
+    return {
+        "summary": _plain(" ".join(summary), MAX_SUMMARY_CHARS),
+        "items": items[:MAX_NOTES],
+    }
+
+
 class UpdateManager:
     def __init__(
         self, current_version, edition, package_root, data_root, install_supported=False
@@ -127,6 +193,10 @@ class UpdateManager:
         with self._lock:
             status = self._state["status"]
             has_package = bool(self._release and "asset" in self._release)
+            notes = (self._release or {}).get("notes") or {
+                "summary": "",
+                "items": [],
+            }
             return {
                 **self._state,
                 "current_version": self.current_version,
@@ -137,6 +207,8 @@ class UpdateManager:
                 if self._release and "asset" in self._release
                 else None,
                 "last_checked": self._last_checked_at,
+                "release_summary": notes["summary"],
+                "release_notes": list(notes["items"]),
                 # Offer an action only when it can run now, so the UI never
                 # shows "Install" for an up-to-date app.
                 "can_download": self._install_supported
@@ -315,7 +387,11 @@ class UpdateManager:
                     raise UpdateError(
                         "GitHub returned a release outside the official repository."
                     )
-                selected = {"version": version, "url": url}
+                selected = {
+                    "version": version,
+                    "url": url,
+                    "notes": parse_release_notes(release.get("body")),
+                }
                 if self.edition != "source":
                     suffix = (
                         "Portable-x64.zip"

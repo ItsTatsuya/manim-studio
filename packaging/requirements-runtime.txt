@@ -240,6 +240,9 @@ pyobjc-core==12.2.2 ; sys_platform == 'darwin' \
 pyobjc-framework-cocoa==12.2.2 ; sys_platform == 'darwin' \
     --hash=sha256:c96c0ef69a71afbbb0e6a7d594b455c5fe47d62e0db376ee7a2b4b828c16ace9 \
     --hash=sha256:e106f395531e67694376b0f1184612cbeea3ec8b9bf56b55ef41d026171d2a2d
+pypdf==6.20.1 \
+    --hash=sha256:28f5a9d2fdc2749264612d94e6a58de54c11d730d9f0cabf8ad34117c4942b45 \
+    --hash=sha256:aa5a55ddcffdc5e5ab291d5decb23f6383f4e56f8e3263dc39af41fff03885ad
 python-multipart==0.0.32 \
     --hash=sha256:be54b7f3fa167bb83e4fcd936b887b708f4e57fe75911c02aebf53efaf8d938e \
     --hash=sha256:ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23

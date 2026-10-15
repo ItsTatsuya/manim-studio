@@ -7,14 +7,17 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Asset } from "~/lib/api";
-import { formatBytes } from "~/lib/utils";
+import { useFileDrop } from "~/lib/useFileDrop";
+import { cn, formatBytes } from "~/lib/utils";
 import { useStudio } from "~/state/studio";
+import { useProjectDoc } from "~/state/project";
 import { Button } from "../ui/button";
 import { confirmAction } from "../ui/dialog";
 import { Spinner } from "../ui/input";
 import { toast } from "../ui/toast";
 
 export function AssetsPanel({ projectId }: { projectId: string }) {
+  const workspace = useProjectDoc((state) => state.workspace);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(0);
@@ -28,14 +31,14 @@ export function AssetsPanel({ projectId }: { projectId: string }) {
   const load = useCallback(async () => {
     const version = ++loadVersion.current;
     try {
-      const result = await api.assets(projectId);
+      const result = await api.assets(projectId, workspace);
       if (loadVersion.current === version) setAssets(result.assets);
     } catch (error) {
       toast.error("Couldn't load assets", (error as Error).message);
     } finally {
       if (loadVersion.current === version) setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, workspace]);
   useEffect(() => {
     void load();
   }, [load, version]);
@@ -46,7 +49,7 @@ export function AssetsPanel({ projectId }: { projectId: string }) {
     try {
       for (const file of files) {
         try {
-          await api.uploadAsset(projectId, file);
+          await api.uploadAsset(projectId, file, workspace);
         } catch (error) {
           toast.error(`Couldn't add ${file.name}`, (error as Error).message);
         } finally {
@@ -69,7 +72,7 @@ export function AssetsPanel({ projectId }: { projectId: string }) {
     )
       return;
     try {
-      await api.deleteAsset(projectId, asset.path);
+      await api.deleteAsset(projectId, asset.path, workspace);
       await load();
     } catch (error) {
       toast.error("Couldn't delete asset", (error as Error).message);
@@ -84,7 +87,7 @@ export function AssetsPanel({ projectId }: { projectId: string }) {
     pendingUploads.current += 1;
     setUploading(pendingUploads.current);
     try {
-      const result = await api.chooseAssets(projectId, "documents");
+      const result = await api.chooseAssets(projectId, "documents", workspace);
       for (const error of result.errors)
         toast.error(`Couldn't add ${error.file}`, error.message);
     } catch (error) {
@@ -95,25 +98,25 @@ export function AssetsPanel({ projectId }: { projectId: string }) {
       await load();
     }
   };
+  const drop = useFileDrop((files) => void upload(files));
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col"
-      onDragOver={(event) => event.preventDefault()}
-      onDrop={(event) => {
-        event.preventDefault();
-        void upload([...event.dataTransfer.files]);
-      }}
+      className={cn(
+        "flex min-h-0 flex-1 flex-col transition-shadow",
+        drop.dragging && "shadow-[inset_0_0_0_2px_var(--primary)]",
+      )}
+      {...drop.props}
     >
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
         <span className="flex-1 text-xs text-muted-foreground">
-          {assets.length} assets
+          {assets.length === 1 ? "1 asset" : `${assets.length} assets`}
         </span>
         <Button
           size="xs"
           variant="ghost-muted"
           onClick={() =>
             void api
-              .openProjectAssets(projectId)
+              .openProjectAssets(projectId, workspace)
               .catch((error: Error) =>
                 toast.error("Couldn't open folder", error.message),
               )
@@ -143,7 +146,9 @@ export function AssetsPanel({ projectId }: { projectId: string }) {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {loading ? (
-          <Spinner />
+          <div className="grid place-items-center py-14">
+            <Spinner />
+          </div>
         ) : !assets.length ? (
           <div className="py-14 text-center text-sm text-muted-foreground">
             <ImageIcon className="mx-auto mb-3 size-7" />
@@ -158,7 +163,7 @@ export function AssetsPanel({ projectId }: { projectId: string }) {
               >
                 {asset.kind === "image" || asset.kind === "vector" ? (
                   <img
-                    src={api.assetUrl(projectId, asset.path)}
+                    src={api.assetUrl(projectId, asset.path, workspace)}
                     alt=""
                     className="size-12 shrink-0 rounded bg-muted object-contain"
                     loading="lazy"
@@ -170,7 +175,7 @@ export function AssetsPanel({ projectId }: { projectId: string }) {
                 )}
                 <div className="min-w-0 flex-1">
                   <a
-                    href={api.assetUrl(projectId, asset.path)}
+                    href={api.assetUrl(projectId, asset.path, workspace)}
                     target="_blank"
                     rel="noreferrer"
                     className="block truncate text-sm hover:underline"

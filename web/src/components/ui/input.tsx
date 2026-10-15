@@ -3,12 +3,12 @@ import type * as React from "react";
 import { cn } from "~/lib/utils";
 
 const fieldClass =
-  "w-full min-w-0 rounded-[var(--control-radius)] border border-input bg-background px-2.5 text-sm text-foreground shadow-xs/5 outline-none transition-[box-shadow,border-color] placeholder:text-muted-foreground/70 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/20 disabled:opacity-50 aria-invalid:border-destructive/60 dark:bg-input/30";
+  "w-full min-w-0 rounded-[var(--control-radius)] border border-input bg-background px-2.5 text-sm text-foreground shadow-xs/5 outline-none transition-[box-shadow,border-color] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/20 disabled:opacity-50 aria-invalid:border-destructive/60 dark:bg-input/30";
 
 export function Input({ className, ...props }: React.ComponentProps<"input">) {
   return (
     <input
-      className={cn(fieldClass, "h-8", className)}
+      className={cn(fieldClass, "h-10", className)}
       data-slot="input"
       {...props}
     />
@@ -32,7 +32,7 @@ export function Kbd({ className, ...props }: React.ComponentProps<"kbd">) {
   return (
     <kbd
       className={cn(
-        "inline-flex h-5 min-w-5 items-center justify-center gap-0.5 rounded border border-border bg-muted px-1 font-sans text-[11px] text-muted-foreground",
+        "inline-flex h-5 min-w-5 items-center justify-center gap-0.5 rounded border border-border bg-muted px-1 font-sans text-2xs text-muted-foreground",
         className,
       )}
       {...props}
@@ -82,7 +82,7 @@ export function Badge({
   return (
     <span
       className={cn(
-        "inline-flex h-5 items-center gap-1 whitespace-nowrap rounded-full border px-2 font-medium text-[11px] [&_svg]:size-3",
+        "inline-flex h-5 items-center gap-1 whitespace-nowrap rounded-full border px-2 font-medium text-2xs [&_svg]:size-3",
         badgeTones[tone],
         className,
       )}

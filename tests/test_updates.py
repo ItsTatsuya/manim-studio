@@ -270,6 +270,58 @@ class UpdateTests(unittest.TestCase):
             self.assertTrue(state["can_install"])
             self.assertIsNotNone(state["last_checked"])
 
+    def test_release_notes_are_parsed_into_plain_text_changes(self):
+        body = (
+            "Faster renders and a calmer sidebar.\n\n"
+            "## What's changed\n"
+            "- fix(web): a **bold** [link](https://example.com) by @dev in #1\n"
+            "* feat: <script>alert(1)</script>second `change`\n"
+            "1. numbered change\n\n"
+            "```\n- not a change\n```\n\n"
+            "## New Contributors\n- @someone made their first contribution\n\n"
+            "**Full Changelog**: https://github.com/a/b/compare/v1...v2\n"
+        )
+        self.assertEqual(
+            updates.parse_release_notes(body),
+            {
+                "summary": "Faster renders and a calmer sidebar.",
+                "items": [
+                    "fix(web): a bold link by @dev in #1",
+                    "feat: alert(1)second change",
+                    "numbered change",
+                ],
+            },
+        )
+        for value in (None, "", 7, ["- x"]):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    updates.parse_release_notes(value), {"summary": "", "items": []}
+                )
+        many = "\n".join(f"- change {index}" for index in range(500))
+        self.assertEqual(
+            len(updates.parse_release_notes(many)["items"]), updates.MAX_NOTES
+        )
+        long = updates.parse_release_notes("- " + "word " * 200)["items"][0]
+        self.assertLessEqual(len(long), updates.MAX_NOTE_CHARS)
+
+    def test_snapshot_carries_the_offered_releases_notes_only(self):
+        manager = self.manager()
+        self.assertEqual(manager.snapshot()["release_notes"], [])
+        network = Network()
+        network.release["body"] = "Summary line.\n\n- fix: one\n- feat: two\n"
+        with patch.object(updates, "open_github", network.open):
+            self.available(manager, network)
+            state = manager.snapshot()
+            self.assertEqual(state["release_summary"], "Summary line.")
+            self.assertEqual(state["release_notes"], ["fix: one", "feat: two"])
+        current = self.manager()
+        up_to_date = Network(version=current.current_version)
+        up_to_date.release["body"] = "- fix: already installed"
+        with patch.object(updates, "open_github", up_to_date.open):
+            current.check()
+            self.wait(current, "current")
+        self.assertEqual(current.snapshot()["release_notes"], [])
+
     def test_up_to_date_offers_no_download_or_install(self):
         manager = self.manager()
         network = Network(version=manager.current_version)

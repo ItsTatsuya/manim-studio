@@ -34,7 +34,15 @@ def browser_fixture(*, native_file_picker=False):
             "MANIM_STUDIO_DATA": str(folder / "data"),
             "FAKE_AGENT_LOG": str(folder / "cli.jsonl"),
         }
-        with (folder / "server.log").open("w", encoding="utf-8") as log:
+        # Native Windows dialogs can retain inherited log handles after the server
+        # exits. Keep their diagnostics outside the disposable data fixture.
+        log_path = (
+            ROOT / ".build-cache" / f"{folder.name}.log"
+            if native_file_picker
+            else folder / "server.log"
+        )
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("w", encoding="utf-8") as log:
             server = subprocess.Popen(
                 [
                     sys.executable,
@@ -59,9 +67,7 @@ def browser_fixture(*, native_file_picker=False):
                         break
                     except OSError:
                         if server.poll() is not None or time.monotonic() > deadline:
-                            raise RuntimeError(
-                                (folder / "server.log").read_text(encoding="utf-8")
-                            )
+                            raise RuntimeError(log_path.read_text(encoding="utf-8"))
                         time.sleep(0.1)
                 with sync_playwright() as playwright:
                     browser = playwright.chromium.launch()

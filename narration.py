@@ -45,7 +45,12 @@ GAP = 0.55
 SENTENCE_PAUSE = 0.34
 CLAUSE_PAUSE = 0.12
 FADE = 0.008
-TARGET_RMS_DB = -20.0
+# Web video players normalize around -14 to -16 LUFS; quieter narration plays
+# noticeably softer than the music and speech around it.
+TARGET_LUFS = -16.0
+CEILING = 10 ** (-1.5 / 20)  # Sample-peak ceiling, about -1.5 dBFS.
+# How much of the synthetic room response is mixed under the dry voice.
+ROOM_MIX = 0.07
 LANGUAGES = {
     "a": ("en-us", "American English"),
     "b": ("en-gb", "British English"),
@@ -398,7 +403,60 @@ def _room(seconds=0.16):
     return response / np.sqrt(np.sum(response**2))
 
 
-def master(track):
+def _k_weighting(rate):
+    """The two BS.1770 K-weighting biquads (shelf, high-pass) for any rate."""
+    import numpy as np
+
+    def biquad(b0, b1, b2, a0, a1, a2):
+        return np.array([[b0 / a0, b1 / a0, b2 / a0, 1.0, a1 / a0, a2 / a0]])
+
+    gain, q, freq = 3.999843853973347, 0.7071752369554196, 1681.9744509555319
+    amp = 10 ** (gain / 40)
+    w0 = 2 * math.pi * freq / rate
+    cos, alpha = math.cos(w0), math.sin(w0) / (2 * q)
+    root = 2 * math.sqrt(amp) * alpha
+    shelf = biquad(
+        amp * ((amp + 1) + (amp - 1) * cos + root),
+        -2 * amp * ((amp - 1) + (amp + 1) * cos),
+        amp * ((amp + 1) + (amp - 1) * cos - root),
+        (amp + 1) - (amp - 1) * cos + root,
+        2 * ((amp - 1) - (amp + 1) * cos),
+        (amp + 1) - (amp - 1) * cos - root,
+    )
+    q, freq = 0.5003270373253953, 38.13547087613982
+    w0 = 2 * math.pi * freq / rate
+    cos, alpha = math.cos(w0), math.sin(w0) / (2 * q)
+    high = biquad(
+        (1 + cos) / 2, -(1 + cos), (1 + cos) / 2, 1 + alpha, -2 * cos, 1 - alpha
+    )
+    return np.vstack([shelf, high])
+
+
+def loudness(samples, rate=SAMPLE_RATE):
+    """Integrated loudness of mono `samples` in LUFS (ITU-R BS.1770-4 gating)."""
+    import numpy as np
+    from scipy.signal import sosfilt
+
+    block, step = int(0.4 * rate), int(0.1 * rate)
+    weighted = sosfilt(_k_weighting(rate), np.asarray(samples, dtype=np.float64))
+    if weighted.size < block:
+        weighted = np.concatenate([weighted, np.zeros(block - weighted.size)])
+    total = np.concatenate([[0.0], np.cumsum(weighted**2)])
+    starts = np.arange(0, weighted.size - block + 1, step)
+    energy = (total[starts + block] - total[starts]) / block
+    with np.errstate(divide="ignore"):
+        levels = -0.691 + 10 * np.log10(energy)
+    kept = energy[levels > -70.0]
+    if not kept.size:
+        return -math.inf
+    relative = -0.691 + 10 * math.log10(float(kept.mean())) - 10.0
+    kept = energy[levels > max(-70.0, relative)]
+    if not kept.size:
+        return -math.inf
+    return -0.691 + 10 * math.log10(float(kept.mean()))
+
+
+def master(track, room=ROOM_MIX):
     """Finish the dry model output like a voice-over: remove rumble, level
     loud and soft sentences, add a touch of room and normalize loudness."""
     import numpy as np
@@ -419,21 +477,32 @@ def master(track):
     gain[loud] = (envelope[loud] / threshold) ** (1 / 2.0 - 1)  # 2:1 compression
     voice *= fftconvolve(gain, smooth, mode="same")
     wet = fftconvolve(voice, _room())
-    voice = np.concatenate([voice, np.zeros(wet.size - voice.size)]) + 0.07 * wet
-    frames = voice[: voice.size // window * window].reshape(-1, window)
-    energy = np.sqrt(np.mean(frames**2, axis=1)) if frames.size else np.zeros(1)
-    speech = energy[energy > float(energy.max()) * 10 ** (-40 / 20)]
-    rms = float(np.sqrt(np.mean(speech**2))) if speech.size else 0.0
-    if rms > 0:
-        voice *= 10 ** (TARGET_RMS_DB / 20) / rms
-    # Soft limiter: transparent below the knee, smoothly approaching the ceiling.
-    knee, ceiling = 0.7, 0.95
-    level = np.abs(voice)
-    over = level > knee
-    voice[over] = np.sign(voice[over]) * (
-        knee + (ceiling - knee) * np.tanh((level[over] - knee) / (ceiling - knee))
-    )
-    return voice.astype(np.float32)
+    voice = np.concatenate([voice, np.zeros(wet.size - voice.size)]) + room * wet
+    measured = loudness(voice)
+    if math.isfinite(measured):
+        voice *= 10 ** ((TARGET_LUFS - measured) / 20)
+    return _limit(voice).astype(np.float32)
+
+
+def _limit(voice):
+    """Soft-limit to CEILING, judged on 4x oversampled audio so the peaks a
+    player reconstructs between samples stay below it too."""
+    import numpy as np
+    from scipy.signal import resample_poly
+
+    knee = 0.8 * CEILING
+    for _ in range(4):
+        wide = resample_poly(voice, 4, 1)
+        if float(np.max(np.abs(wide))) <= CEILING:
+            break
+        level = np.abs(wide)
+        over = level > knee
+        wide[over] = np.sign(wide[over]) * (
+            knee + (CEILING - knee) * np.tanh((level[over] - knee) / (CEILING - knee))
+        )
+        voice = resample_poly(wide, 1, 4)[: voice.size]
+    peak = float(np.max(np.abs(resample_poly(voice, 4, 1))))
+    return voice * (CEILING / peak) if peak > CEILING else voice
 
 
 def split_text(text: str, limit: int = CHUNK_CHARS) -> list[str]:

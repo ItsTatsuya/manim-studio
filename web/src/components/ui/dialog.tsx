@@ -1,6 +1,7 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
 import type * as React from "react";
+import { useState } from "react";
 import { create } from "zustand";
 
 import { cn } from "~/lib/utils";
@@ -20,7 +21,7 @@ export function DialogPopup({
       <div className="fixed inset-0 z-50 grid place-items-center p-4">
         <DialogPrimitive.Popup
           className={cn(
-            "relative flex max-h-full w-full max-w-lg flex-col rounded-2xl border bg-popover text-popover-foreground shadow-2xl outline-none transition-[opacity,scale] duration-150 data-[ending-style]:scale-[0.98] data-[starting-style]:scale-[0.98] data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
+            "relative flex max-h-full w-full max-w-lg flex-col rounded-2xl border bg-popover text-popover-foreground shadow-2xl outline-none transition-[opacity,scale] duration-150 ease-out data-[ending-style]:ease-in data-[ending-style]:scale-[0.98] data-[starting-style]:scale-[0.98] data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
             className,
           )}
           {...props}
@@ -83,7 +84,7 @@ export function DialogBody({
 }: React.ComponentProps<"div">) {
   return (
     <div
-      className={cn("min-h-0 overflow-y-auto px-5 pb-4", className)}
+      className={cn("min-h-0 overflow-y-auto px-5 pt-1 pb-4", className)}
       {...props}
     />
   );
@@ -125,13 +126,18 @@ export function confirmAction(options: Omit<ConfirmRequest, "resolve">) {
 }
 
 export function ConfirmDialogHost() {
-  const request = useConfirmStore((state) => state.request);
+  const current = useConfirmStore((state) => state.request);
+  // Keep rendering the last request while the dialog fades out, so the title
+  // and the destructive button don't change mid-exit.
+  const [shown, setShown] = useState(current);
+  if (current && current !== shown) setShown(current);
+  const request = current ?? shown;
   const close = (value: boolean) => {
-    request?.resolve(value);
+    current?.resolve(value);
     useConfirmStore.setState({ request: null });
   };
   return (
-    <Dialog open={!!request} onOpenChange={(open) => !open && close(false)}>
+    <Dialog open={!!current} onOpenChange={(open) => !open && close(false)}>
       <DialogPopup className="max-w-md" showClose={false} role="alertdialog">
         <DialogHeader>
           <DialogTitle>{request?.title}</DialogTitle>

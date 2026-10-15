@@ -22,7 +22,7 @@ const TABS: { id: PanelTab; label: string; icon: React.ReactNode }[] = [
   { id: "script", label: "Script", icon: <CodeIcon /> },
   { id: "narration", label: "Narration", icon: <MicIcon /> },
   { id: "assets", label: "Assets", icon: <ImageIcon /> },
-  { id: "output", label: "Output", icon: <FileTextIcon /> },
+  { id: "output", label: "Log", icon: <FileTextIcon /> },
 ];
 
 export function RightPanel({
@@ -42,11 +42,11 @@ export function RightPanel({
   const saveError = useProjectDoc((state) => state.saveError);
   return (
     <>
-      <div className="flex h-10 shrink-0 items-center border-b px-2">
+      <div className="@container flex h-10 shrink-0 items-center border-b px-2">
         <div
           role="tablist"
           aria-label="Project panel"
-          className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto"
+          className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto px-0.5 py-1"
         >
           {TABS.map((item) => (
             <button
@@ -55,7 +55,7 @@ export function RightPanel({
               type="button"
               id={`tab-${item.id}`}
               aria-selected={tab === item.id}
-              aria-controls={`panel-${item.id}`}
+              aria-controls={tab === item.id ? `panel-${item.id}` : undefined}
               tabIndex={tab === item.id ? 0 : -1}
               onClick={() => onTabChange(item.id)}
               onKeyDown={(event) => {
@@ -75,10 +75,10 @@ export function RightPanel({
                 onTabChange(TABS[next].id);
                 document.getElementById(`tab-${TABS[next].id}`)?.focus();
               }}
-              className="studio-tab relative flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[13px] text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5"
+              className="studio-tab relative flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-ui text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5"
             >
               {item.icon}
-              <span className="max-[400px]:sr-only">{item.label}</span>
+              <span className="@max-[30rem]:sr-only">{item.label}</span>
               {item.id === "script" && analysis?.error && (
                 <span
                   className="size-1.5 rounded-full bg-destructive"
@@ -95,7 +95,7 @@ export function RightPanel({
           ))}
         </div>
         <span
-          className="ms-auto pe-1 text-[11px] text-muted-foreground"
+          className="ms-auto pe-1 text-2xs text-muted-foreground"
           aria-live="polite"
         >
           {saveStatus === "saving" || saveStatus === "pending"

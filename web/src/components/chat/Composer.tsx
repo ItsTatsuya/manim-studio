@@ -1,23 +1,23 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   ArrowUpIcon,
+  ClapperboardIcon,
   FileTextIcon,
   ImageIcon,
+  MicIcon,
   PaperclipIcon,
+  ShapesIcon,
   ShieldAlertIcon,
   ShieldCheckIcon,
   SquareIcon,
-  WrenchIcon,
+  WandSparklesIcon,
   XIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { api, type Thread } from "~/lib/api";
-import {
-  FIX_RENDER_PROMPT,
-  QUICK_ACTIONS,
-  fixRenderContext,
-} from "~/lib/prompts";
+import { useFileDrop } from "~/lib/useFileDrop";
+import { QUICK_ACTIONS } from "~/lib/prompts";
 import { latestRender } from "~/lib/render";
 import { cn } from "~/lib/utils";
 import { useProjectDoc } from "~/state/project";
@@ -29,6 +29,12 @@ import { Menu, MenuItem, MenuLabel, MenuPopup, MenuTrigger } from "../ui/menu";
 import { toast } from "../ui/toast";
 import { Tooltip } from "../ui/tooltip";
 import {
+  RepairVideoButton,
+  useVideoWorkflow,
+  videoIsActive,
+  VideoWorkflowNotice,
+} from "../VideoWorkflow";
+import {
   ModelPicker,
   defaultChoice,
   providerReadiness,
@@ -36,6 +42,13 @@ import {
 } from "./ModelPicker";
 
 const drafts = new Map<string, string>();
+
+const QUICK_ACTION_ICONS: Record<string, typeof ClapperboardIcon> = {
+  video: ClapperboardIcon,
+  narration: MicIcon,
+  assets: ShapesIcon,
+  polish: WandSparklesIcon,
+};
 
 export function Composer({
   projectId,
@@ -47,6 +60,7 @@ export function Composer({
   showQuickActions?: boolean;
 }) {
   const navigate = useNavigate();
+  const workspace = thread?.workspace ?? null;
   const draftKey = thread?.id ?? `new:${projectId}`;
   const [text, setText] = useState(() => drafts.get(draftKey) ?? "");
   const [context, setContext] = useState<{
@@ -82,8 +96,12 @@ export function Composer({
     (provider) => provider.id === choice.provider,
   );
   const readiness = providerReadiness(status);
-  const lastRender = latestRender(renders, projectId);
+  const lastRender = latestRender(
+    renders.filter((render) => (render.workspace ?? null) === workspace),
+    projectId,
+  );
   const canFix = lastRender?.status === "failed";
+  const video = useVideoWorkflow(projectId);
 
   useEffect(() => {
     setText(drafts.get(draftKey) ?? "");
@@ -112,6 +130,8 @@ export function Composer({
     element.style.height = "auto";
     element.style.height = `${Math.min(element.scrollHeight, 260)}px`;
   }, [text]);
+
+  const drop = useFileDrop((files) => void attach(files));
 
   const updateText = (value: string) => {
     setText(value);
@@ -149,7 +169,14 @@ export function Composer({
 
   const send = async (override?: string, overrideContext?: string) => {
     const message = (override ?? text).trim();
-    if (!message || sending || running || pendingUploads.current > 0) return;
+    if (
+      !message ||
+      sending ||
+      running ||
+      videoIsActive(video) ||
+      pendingUploads.current > 0
+    )
+      return;
     if (!readiness.ready) {
       toast.error(
         `${status?.name ?? "The agent"} isn't ready`,
@@ -163,7 +190,7 @@ export function Composer({
         throw new Error("Save your project changes before sending a message.");
       let target = thread ?? draftThread.current;
       if (!target) {
-        target = await api.createThread(projectId, choice);
+        target = await api.createThread(projectId, { ...choice, workspace });
         draftThread.current = target;
         useStudio.setState((state) => ({
           details: { ...state.details, [target!.id]: target! },
@@ -212,7 +239,7 @@ export function Composer({
     setUploading(pendingUploads.current);
     for (const file of files) {
       try {
-        const asset = await api.uploadAsset(projectId, file);
+        const asset = await api.uploadAsset(projectId, file, workspace);
         useStudio.getState().handleEvent({
           type: "project.changed",
           project: projectId,
@@ -247,7 +274,7 @@ export function Composer({
     setUploading(pendingUploads.current);
     setPickingFiles(true);
     try {
-      const result = await api.chooseAssets(projectId, kind);
+      const result = await api.chooseAssets(projectId, kind, workspace);
       for (const error of result.errors)
         toast.error(`Couldn't add ${error.file}`, error.message);
       if (result.assets.length) {
@@ -270,80 +297,74 @@ export function Composer({
     }
   };
 
-  const fixError = async () => {
-    if (!lastRender) return;
-    const full = await api.render(lastRender.id).catch(() => lastRender);
-    setContext({
-      label: "Last render error",
-      text: fixRenderContext(full, full.log ?? ""),
-    });
-    updateText(FIX_RENDER_PROMPT);
-    input.current?.focus();
-  };
-
   return (
     <div className="flex flex-col gap-2">
       {showQuickActions && !thread && (
-        <div className="mb-1 flex flex-wrap justify-center gap-1.5">
-          {QUICK_ACTIONS.map((action) => (
-            <Button
-              key={action.id}
-              size="xs"
-              variant="outline"
-              className="rounded-full px-2.5"
-              onClick={() => {
-                if (action.immediate) void send(action.prompt);
-                else {
-                  updateText(action.prompt);
-                  window.requestAnimationFrame(() => {
-                    const element = input.current;
-                    if (!element) return;
-                    element.focus();
-                    const at = action.prompt.indexOf(": ") + 2;
-                    element.setSelectionRange(
-                      at > 1 ? at : action.prompt.length,
-                      at > 1 ? at : action.prompt.length,
-                    );
-                  });
-                }
-              }}
-            >
-              {action.label}
-            </Button>
-          ))}
-          {canFix && (
-            <Button
-              size="xs"
-              variant="outline"
-              className="rounded-full px-2.5"
-              onClick={() => void fixError()}
-            >
-              <WrenchIcon /> Fix render error
-            </Button>
-          )}
+        <div className="@container mb-1">
+          <div className="grid grid-cols-1 gap-2 @[22rem]:grid-cols-2">
+            {QUICK_ACTIONS.map((action) => {
+              const Icon = QUICK_ACTION_ICONS[action.id];
+              return (
+                <Button
+                  key={action.id}
+                  size="sm"
+                  variant="outline"
+                  className="justify-start gap-1.5 rounded-xl px-2.5"
+                  onClick={() => {
+                    if (action.immediate) void send(action.prompt);
+                    else {
+                      updateText(action.prompt);
+                      window.requestAnimationFrame(() => {
+                        const element = input.current;
+                        if (!element) return;
+                        element.focus();
+                        const at = action.prompt.indexOf(": ") + 2;
+                        element.setSelectionRange(
+                          at > 1 ? at : action.prompt.length,
+                          at > 1 ? at : action.prompt.length,
+                        );
+                      });
+                    }
+                  }}
+                >
+                  {Icon && <Icon className="text-muted-foreground" />}
+                  {action.label}
+                </Button>
+              );
+            })}
+            {canFix && !videoIsActive(video) && (
+              <div className="col-span-full flex justify-center">
+                <RepairVideoButton
+                  projectId={projectId}
+                  renderId={lastRender.id}
+                />
+              </div>
+            )}
+          </div>
         </div>
       )}
-      {thread && canFix && !running && !context && (
-        <div className="flex items-center justify-between gap-2 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-[13px]">
-          <span className="text-destructive-foreground">
-            The last render failed.
-          </span>
-          <Button size="xs" variant="outline" onClick={() => void fixError()}>
-            <WrenchIcon /> Ask the agent to fix it
-          </Button>
-        </div>
-      )}
+      <VideoWorkflowNotice projectId={projectId} />
+      {thread &&
+        canFix &&
+        !running &&
+        !context &&
+        !videoIsActive(video) &&
+        video?.status !== "failed" && (
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-1.5 text-ui">
+            <span className="text-destructive-foreground">
+              The last render failed.
+            </span>
+            <RepairVideoButton projectId={projectId} renderId={lastRender.id} />
+          </div>
+        )}
       <div
         data-composer
         className={cn(
-          "rounded-[20px] border bg-card shadow-composer transition-colors focus-within:border-ring/50 dark:bg-[color-mix(in_srgb,var(--background)_94%,white)]",
+          "rounded-2xl border bg-card shadow-composer transition-colors focus-within:border-ring/50 dark:bg-popover",
           !readiness.ready && agents && "border-warning/40",
+          drop.dragging && "border-primary ring-2 ring-primary/30",
         )}
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) => {
-          event.preventDefault();
-          void attach([...event.dataTransfer.files]);
-        }}
+        {...drop.props}
       >
         {(context || attachments.length > 0) && (
           <div className="flex flex-wrap gap-1.5 px-3 pt-3">
@@ -395,7 +416,7 @@ export function Composer({
               void send();
             }
           }}
-          className="block max-h-[260px] min-h-[44px] w-full resize-none bg-transparent px-4 pt-3 pb-1 text-[14px] leading-relaxed outline-none placeholder:text-muted-foreground/70"
+          className="block max-h-[260px] min-h-[44px] w-full resize-none bg-transparent px-4 pt-3 pb-1 text-sm leading-relaxed outline-none placeholder:text-muted-foreground"
         />
         <div className="flex items-center gap-1 px-2 pb-2">
           <ModelPicker
@@ -439,13 +460,15 @@ export function Composer({
           />
           <div className="ms-auto flex items-center gap-1">
             <Menu>
-              <MenuTrigger
-                render={<Button size="icon-sm" variant="ghost-muted" />}
-                aria-label="Attach files"
-                disabled={sending || pickingFiles}
-              >
-                <PaperclipIcon />
-              </MenuTrigger>
+              <Tooltip content="Attach files">
+                <MenuTrigger
+                  render={<Button size="icon-sm" variant="ghost-muted" />}
+                  aria-label="Attach files"
+                  disabled={sending || pickingFiles}
+                >
+                  <PaperclipIcon />
+                </MenuTrigger>
+              </Tooltip>
               <MenuPopup side="top" align="end">
                 <MenuItem onClick={() => void openPicker("documents")}>
                   <FileTextIcon /> Upload documents
@@ -469,15 +492,22 @@ export function Composer({
                 </Button>
               </Tooltip>
             ) : (
-              <Button
-                size="icon-sm"
-                aria-label="Send"
-                className="rounded-full"
-                disabled={!text.trim() || sending || uploading > 0}
-                onClick={() => void send()}
-              >
-                <ArrowUpIcon />
-              </Button>
+              <Tooltip content="Send message">
+                <Button
+                  size="icon-sm"
+                  aria-label="Send"
+                  className="rounded-full"
+                  disabled={
+                    !text.trim() ||
+                    sending ||
+                    uploading > 0 ||
+                    videoIsActive(video)
+                  }
+                  onClick={() => void send()}
+                >
+                  <ArrowUpIcon />
+                </Button>
+              </Tooltip>
             )}
           </div>
         </div>
@@ -522,7 +552,7 @@ function Chip({ label, onRemove }: { label: string; onRemove: () => void }) {
         type="button"
         aria-label={`Remove ${label}`}
         onClick={onRemove}
-        className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+        className="relative rounded p-0.5 text-muted-foreground after:absolute after:-inset-1.5 after:content-[''] hover:bg-accent hover:text-foreground"
       >
         <XIcon className="size-3" />
       </button>

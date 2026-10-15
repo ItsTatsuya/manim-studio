@@ -6,7 +6,7 @@ export function Switch({ className, ...props }: SwitchPrimitive.Root.Props) {
   return (
     <SwitchPrimitive.Root
       className={cn(
-        "inline-flex h-[18px] w-[30px] shrink-0 items-center rounded-full p-[2px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-[checked]:bg-primary data-[unchecked]:bg-input data-[disabled]:opacity-50",
+        "relative inline-flex h-[18px] w-[30px] shrink-0 items-center rounded-full p-[2px] outline-none transition-colors after:absolute after:-inset-2 after:content-[''] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-[checked]:bg-primary data-[unchecked]:bg-input data-[disabled]:opacity-50",
         className,
       )}
       {...props}

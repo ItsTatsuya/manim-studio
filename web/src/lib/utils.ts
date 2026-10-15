@@ -3,7 +3,7 @@ import { extendTailwindMerge } from "tailwind-merge";
 
 // Register the extra font sizes from index.css so cn() keeps them.
 const twMerge = extendTailwindMerge({
-  extend: { theme: { text: ["2xs", "3xs"] } },
+  extend: { theme: { text: ["2xs", "3xs", "ui"] } },
 });
 
 export function cn(...inputs: CxOptions) {

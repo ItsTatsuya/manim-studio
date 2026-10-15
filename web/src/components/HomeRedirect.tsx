@@ -36,7 +36,7 @@ export function HomeRedirect() {
         </p>
         <div className="mt-6 flex justify-center gap-2">
           <Button onClick={() => setCreating(true)}>
-            <FolderPlusIcon /> New project
+            <FolderPlusIcon /> Create project
           </Button>
           <Button variant="outline" onClick={() => setImporting(true)}>
             <UploadIcon /> Import project

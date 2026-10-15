@@ -9,7 +9,7 @@ export const MenuTrigger = MenuPrimitive.Trigger;
 export const MenuRadioGroup = MenuPrimitive.RadioGroup;
 
 export const popupSurface =
-  "rounded-lg border bg-popover text-popover-foreground shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] outline-none dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/85%)] origin-[var(--transform-origin)] transition-[opacity,scale] duration-100 data-[ending-style]:scale-[0.98] data-[starting-style]:scale-[0.98] data-[ending-style]:opacity-0 data-[starting-style]:opacity-0";
+  "rounded-lg border bg-popover text-popover-foreground shadow-popup outline-none origin-[var(--transform-origin)] transition-[opacity,scale] duration-100 ease-out data-[ending-style]:ease-in data-[ending-style]:scale-[0.98] data-[starting-style]:scale-[0.98] data-[ending-style]:opacity-0 data-[starting-style]:opacity-0";
 
 export function MenuPopup({
   children,
@@ -49,7 +49,7 @@ export function MenuPopup({
 }
 
 const itemClass =
-  "flex min-h-7 cursor-pointer select-none items-center gap-2 rounded-md px-2 py-1 text-[13px] text-foreground outline-none data-[disabled]:pointer-events-none data-[highlighted]:bg-accent data-[disabled]:opacity-50 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg:not([class*='text-'])]:text-muted-foreground";
+  "flex min-h-7 cursor-pointer select-none items-center gap-2 rounded-sm px-2 py-1 text-ui text-foreground outline-none data-[disabled]:pointer-events-none data-[highlighted]:bg-accent data-[disabled]:opacity-50 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg:not([class*='text-'])]:text-muted-foreground";
 
 export function MenuItem({
   className,
@@ -94,7 +94,7 @@ export function MenuLabel({
   return (
     <div
       className={cn(
-        "px-2 pt-1.5 pb-1 font-medium text-[11px] text-muted-foreground",
+        "px-2 pt-1.5 pb-1 font-medium text-2xs text-muted-foreground",
         className,
       )}
       {...props}

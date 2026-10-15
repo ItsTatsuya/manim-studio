@@ -63,9 +63,8 @@ class ProjectStoreTests(unittest.TestCase):
         )  # most recently updated first
         projects.delete(self.root, second["id"])
         replacement = projects.delete(self.root, first["id"])
-        self.assertEqual(replacement["name"], "Untitled project")
-        self.assertEqual(replacement["source"], "")
-        self.assertEqual(projects.list_projects(self.root)[0]["id"], replacement["id"])
+        self.assertIsNone(replacement)
+        self.assertEqual(projects.list_projects(self.root), [])
         with self.assertRaises(KeyError):
             projects.read(self.root, first["id"])
         with self.assertRaises(KeyError):
@@ -121,6 +120,19 @@ class ProjectStoreTests(unittest.TestCase):
         # Never runs twice.
         projects.ensure_default(self.root, legacy, {"manim-draft": "other"})
         self.assertEqual(len(projects.list_projects(self.root)), 1)
+        projects.delete(self.root, project["id"])
+        projects.ensure_default(self.root, legacy, {"manim-draft": SCENE})
+        self.assertEqual(projects.list_projects(self.root), [])
+
+    def test_fresh_workspace_does_not_create_a_default_project(self):
+        legacy = Path(self.temporary.name) / "assets"
+        legacy.mkdir()
+        (legacy / "README.txt").write_text("Instructions only")
+        projects.ensure_default(
+            self.root, legacy, {"manim-name": "Default", "manim-draft": "  "}
+        )
+        self.assertEqual(projects.list_projects(self.root), [])
+        self.assertFalse(self.root.exists())
 
     def test_asset_names_are_safe_and_never_overwrite(self):
         directory = Path(self.temporary.name) / "assets"
@@ -651,8 +663,13 @@ class ProjectApiTests(unittest.TestCase):
             time.sleep(0.2)
         self.fail("Render did not finish")
 
-    def test_first_run_creates_a_project(self):
-        self.assertGreaterEqual(len(self.call("/api/projects")["projects"]), 1)
+    def test_empty_workspace_lists_no_projects(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(studio, "ROOT", Path(directory)),
+        ):
+            projects.ensure_default(studio.project_root(), studio.ROOT / "assets", {})
+            self.assertEqual(self.call("/api/projects")["projects"], [])
 
     def test_native_picker_batch_preserves_bytes_and_continues_after_failure(self):
         project = self.call("/api/projects", {"name": "Native uploads"})
@@ -737,7 +754,9 @@ class ProjectApiTests(unittest.TestCase):
         self.assertIn("already open", error.exception.read().decode())
 
     def test_delete_last_project_resets_workspace_and_preserves_history(self):
-        existing = self.call("/api/projects")["projects"]
+        existing = self.call("/api/projects")["projects"] or [
+            self.call("/api/projects", {"name": "Delete me"})
+        ]
         for project in existing[1:]:
             self.call(f"/api/projects/{project['id']}", method="DELETE")
         project = existing[0]
@@ -752,12 +771,10 @@ class ProjectApiTests(unittest.TestCase):
                 self.call(f"/api/projects/{project['id']}", method="DELETE")
             self.assertEqual(error.exception.code, 409)
         result = self.call(f"/api/projects/{project['id']}", method="DELETE")
-        replacement = result["replacement"]
-        self.assertNotEqual(replacement["id"], project["id"])
-        self.assertEqual(replacement["source"], "")
+        self.assertIsNone(result["replacement"])
         self.assertFalse(old_folder.exists())
         self.assertEqual(history.read_bytes(), b"finished video")
-        self.assertEqual(len(self.call("/api/projects")["projects"]), 1)
+        self.assertEqual(self.call("/api/projects")["projects"], [])
 
     def test_project_expansion_preference_persists(self):
         value = json.dumps({"a" * 32: False, "b" * 32: True})

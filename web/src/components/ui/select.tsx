@@ -53,13 +53,13 @@ export function Select<T extends string>({
       <SelectPrimitive.Trigger
         aria-labelledby={ariaLabel ? `${labelId} ${valueId}` : valueId}
         className={cn(
-          "inline-flex min-w-0 select-none items-center justify-between gap-1.5 rounded-[var(--control-radius)] border text-left text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring data-[disabled]:opacity-50",
+          "inline-flex min-w-0 select-none items-center justify-between gap-1.5 rounded-[var(--control-radius)] border text-left text-sm outline-none transition-[color,background-color,border-color,box-shadow,scale] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/20 active:scale-[0.98] data-[disabled]:opacity-50",
           variant === "outline"
             ? "border-input bg-background shadow-xs/5 hover:bg-accent/50 dark:bg-input/30"
             : "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground data-[popup-open]:bg-accent data-[popup-open]:text-foreground",
-          size === "default" && "h-8 px-2.5",
-          size === "sm" && "h-7 px-2 text-[13px]",
-          size === "xs" && "h-6 rounded-md px-1.5 text-xs",
+          size === "default" && "h-10 px-3",
+          size === "sm" && "h-9 px-2.5 text-ui",
+          size === "xs" && "h-8 rounded-md px-2 text-xs",
           className,
         )}
       >
@@ -94,7 +94,7 @@ export function Select<T extends string>({
               {groups.map((group) => (
                 <SelectPrimitive.Group key={group || "default"}>
                   {group && (
-                    <SelectPrimitive.GroupLabel className="px-2 pt-1.5 pb-1 font-medium text-[11px] text-muted-foreground">
+                    <SelectPrimitive.GroupLabel className="px-2 pt-1.5 pb-1 font-medium text-2xs text-muted-foreground">
                       {group}
                     </SelectPrimitive.GroupLabel>
                   )}
@@ -105,14 +105,14 @@ export function Select<T extends string>({
                         key={option.value}
                         value={option.value}
                         disabled={option.disabled}
-                        className="relative flex min-h-7 cursor-pointer select-none items-center gap-2 rounded-md py-1 ps-2 pe-7 text-[13px] outline-none data-[disabled]:opacity-50 data-[highlighted]:bg-accent"
+                        className="relative flex min-h-9 cursor-pointer select-none items-center gap-2 rounded-sm py-1.5 ps-2 pe-7 text-ui outline-none data-[disabled]:opacity-50 data-[highlighted]:bg-accent"
                       >
                         <div className="min-w-0">
                           <SelectPrimitive.ItemText className="block truncate">
                             {option.label}
                           </SelectPrimitive.ItemText>
                           {option.description && (
-                            <div className="truncate text-[11px] text-muted-foreground">
+                            <div className="truncate text-2xs text-muted-foreground">
                               {option.description}
                             </div>
                           )}

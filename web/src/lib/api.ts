@@ -85,9 +85,28 @@ export interface Health {
   outputs: string;
   standalone: boolean;
   native_file_picker?: boolean;
+  video_workspaces?: boolean;
   portable: boolean;
   data: string;
   version: string;
+}
+
+export interface UsageSnapshot {
+  updated: number;
+  providers: {
+    id: ProviderId;
+    name: string;
+    available: boolean;
+    plan: string | null;
+    error: string | null;
+    windows: {
+      id: string;
+      label: string;
+      used_percent: number;
+      left_percent: number;
+      resets_at: number | null;
+    }[];
+  }[];
 }
 
 export interface NarrationSettings {
@@ -108,6 +127,7 @@ export interface ProjectSummary {
 }
 
 export interface Project extends ProjectSummary {
+  workspace?: string | null;
   source: string;
   warnings?: string[];
 }
@@ -130,6 +150,8 @@ export interface Analysis {
 export type Quality = "preview" | "standard" | "final";
 
 export interface Render {
+  workflow?: string;
+  workspace?: string | null;
   id: string;
   name: string;
   folder?: string;
@@ -153,6 +175,28 @@ export interface Render {
   narrated?: boolean;
   can_cancel?: boolean;
   log?: string;
+}
+
+export interface VideoWorkflow {
+  id: string;
+  project: string;
+  workspace: string | null;
+  thread: string | null;
+  name: string;
+  status:
+    | "checking"
+    | "repairing"
+    | "rendering"
+    | "completed"
+    | "failed"
+    | "cancelled";
+  stage: string;
+  attempt: number;
+  max_attempts: number;
+  render: string | null;
+  error: string | null;
+  warning?: string | null;
+  updated: string;
 }
 
 interface Voice {
@@ -222,6 +266,19 @@ export interface AgentSettings {
   default_provider: "" | ProviderId;
   access: "full" | "edits";
   auto_render: boolean;
+  queue_start: "auto" | "manual";
+  queue_on_error: "fix" | "skip" | "pause";
+}
+
+export interface QueueState {
+  /** Waiting videos are held until the queue is started. */
+  paused: boolean;
+  start: AgentSettings["queue_start"];
+  on_error: AgentSettings["queue_on_error"];
+  /** The render in progress, if any. */
+  active: string | null;
+  /** Waiting render ids in the order they will start. */
+  waiting: string[];
 }
 
 export interface AgentSnapshot {
@@ -233,6 +290,7 @@ export interface AgentSnapshot {
 type ThreadStatus = "idle" | "running" | "completed" | "failed" | "interrupted";
 
 export interface ThreadSummary {
+  workspace?: string | null;
   id: string;
   project: string;
   title: string;
@@ -310,6 +368,10 @@ export interface UpdateState {
   edition: "portable" | "installed" | "source";
   latest_version: string | null;
   release_url: string;
+  /** One opening sentence of the release notes; may be empty. */
+  release_summary: string;
+  /** The release's bullet points, already reduced to plain text. */
+  release_notes: string[];
   last_checked: number | null;
   can_download: boolean;
   can_install: boolean;
@@ -318,6 +380,12 @@ export interface UpdateState {
 
 // ------------------------------------------------------------------ calls
 
+function workspacePath(path: string, workspace?: string | null) {
+  return workspace
+    ? `${path}?workspace=${encodeURIComponent(workspace)}`
+    : path;
+}
+
 export const api = {
   health: () => request<Health>("/api/health"),
   preferences: () => request<Record<string, string>>("/api/preferences"),
@@ -325,13 +393,18 @@ export const api = {
     request("/api/preferences", { body: { values } }),
 
   projects: () => request<{ projects: ProjectSummary[] }>("/api/projects"),
-  project: (id: string) => request<Project>(`/api/projects/${id}`),
+  project: (id: string, workspace?: string | null) =>
+    request<Project>(workspacePath(`/api/projects/${id}`, workspace)),
   createProject: (name: string, source = "") =>
     request<Project>("/api/projects", { body: { name, source } }),
   updateProject: (
     id: string,
     changes: { name?: string; source?: string; narration?: NarrationSettings },
-  ) => request<ProjectSummary>(`/api/projects/${id}`, { body: changes }),
+    workspace?: string | null,
+  ) =>
+    request<ProjectSummary>(workspacePath(`/api/projects/${id}`, workspace), {
+      body: changes,
+    }),
   deleteProject: (id: string) =>
     request<{ ok: true; replacement: Project | null }>(`/api/projects/${id}`, {
       method: "DELETE",
@@ -340,30 +413,44 @@ export const api = {
     request<Project>("/api/projects/import", { raw: form }),
   openProjectFolder: (id: string) =>
     request(`/api/projects/${id}/open-folder`, { method: "POST" }),
-  openProjectAssets: (id: string) =>
-    request(`/api/projects/${id}/open-assets`, { method: "POST" }),
-  assets: (id: string) =>
-    request<{ assets: Asset[] }>(`/api/projects/${id}/assets`),
-  uploadAsset: (id: string, file: File) =>
-    request<Asset>(`/api/projects/${id}/assets`, {
+  openProjectAssets: (id: string, workspace?: string | null) =>
+    request(workspacePath(`/api/projects/${id}/open-assets`, workspace), {
+      method: "POST",
+    }),
+  assets: (id: string, workspace?: string | null) =>
+    request<{ assets: Asset[] }>(
+      workspacePath(`/api/projects/${id}/assets`, workspace),
+    ),
+  uploadAsset: (id: string, file: File, workspace?: string | null) =>
+    request<Asset>(workspacePath(`/api/projects/${id}/assets`, workspace), {
       raw: file,
       headers: {
         "X-Filename": encodeURIComponent(file.name),
         "Content-Type": "application/octet-stream",
       },
     }),
-  chooseAssets: (id: string, kind: "documents" | "media") =>
+  chooseAssets: (
+    id: string,
+    kind: "documents" | "media",
+    workspace?: string | null,
+  ) =>
     request<{ assets: Asset[]; errors: { file: string; message: string }[] }>(
-      `/api/projects/${id}/assets/choose`,
+      workspacePath(`/api/projects/${id}/assets/choose`, workspace),
       { body: { kind } },
     ),
-  deleteAsset: (id: string, path: string) =>
+  deleteAsset: (id: string, path: string, workspace?: string | null) =>
     request(
-      `/api/projects/${id}/assets/${path.split("/").map(encodeURIComponent).join("/")}`,
+      workspacePath(
+        `/api/projects/${id}/assets/${path.split("/").map(encodeURIComponent).join("/")}`,
+        workspace,
+      ),
       { method: "DELETE" },
     ),
-  assetUrl: (id: string, path: string) =>
-    `/api/projects/${id}/assets/${path.split("/").map(encodeURIComponent).join("/")}`,
+  assetUrl: (id: string, path: string, workspace?: string | null) =>
+    workspacePath(
+      `/api/projects/${id}/assets/${path.split("/").map(encodeURIComponent).join("/")}`,
+      workspace,
+    ),
 
   analyze: (source: string) =>
     request<Analysis>("/api/analyze", { body: { source } }),
@@ -371,11 +458,35 @@ export const api = {
     request<{ source: string }>("/api/format", { body: { source } }),
 
   renders: () => request<Render[]>("/api/renders"),
+  videos: () => request<VideoWorkflow[]>("/api/videos"),
+  startVideo: (projectId: string, body: Record<string, unknown>) =>
+    request<VideoWorkflow>(`/api/projects/${projectId}/video`, { body }),
+  cancelVideo: (id: string) =>
+    request(`/api/videos/${id}/cancel`, { method: "POST" }),
+  usage: (refresh = false) =>
+    request<UsageSnapshot>(`/api/usage?refresh=${refresh}`),
+  projectFromPdf: (file: File, project?: string) =>
+    request<Project>(
+      project
+        ? `/api/projects/from-pdf?project=${encodeURIComponent(project)}`
+        : "/api/projects/from-pdf",
+      {
+        raw: file,
+        headers: {
+          "X-Filename": encodeURIComponent(file.name),
+          "Content-Type": "application/pdf",
+        },
+      },
+    ),
   render: (id: string) => request<Render>(`/api/renders/${id}`),
-  startRender: (body: Record<string, unknown>) =>
-    request<Render>("/api/render", { body }),
   cancelRender: (id: string) =>
     request(`/api/renders/${id}/cancel`, { method: "POST" }),
+  queue: () => request<QueueState>("/api/queue"),
+  startQueue: () => request<QueueState>("/api/queue/start", { method: "POST" }),
+  pauseQueue: () => request<QueueState>("/api/queue/pause", { method: "POST" }),
+  clearQueue: () => request<QueueState>("/api/queue/clear", { method: "POST" }),
+  moveRender: (id: string, to: "front" | "up" | "down" | "back") =>
+    request<QueueState>(`/api/renders/${id}/move`, { body: { to } }),
   openOutputs: () => request("/api/open/outputs", { method: "POST" }),
 
   narration: () => request<NarrationStatus>("/api/narration"),
@@ -410,6 +521,7 @@ export const api = {
       model?: string;
       effort?: string;
       title?: string;
+      workspace?: string | null;
     },
   ) => request<Thread>(`/api/projects/${projectId}/threads`, { body }),
   updateThread: (

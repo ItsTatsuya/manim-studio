@@ -12,6 +12,7 @@ type SaveStatus = "saved" | "pending" | "saving" | "error";
 
 interface ProjectDocState {
   id: string | null;
+  workspace: string | null;
   project: Project | null;
   source: string;
   narration: NarrationSettings | null;
@@ -22,7 +23,7 @@ interface ProjectDocState {
   /** Increments whenever the source is replaced from outside the editor. */
   revision: number;
 
-  open(id: string): Promise<void>;
+  open(id: string, workspace?: string | null): Promise<void>;
   reload(): Promise<void>;
   setSource(source: string): void;
   replaceSource(source: string): void;
@@ -43,7 +44,7 @@ function backupDraft() {
   const state = useProjectDoc.getState();
   if (!state.id || !state.project) return;
   try {
-    const key = `studio-draft-v1:${state.id}`;
+    const key = `studio-draft-v1:${state.id}${state.workspace ? `:${state.workspace}` : ""}`;
     if (!dirtySource && !dirtyNarration && !saving)
       localStorage.removeItem(key);
     else
@@ -108,6 +109,7 @@ function scheduleAnalysis(immediate = false) {
 
 export const useProjectDoc = create<ProjectDocState>()((set, get) => ({
   id: null,
+  workspace: null,
   project: null,
   source: "",
   narration: null,
@@ -117,8 +119,9 @@ export const useProjectDoc = create<ProjectDocState>()((set, get) => ({
   saveError: null,
   revision: 0,
 
-  async open(id) {
-    if (get().id === id && get().project) return;
+  async open(id, workspace = null) {
+    if (get().id === id && get().workspace === workspace && get().project)
+      return;
     const request = ++openRequest;
     if (!(await get().flush()))
       throw new Error(
@@ -129,20 +132,23 @@ export const useProjectDoc = create<ProjectDocState>()((set, get) => ({
     ++analyzeRequest;
     set({
       id,
+      workspace,
       project: null,
       source: "",
       narration: null,
       analysis: null,
       scene: "",
     });
-    const project = await api.project(id);
+    const project = await api.project(id, workspace);
     if (get().id !== id || request !== openRequest) return;
     dirtySource = dirtyNarration = false;
     let recoveredSource = project.source;
     let recoveredNarration = project.narration;
     try {
       const draft = JSON.parse(
-        localStorage.getItem(`studio-draft-v1:${id}`) || "null",
+        localStorage.getItem(
+          `studio-draft-v1:${id}${workspace ? `:${workspace}` : ""}`,
+        ) || "null",
       );
       if (
         draft?.dirtySource &&
@@ -186,8 +192,15 @@ export const useProjectDoc = create<ProjectDocState>()((set, get) => ({
     if (saving && !(await saving)) return;
     // Local edits take priority over a delayed file-change notification.
     if (dirtySource || dirtyNarration) return;
-    const project = await api.project(id);
-    if (get().id !== id || dirtySource || dirtyNarration) return;
+    const workspace = get().workspace;
+    const project = await api.project(id, workspace);
+    if (
+      get().id !== id ||
+      get().workspace !== workspace ||
+      dirtySource ||
+      dirtyNarration
+    )
+      return;
     dirtySource = dirtyNarration = false;
     set((state) => ({
       project,
@@ -233,7 +246,7 @@ export const useProjectDoc = create<ProjectDocState>()((set, get) => ({
       if (!(await saving)) return false;
       return get().flush();
     }
-    const { id, source, narration } = get();
+    const { id, workspace, source, narration } = get();
     if (!id || (!dirtySource && !dirtyNarration)) {
       if (get().saveStatus === "pending") set({ saveStatus: "saved" });
       return true;
@@ -249,7 +262,7 @@ export const useProjectDoc = create<ProjectDocState>()((set, get) => ({
     set({ saveStatus: "saving" });
     saving = (async () => {
       try {
-        const summary = await api.updateProject(id, changes);
+        const summary = await api.updateProject(id, changes, workspace);
         if (get().id === id && get().project)
           set({
             project: {
@@ -266,11 +279,12 @@ export const useProjectDoc = create<ProjectDocState>()((set, get) => ({
             saveStatus: dirtySource || dirtyNarration ? "pending" : "saved",
             saveError: null,
           });
-        useStudio.setState((state) => ({
-          projects: state.projects.map((item) =>
-            item.id === id ? { ...item, ...summary } : item,
-          ),
-        }));
+        if (!workspace)
+          useStudio.setState((state) => ({
+            projects: state.projects.map((item) =>
+              item.id === id ? { ...item, ...summary } : item,
+            ),
+          }));
         return true;
       } catch (error) {
         if (changes.source !== undefined) dirtySource = true;

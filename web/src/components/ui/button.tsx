@@ -13,7 +13,7 @@ const buttonVariants = cva(
         default:
           "border-primary bg-primary text-primary-foreground shadow-xs shadow-primary/24 inset-shadow-[0_1px_rgb(255_255_255/16%)] hover:bg-primary/90",
         destructive:
-          "border-destructive bg-destructive text-white shadow-xs hover:bg-destructive/90",
+          "border-red-600 bg-red-600 text-white shadow-xs hover:border-red-700 hover:bg-red-700",
         outline:
           "border-input bg-popover text-foreground shadow-xs/5 hover:bg-accent dark:bg-input/30 dark:hover:bg-input/60",
         secondary:
@@ -25,13 +25,13 @@ const buttonVariants = cva(
         link: "border-transparent text-primary underline-offset-4 hover:underline",
       },
       size: {
-        default: "h-8 px-3",
-        sm: "h-7 gap-1.5 px-2.5 text-[13px]",
-        xs: "h-6 gap-1 rounded-md px-2 text-xs [&_svg:not([class*='size-'])]:size-3.5",
-        lg: "h-9 px-4",
-        icon: "size-8",
-        "icon-sm": "size-7",
-        "icon-xs": "size-6 rounded-md [&_svg:not([class*='size-'])]:size-3.5",
+        default: "h-10 px-4",
+        sm: "h-9 gap-1.5 px-3 text-ui",
+        xs: "h-8 gap-1.5 rounded-md px-2.5 text-xs [&_svg:not([class*='size-'])]:size-3.5",
+        lg: "h-11 px-5",
+        icon: "size-10",
+        "icon-sm": "size-9",
+        "icon-xs": "size-8 rounded-md [&_svg:not([class*='size-'])]:size-3.5",
       },
     },
   },

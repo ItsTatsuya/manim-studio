@@ -290,6 +290,18 @@ class RenderIntegrationTests(unittest.TestCase):
         self.assertEqual(error.exception.code, 422)
         self.assertIsNone(studio.ACTIVE)
 
+    def test_render_queue_advances_after_active_cancellation(self):
+        first = self.start(SAMPLE.replace("self.wait(0.2)", "self.wait(60)"))
+        second = self.start(SAMPLE, queue=True, name="Queued second")
+        third = self.start(SAMPLE, queue=True, name="Queued cancelled")
+        self.assertEqual(self.request("/api/renders/" + second["id"])[0], 200)
+        self.request("/api/renders/" + third["id"] + "/cancel", {})
+        self.request("/api/renders/" + first["id"] + "/cancel", {})
+        result = self.wait(second)
+        self.assertEqual(result["status"], "completed", result.get("error"))
+        cancelled = json.loads(self.request("/api/renders/" + third["id"])[1])
+        self.assertEqual(cancelled["status"], "cancelled")
+
     def test_update_api_security_and_public_state(self):
         manager = studio.UpdateManager(
             "1.0.0", "installed", studio.ROOT / "package", studio.ROOT / "data"
@@ -426,7 +438,7 @@ class RenderIntegrationTests(unittest.TestCase):
         for quality, height, fps in [
             ("preview", 480, 15),
             ("standard", 720, 30),
-            ("final", 1080, 60),
+            ("final", 1080, 30),
         ]:
             with self.subTest(quality=quality):
                 job = self.wait(self.start(quality=quality))
@@ -571,7 +583,7 @@ class RenderIntegrationTests(unittest.TestCase):
                 name="Explicit high settings",
                 width=1920,
                 height=1080,
-                fps=60,
+                fps=30,
             )
         )
         self.assertEqual(known["status"], "completed", known.get("error"))
@@ -718,7 +730,7 @@ class RenderIntegrationTests(unittest.TestCase):
         self.assertEqual(
             job["problem"]["message"], "ValueError: intentional test error"
         )
-        self.assertIn("LLM", job["error"])
+        self.assertTrue(job["repairable"])
         self.assertNotIn("video", job)
         self.assertEqual(
             self.wait(self.start(name="After failure"))["status"], "completed"

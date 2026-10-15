@@ -9,6 +9,8 @@ from fractions import Fraction
 import hashlib
 import importlib.metadata
 import importlib.util
+import io
+import itertools
 import json
 import logging
 import math
@@ -31,7 +33,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
@@ -56,9 +58,11 @@ import agents
 import file_picker
 from events import BUS, publish
 import narration
+import usage
 import projects
 import scenes
 from scenes import format_source
+from video_workflow import VideoProblem, VideoWorkflows
 
 ROOT = DATA_ROOT
 WEB = APP_ROOT / "studio_ui"
@@ -68,8 +72,11 @@ TOKEN = secrets.token_urlsafe(32)
 QUALITY = {
     "preview": ("-ql", "480p", 15),
     "standard": ("-qm", "720p", 30),
-    "final": ("-qh", "1080p", 60),
+    # 30 fps is plenty for explainers and halves the render time of 60.
+    "final": ("-qh", "1080p", 30),
 }
+# Manim's own frame rate for each quality flag; a preset that differs says so.
+FLAG_FPS = {"-ql": 15, "-qm": 30, "-qh": 60}
 QUALITY_DIMENSIONS = {
     "preview": (854, 480),
     "standard": (1280, 720),
@@ -79,6 +86,10 @@ MAX_CAIRO_DIMENSION = 32766
 LOCK = threading.RLock()
 JOBS: dict[str, dict] = {}
 ACTIVE: str | None = None
+# None follows the "start" preference; True holds waiting videos; False runs
+# the queue until it drains, then returns to the preference.
+QUEUE_PAUSED: bool | None = None
+QUEUE_SEQ = itertools.count(1)
 PROCESS: subprocess.Popen | None = None
 WORKER: threading.Thread | None = None
 ANSI = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
@@ -121,6 +132,9 @@ class NarrationSettings(BaseModel):
 
 
 class RenderRequest(Script):
+    _workflow: str | None = PrivateAttr(default=None)
+    queue: bool = False
+    workspace: str | None = Field(default=None, max_length=32)
     scene: str = Field(min_length=1, max_length=200)
     project: str | None = Field(default=None, max_length=32)
     narration: NarrationSettings | None = None
@@ -365,6 +379,11 @@ def cancel_active():
 
 
 def shutdown_render():
+    with LOCK:
+        for job in JOBS.values():
+            if job["status"] == "queued" and job["id"] != ACTIVE:
+                job.update(status="cancelled", stage="Cancelled on shutdown")
+                job.pop("_source", None)
     try:
         try:
             cancel_active()
@@ -416,6 +435,8 @@ async def lifespan(app):
         except (ValueError, KeyError, OSError, RuntimeError):
             continue
     AGENTS.data_root = ROOT
+    VIDEOS.closed = False
+    reset_queue()
     BUS.open()
     watcher_stop = threading.Event()
     watcher = threading.Thread(target=watch_renders, args=(watcher_stop,), daemon=True)
@@ -424,6 +445,7 @@ async def lifespan(app):
         yield
     finally:
         watcher_stop.set()
+        VIDEOS.close()
         BUS.close()
         await asyncio.to_thread(AGENTS.shutdown)
         await asyncio.to_thread(shutdown_render)
@@ -445,6 +467,18 @@ def watch_renders(stop: threading.Event):
             job = JOBS.get(current) if current else None
             summary = render_summary(job) if job else None
             watched = ACTIVE
+            finished = [
+                render_summary(item)
+                for item in JOBS.values()
+                if item.get("workflow")
+                and item["status"] in {"completed", "failed", "cancelled"}
+                and item["id"] != ACTIVE
+                and not item.get("_video_notified")
+            ]
+            for item in finished:
+                JOBS[item["id"]]["_video_notified"] = True
+        for item in finished:
+            VIDEOS.render_finished(item)
         if summary is None:
             continue
         key = json.dumps(summary, sort_keys=True, default=str)
@@ -553,6 +587,7 @@ def health():
         "outputs": str(OUTPUTS),
         "standalone": STANDALONE,
         "native_file_picker": file_picker.AVAILABLE,
+        "video_workspaces": True,
         "portable": PORTABLE,
         "data": str(DATA_ROOT),
         "version": APP_VERSION,
@@ -758,7 +793,9 @@ def render_worker(job_id: str, source: str):
         # Project renders run inside their folder so assets/... paths resolve there.
         working = ROOT
         if job.get("project"):
-            working = projects.folder(ROOT / "projects", job["project"])
+            working = projects.workspace_folder(
+                ROOT / "projects", job["project"], job.get("workspace")
+            )
             (working / projects.ASSETS).mkdir(exist_ok=True)
         config = ROOT / "manim.cfg"
         render_options = (
@@ -766,6 +803,8 @@ def render_worker(job_id: str, source: str):
             if working != ROOT and config.is_file()
             else []
         )
+        if "width" not in job and FLAG_FPS.get(flag) != fps:
+            render_options += ["--fps", str(fps)]
         if "width" in job:
             resolution = f"{job['width']}x{job['height']}"
             fps = job["fps"]
@@ -801,10 +840,19 @@ def render_worker(job_id: str, source: str):
             PYTHONUNBUFFERED="1",
             PYTHONIOENCODING="utf-8",
             MANIM_STUDIO_WORKER_GATE="1",
+            # Helpers must build identical scenes, so set iteration order is pinned.
+            PYTHONHASHSEED="0",
             PYTHONPATH=str(ROOT) + os.pathsep + os.environ.get("PYTHONPATH", ""),
         )
         env.pop("MANIM_STUDIO_CUSTOM_FPS", None)
         env.pop("MANIM_STUDIO_NARRATION", None)
+        env.pop("MANIM_STUDIO_PARALLEL", None)
+        env.pop("MANIM_STUDIO_HELPER", None)
+        # Long scenes are split across helper processes (parallel.py); setting
+        # MANIM_STUDIO_RENDER_WORKERS to 1 keeps every render in one process.
+        workers = os.environ.get("MANIM_STUDIO_RENDER_WORKERS", "auto")
+        if workers not in {"0", "1", "off"}:
+            env["MANIM_STUDIO_PARALLEL"] = workers
         if "_requested_fps" in job:
             env["MANIM_STUDIO_CUSTOM_FPS"] = job["_requested_rate"]
         if job.get("_narration"):
@@ -900,8 +948,9 @@ def render_worker(job_id: str, source: str):
         if result and job.get("_narration_error"):
             raise RuntimeError(job["_narration_error"])
         if result:
+            job["repairable"] = True
             raise RuntimeError(
-                "Manim couldn't render this script. Copy the error details and ask your LLM to fix the script, then paste it again."
+                "Manim couldn't render this script. The render log contains the error details."
             )
         matches = [
             path
@@ -909,6 +958,7 @@ def render_worker(job_id: str, source: str):
             if "partial_movie_files" not in path.parts
         ]
         if not matches:
+            job["repairable"] = True
             raise RuntimeError(
                 "The scene didn't produce a video. Add an animation with self.play() or a pause with self.wait(), then render again."
             )
@@ -1079,6 +1129,104 @@ def render_worker(job_id: str, source: str):
                     PROCESS = None
                 if WORKER is threading.current_thread():
                     WORKER = None
+                publish("render", {"render": render_summary(job)})
+                if not ACTIVE:
+                    start_next_render()
+            if not process_alive:
+                VIDEOS.render_finished(render_summary(job))
+                settle_queue()
+
+
+def queue_paused() -> bool:
+    """Whether waiting videos are held instead of starting one after another."""
+    if QUEUE_PAUSED is not None:
+        return QUEUE_PAUSED
+    return AGENTS.settings.get("queue_start", "auto") == "manual"
+
+
+def waiting_jobs() -> list[dict]:
+    """Queued renders in the order they will start. Call under LOCK."""
+    return sorted(
+        (
+            job
+            for job in JOBS.values()
+            if job["status"] == "queued" and "_source" in job
+        ),
+        key=lambda job: job.get("_seq", 0),
+    )
+
+
+def queue_state() -> dict:
+    """Call under LOCK."""
+    settings = AGENTS.settings
+    return {
+        "paused": queue_paused(),
+        "start": settings.get("queue_start", "auto"),
+        "on_error": settings.get("queue_on_error", "fix"),
+        "active": ACTIVE,
+        "waiting": [job["id"] for job in waiting_jobs()],
+    }
+
+
+def publish_queue():
+    """Call under LOCK."""
+    publish("queue", {"queue": queue_state()})
+
+
+def set_queue_paused(paused: bool):
+    global QUEUE_PAUSED
+    with LOCK:
+        QUEUE_PAUSED = paused
+        if not paused:
+            start_next_render()
+        publish_queue()
+
+
+def reset_queue():
+    global QUEUE_PAUSED
+    QUEUE_PAUSED = None
+
+
+def settle_queue():
+    """Return a started queue to its preference once nothing is left to do.
+
+    Call without LOCK held: it asks the video workflows whether any video is
+    still being fixed, because a repaired video re-joins the running queue.
+    """
+    global QUEUE_PAUSED
+    busy = VIDEOS.pending()
+    with LOCK:
+        if QUEUE_PAUSED is False and not busy and not ACTIVE and not waiting_jobs():
+            QUEUE_PAUSED = None
+            publish_queue()
+
+
+def start_next_render():
+    """Called under LOCK, after the previous process and media are released."""
+    global ACTIVE, WORKER
+    if ACTIVE or UPDATE_INSTALLING or queue_paused():
+        return
+    for job in waiting_jobs():
+        source = job.pop("_source")
+        worker = threading.Thread(
+            target=render_worker, args=(job["id"], source), daemon=True
+        )
+        ACTIVE, WORKER = job["id"], worker
+        job["stage"] = "Preparing your script…"
+        try:
+            worker.start()
+        except RuntimeError:
+            ACTIVE, WORKER = None, None
+            job.update(
+                status="failed",
+                stage="Couldn't start render",
+                error="The render worker could not start. Try again.",
+            )
+            publish("render", {"render": render_summary(job)})
+            continue
+        publish("render", {"render": render_summary(job)})
+        break
+    publish_queue()
 
 
 @app.post("/api/render", status_code=202)
@@ -1104,7 +1252,7 @@ def start_render(body: RenderRequest):
     project = None
     if body.project is not None:
         try:
-            project = projects.read(ROOT / "projects", body.project)
+            project = projects.read(ROOT / "projects", body.project, body.workspace)
         except KeyError as error:
             raise HTTPException(
                 404, "This project no longer exists. Choose another project."
@@ -1129,10 +1277,14 @@ def start_render(body: RenderRequest):
             raise HTTPException(
                 409, "Studio is preparing an update. Wait for it to restart."
             )
-        if ACTIVE:
+        if ACTIVE and not body.queue:
             raise HTTPException(
                 409,
                 "A video is already rendering. Wait for it to finish or cancel it first.",
+            )
+        if sum(job["status"] == "queued" for job in JOBS.values()) >= 20:
+            raise HTTPException(
+                409, "The render queue is full. Wait for a video to finish."
             )
         job_id = uuid.uuid4().hex
         name = body.name.strip() or body.scene
@@ -1145,12 +1297,21 @@ def start_render(body: RenderRequest):
             "quality": body.quality,
             "created": datetime.now(timezone.utc).isoformat(),
             "status": "queued",
-            "stage": "Preparing your script…",
+            "stage": "Waiting for you to start the queue"
+            if not ACTIVE and body.queue and queue_paused()
+            else "Waiting in render queue"
+            if ACTIVE
+            else "Preparing your script…",
             "log": "",
             "elapsed": 0,
+            "_source_hash": hashlib.sha256(analysis["source"].encode()).hexdigest(),
         }
+        if body._workflow:
+            job["workflow"] = body._workflow
         if project is not None:
             job.update(project=project["id"], project_name=project["name"])
+            if body.workspace:
+                job["workspace"] = body.workspace
         if narration_job is not None:
             job.update(narrated=True, _narration=narration_job)
         if body.width is not None or body.fps is not None:
@@ -1164,6 +1325,13 @@ def start_render(body: RenderRequest):
                 job["_requested_fps"] = body.fps
                 job["_requested_rate"] = str(frame_rate_fraction(body.fps))
             job["quality"] = output_quality(job["width"], job["height"], job["fps"])
+        if ACTIVE or (body.queue and queue_paused()):
+            job["_source"] = analysis["source"]
+            job["_seq"] = next(QUEUE_SEQ)
+            JOBS[job_id] = job
+            publish("render", {"render": render_summary(job)})
+            publish_queue()
+            return public_job(job)
         try:
             worker = threading.Thread(
                 target=render_worker, args=(job_id, analysis["source"]), daemon=True
@@ -1208,12 +1376,83 @@ def get_render(job_id: str):
 @app.post("/api/renders/{job_id}/cancel")
 def cancel_render(job_id: str):
     with LOCK:
-        if ACTIVE != job_id or JOBS[job_id]["status"] not in {"queued", "rendering"}:
+        job = JOBS.get(job_id)
+        if not job or job["status"] not in {"queued", "rendering"}:
             raise HTTPException(409, "This render is no longer running.")
-        JOBS[job_id]["_cancel"] = True
-        process = PROCESS
-    stop_process(process)
+        if ACTIVE != job_id:
+            job.update(status="cancelled", stage="Removed from render queue")
+            job.pop("_source", None)
+            publish("render", {"render": render_summary(job)})
+            process = None
+        else:
+            JOBS[job_id]["_cancel"] = True
+            process = PROCESS
+    if process is not None:
+        stop_process(process)
+    if job["status"] == "cancelled":
+        VIDEOS.render_finished(render_summary(job))
+        with LOCK:
+            publish_queue()
+        settle_queue()
     return {"ok": True}
+
+
+class MoveRequest(BaseModel):
+    to: str = Field(pattern="^(front|up|down|back)$")
+
+
+@app.get("/api/queue")
+def get_queue():
+    with LOCK:
+        return queue_state()
+
+
+@app.post("/api/queue/start")
+def start_queue():
+    set_queue_paused(False)
+    settle_queue()
+    with LOCK:
+        return queue_state()
+
+
+@app.post("/api/queue/pause")
+def pause_queue():
+    set_queue_paused(True)
+    with LOCK:
+        return queue_state()
+
+
+@app.post("/api/queue/clear")
+def clear_queue():
+    with LOCK:
+        waiting = [job["id"] for job in waiting_jobs()]
+    for job_id in waiting:
+        try:
+            cancel_render(job_id)
+        except HTTPException:
+            continue  # it started or finished in the meantime
+    with LOCK:
+        return queue_state()
+
+
+@app.post("/api/renders/{job_id}/move")
+def move_render(job_id: str, body: MoveRequest):
+    with LOCK:
+        order = [job["id"] for job in waiting_jobs()]
+        if job_id not in order:
+            raise HTTPException(409, "This video is no longer waiting in the queue.")
+        index = order.index(job_id)
+        target = {
+            "front": 0,
+            "up": max(0, index - 1),
+            "down": min(len(order) - 1, index + 1),
+            "back": len(order) - 1,
+        }[body.to]
+        order.insert(target, order.pop(index))
+        for waiting_id in order:
+            JOBS[waiting_id]["_seq"] = next(QUEUE_SEQ)
+        publish_queue()
+        return queue_state()
 
 
 @app.get("/api/renders/{job_id}/{kind}")
@@ -1343,16 +1582,90 @@ async def import_project(request: Request):
         await form.close()
 
 
+@app.post("/api/projects/from-pdf", status_code=201)
+async def project_from_pdf(request: Request, project: str | None = None):
+    """One script PDF per isolated video project, with a readable reference copy."""
+    from pypdf import PdfReader
+    from pypdf.errors import PyPdfError
+
+    filename = unquote(request.headers.get("X-Filename", "")).strip()
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(422, "Choose a PDF script for this video.")
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > 20 * 1024**2:
+            raise HTTPException(413, "Each script PDF must be smaller than 20 MB.")
+
+    def create():
+        try:
+            reader = PdfReader(io.BytesIO(data))
+            if reader.is_encrypted:
+                raise HTTPException(422, "Unlock this PDF before adding it.")
+            if len(reader.pages) > 300:
+                raise HTTPException(422, "Script PDFs can have up to 300 pages.")
+            sections, length = [], 0
+            for index, page in enumerate(reader.pages):
+                text = page.extract_text() or ""
+                length += len(text)
+                if length > 500_000:
+                    raise HTTPException(
+                        422,
+                        "This PDF contains too much text. Split it into individual video scripts.",
+                    )
+                sections.append(f"Page {index + 1}\n{text}")
+            if not length or not any(
+                section.split("\n", 1)[1].strip() for section in sections
+            ):
+                raise HTTPException(
+                    422,
+                    "This PDF has no readable text. Use a PDF with selectable text.",
+                )
+        except (PyPdfError, ValueError, OSError) as error:
+            raise HTTPException(
+                422, "Couldn't read this PDF. Export it again and retry."
+            ) from error
+        result = (
+            projects.create_video(project_root(), project, Path(filename).stem)
+            if project
+            else projects.create(
+                project_root(),
+                Path(filename).stem,
+                narration={"enabled": True, "quality": "standard"},
+            )
+        )
+        directory = projects.assets_dir(
+            project_root(), result["id"], result.get("workspace")
+        )
+        try:
+            (directory / "video-script.pdf").write_bytes(data)
+            (directory / "video-script.txt").write_text(
+                "\n\n".join(sections), encoding="utf-8"
+            )
+        except OSError:
+            if result.get("workspace"):
+                path = projects.workspace_folder(
+                    project_root(), result["id"], result["workspace"]
+                )
+                projects.delete(path.parent, result["workspace"])
+            else:
+                projects.delete(project_root(), result["id"])
+            raise
+        return result
+
+    return await run_in_threadpool(project_call, create)
+
+
 @app.get("/api/projects/{project_id}")
-def read_project(project_id: str):
-    return project_call(lambda: projects.read(project_root(), project_id))
+def read_project(project_id: str, workspace: str | None = None):
+    return project_call(lambda: projects.read(project_root(), project_id, workspace))
 
 
 @app.post("/api/projects/{project_id}")
-def update_project(project_id: str, body: ProjectUpdate):
-    if (body.source is not None or body.narration is not None) and AGENTS.busy_project(
-        project_id
-    ):
+def update_project(project_id: str, body: ProjectUpdate, workspace: str | None = None):
+    if (
+        body.source is not None or body.narration is not None
+    ) and AGENTS.busy_workspace(project_id, workspace):
         raise HTTPException(
             409, "Wait for the agent to finish before editing this project's files."
         )
@@ -1363,6 +1676,7 @@ def update_project(project_id: str, body: ProjectUpdate):
             name=body.name,
             source=body.source,
             narration=body.narration.model_dump() if body.narration else None,
+            workspace=workspace,
         )
     )
 
@@ -1370,9 +1684,14 @@ def update_project(project_id: str, body: ProjectUpdate):
 @app.delete("/api/projects/{project_id}")
 def delete_project(project_id: str):
     with LOCK:
-        active = JOBS.get(ACTIVE) if ACTIVE else None
-        if active and active.get("project") == project_id:
-            raise HTTPException(409, "Wait for this project's render to finish.")
+        if any(
+            job.get("project") == project_id
+            and (job_id == ACTIVE or job.get("status") in {"queued", "rendering"})
+            for job_id, job in JOBS.items()
+        ):
+            raise HTTPException(
+                409, "Finish or cancel this project's queued renders first."
+            )
     if AGENTS.busy_project(project_id):
         raise HTTPException(409, "Stop the agent working on this project first.")
     replacement = project_call(lambda: projects.delete(project_root(), project_id))
@@ -1381,8 +1700,10 @@ def delete_project(project_id: str):
 
 
 @app.post("/api/projects/{project_id}/open-assets")
-def open_project_assets(project_id: str):
-    return reveal(project_call(lambda: projects.assets_dir(project_root(), project_id)))
+def open_project_assets(project_id: str, workspace: str | None = None):
+    return reveal(
+        project_call(lambda: projects.assets_dir(project_root(), project_id, workspace))
+    )
 
 
 @app.post("/api/projects/{project_id}/open-folder")
@@ -1391,17 +1712,23 @@ def open_project_folder(project_id: str):
 
 
 @app.get("/api/projects/{project_id}/assets")
-def list_project_assets(project_id: str):
-    directory = project_call(lambda: projects.assets_dir(project_root(), project_id))
+def list_project_assets(project_id: str, workspace: str | None = None):
+    directory = project_call(
+        lambda: projects.assets_dir(project_root(), project_id, workspace)
+    )
     return {"assets": projects.list_assets(directory)}
 
 
 @app.post("/api/projects/{project_id}/assets")
-async def upload_project_asset(project_id: str, request: Request):
+async def upload_project_asset(
+    project_id: str, request: Request, workspace: str | None = None
+):
     filename = unquote(request.headers.get("X-Filename", "")).strip()
     if not filename:
         raise HTTPException(422, "Choose a file to add.")
-    directory = project_call(lambda: projects.assets_dir(project_root(), project_id))
+    directory = project_call(
+        lambda: projects.assets_dir(project_root(), project_id, workspace)
+    )
     with projects.LOCK:
         target = projects.reserve_asset(directory, filename)
         partial = target.with_name(target.name + ".part")
@@ -1436,8 +1763,12 @@ class AssetPickerRequest(BaseModel):
 
 
 @app.post("/api/projects/{project_id}/assets/choose")
-def choose_project_assets(project_id: str, body: AssetPickerRequest):
-    directory = project_call(lambda: projects.assets_dir(project_root(), project_id))
+def choose_project_assets(
+    project_id: str, body: AssetPickerRequest, workspace: str | None = None
+):
+    directory = project_call(
+        lambda: projects.assets_dir(project_root(), project_id, workspace)
+    )
     try:
         selected = file_picker.choose(body.kind)
     except file_picker.PickerError as error:
@@ -1476,8 +1807,10 @@ def choose_project_assets(project_id: str, body: AssetPickerRequest):
     return {"assets": assets, "errors": errors}
 
 
-def project_asset(project_id: str, path: str) -> Path:
-    directory = project_call(lambda: projects.assets_dir(project_root(), project_id))
+def project_asset(project_id: str, path: str, workspace: str | None = None) -> Path:
+    directory = project_call(
+        lambda: projects.assets_dir(project_root(), project_id, workspace)
+    )
     try:
         file = projects.asset_file(directory, path)
     except KeyError as error:
@@ -1488,13 +1821,13 @@ def project_asset(project_id: str, path: str) -> Path:
 
 
 @app.get("/api/projects/{project_id}/assets/{path:path}")
-def read_project_asset(project_id: str, path: str):
-    return FileResponse(project_asset(project_id, path))
+def read_project_asset(project_id: str, path: str, workspace: str | None = None):
+    return FileResponse(project_asset(project_id, path, workspace))
 
 
 @app.delete("/api/projects/{project_id}/assets/{path:path}")
-def delete_project_asset(project_id: str, path: str):
-    project_asset(project_id, path).unlink()
+def delete_project_asset(project_id: str, path: str, workspace: str | None = None):
+    project_asset(project_id, path, workspace).unlink()
     return {"ok": True}
 
 
@@ -1591,9 +1924,12 @@ class AgentSettings(BaseModel):
     default_provider: str | None = Field(default=None, max_length=20)
     access: str | None = Field(default=None, max_length=20)
     auto_render: bool | None = None
+    queue_start: str | None = Field(default=None, pattern="^(auto|manual)$")
+    queue_on_error: str | None = Field(default=None, pattern="^(fix|skip|pause)$")
 
 
 class ThreadCreate(BaseModel):
+    workspace: str | None = Field(default=None, max_length=32)
     provider: str | None = Field(default=None, max_length=20)
     model: str | None = Field(default=None, max_length=100)
     effort: str | None = Field(default=None, max_length=20)
@@ -1612,6 +1948,148 @@ class TurnRequest(BaseModel):
     context: str = Field(default="", max_length=agents.MAX_PROMPT)
     model: str | None = Field(default=None, max_length=100)
     effort: str | None = Field(default=None, max_length=20)
+
+
+class VideoRequest(RenderRequest):
+    source: str = ""
+    scene: str = ""
+    quality: str = "standard"
+    thread: str | None = Field(default=None, max_length=32)
+    repair: bool = False
+    render: str | None = Field(default=None, max_length=32)
+
+
+def prepare_video(project: dict, options: dict, automatic: bool):
+    analysis = analyze(project["source"])
+    if analysis["error"]:
+        raise VideoProblem(analysis["error"])
+    runtime = health()
+    if analysis["needs_latex"] and not runtime["latex"]:
+        raise VideoProblem(
+            "LaTeX and dvisvgm are unavailable. Replace Tex/MathTex with MathTypst or Text to keep the video renderable in this runtime."
+        )
+    if analysis["needs_typst"] and not runtime["typst"]:
+        raise VideoProblem(
+            "Typst is unavailable. Replace Typst/MathTypst with supported Text or available LaTeX primitives."
+        )
+    if not options:
+        prefs = preferences()
+        options = {"quality": prefs.get("manim-quality", "standard")}
+        dimensions = re.fullmatch(r"(\d+)x(\d+)", prefs.get("manim-resolution", ""))
+        if dimensions:
+            options.update(width=int(dimensions[1]), height=int(dimensions[2]))
+        if prefs.get("manim-fps"):
+            options["fps"] = float(prefs["manim-fps"])
+    settings = project["narration"] if options.get("narration", True) else None
+    warning = None
+    if settings and settings["enabled"] and settings["text"].strip():
+        try:
+            narration.parse_timeline(settings["text"])
+        except narration.NarrationError as error:
+            raise VideoProblem(str(error)) from error
+        if not narration.installed(ROOT, settings["quality"]):
+            if not automatic:
+                raise VideoProblem(
+                    "Download the narration voice in the Narration tab, or turn narration off.",
+                    repairable=False,
+                )
+            settings = None
+            warning = "Rendered without narration because the voice model isn't downloaded. Download it in the Narration tab to add speech."
+    scene = options.get("scene")
+    return {
+        **{
+            key: options[key]
+            for key in ("quality", "width", "height", "fps")
+            if options.get(key) is not None
+        },
+        "source": analysis["source"],
+        "scene": scene if scene in analysis["scenes"] else analysis["scenes"][-1],
+        "project": project["id"],
+        "workspace": project.get("workspace"),
+        "name": project["name"],
+        "narration": settings,
+        "queue": True,
+        "warning": warning,
+    }
+
+
+def submit_video(values):
+    values = dict(values)
+    workflow = values.pop("workflow")
+    body = RenderRequest(**values)
+    body._workflow = workflow
+    return start_render(body)
+
+
+VIDEOS = VideoWorkflows(
+    manager=lambda: AGENTS,
+    read=lambda project, workspace: projects.read(project_root(), project, workspace),
+    prepare=prepare_video,
+    submit=submit_video,
+    render=lambda render_id: get_render(render_id),
+    cancel_render=lambda render_id: cancel_render(render_id),
+    publish=publish,
+    pause_queue=lambda: set_queue_paused(True),
+)
+AGENTS.on_turn_finished = VIDEOS.agent_finished
+
+
+@app.get("/api/videos")
+def video_status():
+    return VIDEOS.snapshot()
+
+
+@app.post("/api/projects/{project_id}/video", status_code=202)
+def start_video(project_id: str, body: VideoRequest):
+    if UPDATE_INSTALLING:
+        raise HTTPException(
+            409, "Studio is preparing an update. Wait for it to restart."
+        )
+    try:
+        diagnostics = None
+        if body.repair and body.render:
+            previous = get_render(body.render)
+            if (
+                previous.get("project") != project_id
+                or previous.get("workspace") != body.workspace
+            ):
+                raise HTTPException(422, "Choose the error from this video.")
+            current = projects.read(project_root(), project_id, body.workspace)
+            analysis = analyze(current["source"])
+            with LOCK:
+                original_hash = JOBS[body.render].get("_source_hash")
+            if previous["status"] == "failed" and (
+                not original_hash
+                or hashlib.sha256(analysis["source"].encode()).hexdigest()
+                == original_hash
+            ):
+                diagnostics = f"Render error: {previous.get('error', '')}\nProblem: {previous.get('problem') or ''}\nRender log:\n{previous.get('log', '')[-10000:]}"
+        return VIDEOS.start(
+            project_id,
+            workspace=body.workspace,
+            thread=body.thread,
+            diagnostics=diagnostics,
+            options={
+                **body.model_dump(
+                    include={"scene", "quality", "width", "height", "fps"},
+                    exclude_none=True,
+                ),
+                "narration": body.narration is None or body.narration.enabled,
+            },
+        )
+    except KeyError as error:
+        raise HTTPException(404, "This project or chat no longer exists.") from error
+    except VideoProblem as error:
+        raise HTTPException(409, str(error)) from error
+
+
+@app.post("/api/videos/{video_id}/cancel")
+def cancel_video(video_id: str):
+    try:
+        VIDEOS.cancel(video_id)
+    except KeyError as error:
+        raise HTTPException(404, "Video not found.") from error
+    return {"ok": True}
 
 
 def agent_call(action):
@@ -1635,9 +2113,22 @@ def refresh_agents():
     return AGENTS.refresh(wait=True)
 
 
+@app.get("/api/usage")
+def plan_usage(refresh: bool = False):
+    """Codex and Claude plan limits, as the signed-in CLIs report them."""
+    with AGENTS.lock:
+        settings = json.loads(json.dumps(AGENTS.settings))
+    return usage.snapshot(settings, force=refresh)
+
+
 @app.post("/api/agents/settings")
 def update_agent_settings(body: AgentSettings):
-    return AGENTS.update_settings(body.model_dump(exclude_none=True))
+    result = AGENTS.update_settings(body.model_dump(exclude_none=True))
+    with LOCK:
+        # Switching to automatic start releases anything that was being held.
+        start_next_render()
+        publish_queue()
+    return result
 
 
 @app.post("/api/agents/{provider}/login")
@@ -1702,9 +2193,21 @@ def delete_thread(project_id: str, thread_id: str):
 
 @app.post("/api/projects/{project_id}/threads/{thread_id}/turns", status_code=202)
 def start_turn(project_id: str, thread_id: str, body: TurnRequest):
+    thread = agent_call(lambda: AGENTS.get(project_id, thread_id))
+    if VIDEOS.busy(project_id, thread.get("workspace")):
+        raise HTTPException(
+            409, "Wait for this video to finish or stop it before sending changes."
+        )
     with LOCK:
-        active = JOBS.get(ACTIVE) if ACTIVE else None
-        if active and active.get("project") == project_id:
+        if any(
+            active.get("project") == project_id
+            and (job_id == ACTIVE or active.get("status") in {"queued", "rendering"})
+            and (
+                thread.get("workspace") is None
+                or active.get("workspace") in {None, thread.get("workspace")}
+            )
+            for job_id, active in JOBS.items()
+        ):
             raise HTTPException(409, "Wait for this project's render to finish.")
     return agent_call(
         lambda: AGENTS.send(

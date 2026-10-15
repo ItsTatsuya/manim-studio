@@ -29,7 +29,7 @@ export function Tooltip({
         >
           <TooltipPrimitive.Popup
             className={cn(
-              "max-w-72 rounded-md border bg-popover px-2 py-1 text-popover-foreground text-xs shadow-md transition-[opacity,scale] duration-100 data-[ending-style]:scale-95 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
+              "max-w-72 rounded-md border bg-popover px-2 py-1 text-popover-foreground text-xs shadow-md origin-[var(--transform-origin)] transition-[opacity,scale] duration-100 ease-out data-[ending-style]:scale-[0.98] data-[starting-style]:scale-[0.98] data-[ending-style]:ease-in data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
               className,
             )}
           >

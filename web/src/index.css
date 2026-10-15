@@ -26,8 +26,14 @@
   --text-2xs--line-height: calc(1 / 0.6875);
   --text-3xs: 0.625rem;
   --text-3xs--line-height: calc(0.875 / 0.625);
+  /* The 13px control and row size used across menus, tabs and sidebar rows. */
+  --text-ui: 0.8125rem;
+  --text-ui--line-height: 1.5;
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
-  --shadow-composer: 0 12px 28px -18px rgb(0 0 0 / 40%);
+  /* Layered, neutral-tinted elevation: tooltip < popup (menus, toasts) < dialog. */
+  --shadow-composer:
+    0 1px 2px rgb(24 24 27 / 5%), 0 12px 28px -18px rgb(24 24 27 / 40%);
+  --shadow-popup: var(--popup-shadow);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -106,6 +112,9 @@
   --sidebar-border: var(--border);
   --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
   --scrollbar-thumb: rgb(0 0 0 / 15%);
+  --popup-shadow:
+    0 1px 2px rgb(24 24 27 / 6%), 0 6px 14px -4px rgb(24 24 27 / 10%),
+    0 16px 40px -18px rgb(24 24 27 / 40%);
 
   &.dark {
     color-scheme: dark;
@@ -146,6 +155,9 @@
     );
     --code-background: rgb(255 255 255 / 3%);
     --scrollbar-thumb: rgb(255 255 255 / 10%);
+    --popup-shadow:
+      0 1px 2px rgb(0 0 0 / 30%), 0 6px 14px -4px rgb(0 0 0 / 40%),
+      0 18px 44px -18px rgb(0 0 0 / 80%);
   }
 }
 
@@ -185,25 +197,82 @@
   }
 }
 
+.studio-panel-shell {
+  overflow: clip;
+  visibility: visible;
+  transition:
+    width 240ms var(--ease-drawer),
+    visibility 0s;
+}
+.studio-panel-shell[data-open="false"] {
+  visibility: hidden;
+  transition:
+    width 240ms var(--ease-drawer),
+    visibility 0s 240ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .studio-panel-shell,
+  .studio-panel-shell[data-open="false"] {
+    transition: none;
+  }
+}
 @media (max-width: 1100px) {
-  .studio-chat-with-panel,
   .studio-resize {
     display: none;
+  }
+  .studio-panel-shell {
+    position: absolute;
+    inset: 0;
+    width: 100% !important;
+    z-index: 10;
+    transform: translateX(0);
+    transition:
+      transform 240ms var(--ease-drawer),
+      visibility 0s;
+  }
+  .studio-panel-shell[data-open="false"] {
+    transform: translateX(100%);
+    transition:
+      transform 240ms var(--ease-drawer),
+      visibility 0s 240ms;
+  }
+  .studio-panel-inner {
+    width: 100% !important;
+  }
+  .studio-workspace[data-panel-open="true"] .studio-chat {
+    visibility: hidden;
   }
   .studio-project-panel {
     width: 100% !important;
     border-left: 0;
   }
+  @media (prefers-reduced-motion: reduce) {
+    .studio-panel-shell,
+    .studio-panel-shell[data-open="false"] {
+      transition: none;
+    }
+  }
 }
+/* Below 768px the sidebar is a drawer. It stays mounted and slides; the shell
+   sets data-parked once the slide has finished so it never takes focus. */
 @media (max-width: 767px) {
   .studio-sidebar {
-    display: none;
-  }
-  .studio-sidebar-open {
-    display: block;
     position: fixed;
     inset: 0 auto 0 0;
     z-index: 40;
+    transform: translateX(-100%);
+    transition: transform 220ms var(--ease-drawer);
+  }
+  .studio-sidebar[data-parked="true"] {
+    visibility: hidden;
+  }
+  .studio-sidebar-open {
+    transform: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .studio-sidebar {
+      transition: none;
+    }
   }
 }
 
@@ -242,6 +311,36 @@
   }
 }
 
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Keep state changes and progress, drop looping and decorative motion. */
+@media (prefers-reduced-motion: reduce) {
+  .shimmer-text {
+    animation: none;
+    background: none;
+    color: var(--foreground);
+  }
+  .animate-ping,
+  .animate-pulse {
+    animation: none;
+  }
+  .animate-spin {
+    animation-duration: 2.4s;
+  }
+  [class*="animate-[toast-in"] {
+    animation: none;
+  }
+}
+
 /* Chat markdown, styled like T3 Code's assistant messages. */
 .chat-markdown {
   line-height: 1.65;
@@ -273,7 +372,7 @@
     margin-top: 0.25em;
   }
   & a {
-    color: var(--primary);
+    color: var(--info-foreground);
     text-decoration: underline;
     text-underline-offset: 2px;
   }
@@ -307,6 +406,9 @@
     color: var(--muted-foreground);
   }
   & table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
     border-collapse: collapse;
     font-size: 0.92em;
   }

@@ -162,13 +162,46 @@ def folder(root: Path, project_id: str) -> Path:
     raise KeyError(project_id)
 
 
-def assets_dir(root: Path, project_id: str) -> Path:
-    path = folder(root, project_id) / ASSETS
+def workspace_folder(root: Path, project_id: str, workspace: str | None = None) -> Path:
+    parent = folder(root, project_id)
+    if workspace is None:
+        return parent
+    videos = parent / "videos"
+    path = folder(videos, workspace)
+    if (
+        videos.is_symlink()
+        or not _contained(path, parent)
+        or path.resolve().parent != videos.resolve()
+    ):
+        raise KeyError(workspace)
+    return path
+
+
+def create_video(root: Path, project_id: str, name: str) -> dict:
+    parent = folder(root, project_id)
+    videos = parent / "videos"
+    if videos.is_symlink() or not _contained(videos, parent):
+        raise ProjectError("This project's videos folder cannot be used.")
+    video = create(videos, name, narration={"enabled": True, "quality": "standard"})
+    return {**video, "id": project_id, "workspace": video["id"], "folder": parent.name}
+
+
+def assets_dir(root: Path, project_id: str, workspace: str | None = None) -> Path:
+    path = workspace_folder(root, project_id, workspace) / ASSETS
     path.mkdir(exist_ok=True)
     return path
 
 
-def read(root: Path, project_id: str) -> dict:
+def read(root: Path, project_id: str, workspace: str | None = None) -> dict:
+    if workspace is not None:
+        path = workspace_folder(root, project_id, workspace)
+        video = read(path.parent, workspace)
+        return {
+            **video,
+            "id": project_id,
+            "workspace": workspace,
+            "folder": folder(root, project_id).name,
+        }
     path = folder(root, project_id)
     metadata = _read_metadata(path)
     try:
@@ -220,7 +253,26 @@ def create(root: Path, name: str, source: str = "", narration=None) -> dict:
     return {**metadata, "source": source}
 
 
-def update(root: Path, project_id: str, *, name=None, source=None, narration=None):
+def update(
+    root: Path,
+    project_id: str,
+    *,
+    name=None,
+    source=None,
+    narration=None,
+    workspace=None,
+):
+    if workspace is not None:
+        path = workspace_folder(root, project_id, workspace)
+        video = update(
+            path.parent, workspace, name=name, source=source, narration=narration
+        )
+        return {
+            **video,
+            "id": project_id,
+            "workspace": workspace,
+            "folder": folder(root, project_id).name,
+        }
     with LOCK:
         path = folder(root, project_id)
         metadata = _read_metadata(path)
@@ -242,32 +294,38 @@ def delete(root: Path, project_id: str):
         path = folder(root, project_id)
         if not _contained(path, root) or path.resolve().parent != root.resolve():
             raise ProjectError("This project folder cannot be removed.")
-        replacement = (
-            create(root, "Untitled project") if len(list_projects(root)) == 1 else None
-        )
         try:
             shutil.rmtree(path)
         except OSError as error:
-            if replacement:
-                replacement_path = root / replacement["folder"]
-                if (
-                    _contained(replacement_path, root)
-                    and replacement_path.resolve().parent == root.resolve()
-                ):
-                    shutil.rmtree(replacement_path, ignore_errors=True)
             raise ProjectError(
                 "Couldn’t delete this project. Close any open project files, then try again."
             ) from error
-        return replacement
+        return None
 
 
 def ensure_default(root: Path, legacy_assets: Path, preferences: dict) -> None:
     """Move earlier single-workspace drafts into a first project, once."""
     with LOCK:
+        marker = root / ".legacy-imported"
+        if marker.is_file():
+            return
         if list_projects(root):
+            _write_atomic(marker, "1\n")
+            return
+        draft = preferences.get("manim-draft", "")[:MAX_SOURCE]
+        legacy_files = (
+            [
+                item
+                for item in legacy_assets.iterdir()
+                if item.name != "README.txt" and not item.is_symlink()
+            ]
+            if legacy_assets.is_dir() and not legacy_assets.is_symlink()
+            else []
+        )
+        if not draft.strip() and not legacy_files:
             return
         name = preferences.get("manim-name", "").strip() or "My first project"
-        project = create(root, name, preferences.get("manim-draft", "")[:MAX_SOURCE])
+        project = create(root, name, draft)
         target = root / project["folder"] / ASSETS
         if legacy_assets.is_dir() and not legacy_assets.is_symlink():
             for item in legacy_assets.iterdir():
@@ -280,6 +338,7 @@ def ensure_default(root: Path, legacy_assets: Path, preferences: dict) -> None:
                         shutil.copy2(item, target / item.name)
                 except OSError:
                     continue
+        _write_atomic(marker, "1\n")
 
 
 def asset_kind(path: Path) -> str:

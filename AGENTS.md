@@ -17,6 +17,26 @@ starter scripts and manual rendering launchers have been retired.
   sandbox or Claude's acceptEdits mode (Claude's mode is not an OS sandbox).
 - Use the Cairo renderer unless a requested feature requires a deliberate change.
 - Keep rendering in the worker process, with progress, cancellation and diagnostics.
+- Long scenes are split across up to four helper processes by `parallel.py`: each helper
+  runs the whole script but renders only its blocks of animations, fingerprints the scene
+  at every block start, and the worker joins the partial movies itself. Any disagreement,
+  helper failure or unsupported feature (`add_sound`, sections, subcaptions, LaTeX
+  concurrency) falls back to the ordinary single-process render, so the video never depends
+  on it. A serial render disables Manim's partial-movie cache (nothing reads it, every job
+  has its own media folder) and overlaps encoding with drawing. Set
+  `MANIM_STUDIO_RENDER_WORKERS=1` to keep a render in one process.
+- Video generation and repair are server-owned in `video_workflow.py`. Agent completion
+  validates and queues each video once. Script/runtime failures return diagnostics to
+  the same scoped chat, then retry with the original output settings, up to three
+  repairs. Cancellation, provider errors and newer user edits must stop recovery.
+- The render queue is server-owned in `studio.py` (one render at a time, up to 20
+  waiting, ordered by `_seq`). Agent settings `queue_start` (`auto`/`manual`) and
+  `queue_on_error` (`fix`/`skip`/`pause`) drive it; `QUEUE_PAUSED` is `None` to
+  follow the preference, `True` to hold, `False` while a started queue drains and
+  `settle_queue()` (called without `LOCK`) returns it to the preference once no
+  video is waiting, rendering or being repaired. Never call `VIDEOS` while holding
+  `LOCK`: `VideoWorkflows` takes its own lock first. A repaired video re-queues at
+  the back so the rest of the queue is not blocked.
 - Keep app code separate from user data. Preserve scripts, preferences, assets and
   render history during updates; never commit them or generated videos.
 - Keep named output folders and compatibility with existing GUI render manifests.
@@ -24,6 +44,11 @@ starter scripts and manual rendering launchers have been retired.
   `narration.txt`, `assets/`; see `projects.py`). Project renders run with that folder as the working
   directory so `assets/...` paths resolve there. Requests without a project keep
   the legacy data-root behavior.
+- PDF batches may share a parent project. Each video uses `videos/<name>/` with
+  its own metadata, script, narration and assets; thread `workspace` stores the
+  video ID. Carry this scope through editor saves, assets and queued renders.
+  Chats may run concurrently in different video workspaces, but root-project
+  editing still excludes all agents in that project.
 - Folder and ZIP imports use `/api/projects/import`, preserve nested assets and
   create a new project transactionally. Reject traversal, duplicate Windows paths,
   ZIP symlinks and packages over 512 MB / 2000 files; never install package requirements.
@@ -31,7 +56,8 @@ starter scripts and manual rendering launchers have been retired.
   on the CPU; do not add PyTorch. Model files download on demand into
   `DATA_ROOT/.studio/models/kokoro` from pinned release URLs with SHA256 checks.
   The render worker synthesizes and muxes narration in the same cancellable process.
-  Narration is synthesized before Manim runs so script problems fail fast. Finished
+  Narration is synthesized in a thread while Manim renders; a bad line interrupts the
+  render at once, so narration problems still fail fast. Finished
   lines (`.studio/render-cache/lines`) and the silent animation (`render-cache/videos`,
   keyed by script, scene, quality and project files) are checkpointed so a retry
   resumes instead of starting over. Paragraphs are chunked below Kokoro's 510-phoneme
@@ -110,10 +136,11 @@ Keep the portable recovery journal and installer AppId compatible.
 Version 1.0.0 was the first public release; releases ship minimal TeX plus Typst. Publish the intended stable
 release as GitHub's latest release. Preserve Git tags and published asset bytes;
 retire an older GitHub release only when explicitly requested.
-Current source version: 1.1.0. Version metadata and builders read pyproject.toml;
+Current source version: 1.3.0. Version metadata and builders read pyproject.toml;
 keep runtime.py's fallback version in sync. Project expansion persists in the
-manim-project-expanded preference. Deleting the last project creates a fresh blank
-project and preserves render history; every UI deletion requires confirmation.
+manim-project-expanded preference. Fresh workspaces and deletion of the last project
+leave the project list empty and preserve render history; every UI deletion requires confirmation.
+Only migrate existing legacy drafts/assets automatically; never create a blank default project.
 
 Agent chats can be forked (`/api/projects/<id>/threads/<id>/fork`): the copy replays the
 transcript once as context because provider sessions cannot be split. Provider
@@ -121,6 +148,44 @@ failures are classified into stable codes (`agents.ERROR_CODES`, e.g. `usage_lim
 `rate_limited`, `context_too_long`) and shown with a hint in the timeline. Claude models
 are listed with explicit versions in `CLAUDE_MODELS`; add new releases there. The sidebar
 update notice and onboarding voice step share the updater and narration download APIs.
+
+## Release notes
+
+The release body on GitHub is what users read in the app: the sidebar update
+button opens a popover with the notes, and Settings → About & updates shows the
+same list. `updates.parse_release_notes` turns the markdown into a one-line
+summary plus plain-text bullets, so write the body in exactly this shape:
+
+```markdown
+One sentence, in plain words, on what this release is for.
+
+## What's changed
+
+- feat(render): resume a cancelled render from its last finished scene
+- fix(web): the sidebar icons no longer shift when it opens or closes
+- perf(narration): cache finished lines so a retry skips synthesis
+```
+
+- One change per line, each a single bullet. No nested bullets, tables, images,
+  HTML or code blocks: they are flattened or dropped.
+- Say what changed for the person using Studio, not how it was built. Prefer
+  "Render history keeps failed renders" over "refactor render manifest".
+- Start each line with `feat`, `fix`, `perf`, `docs` or `chore`, optionally with a
+  scope in parentheses, then a colon and a sentence. Keep a line under about 140
+  characters; the parser cuts anything past 300.
+- Put the most important changes first. The app shows the first eight and links
+  to GitHub for the rest, so the order is what users see.
+- Group with `##` or `###` headings if useful. The parser ignores headings and
+  keeps every bullet in order, and it drops a "New Contributors" section and the
+  "Full Changelog" line, so GitHub's generated notes may be pasted in as is.
+- Credit contributors inline (`by @name in #123`); do not add a separate list.
+- Never put secrets, local paths or internal ticket links in a release body.
+
+Check how a draft will look before publishing:
+
+```powershell
+uv run python -c "import updates, pathlib, json; print(json.dumps(updates.parse_release_notes(pathlib.Path('notes.md').read_text('utf-8')), indent=2))"
+```
 
 Keep README.md for users and AGENTS.md for developers. Preserve third-party license files
 and notices in dependencies, font assets and release runtimes. The app's code is

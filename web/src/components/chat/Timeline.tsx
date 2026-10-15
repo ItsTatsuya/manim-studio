@@ -1,4 +1,5 @@
 import {
+  ArrowDownIcon,
   BrainIcon,
   ChevronRightIcon,
   CircleAlertIcon,
@@ -30,8 +31,10 @@ import { effortInfo, modelName } from "~/lib/models";
 import { useStudio } from "~/state/studio";
 import { cn, formatDuration } from "~/lib/utils";
 import type { PanelTab } from "../panel/RightPanel";
+import { Button } from "../ui/button";
 import { Spinner } from "../ui/input";
 import { toast } from "../ui/toast";
+import { Tooltip } from "../ui/tooltip";
 import { useElapsed } from "./useElapsed";
 
 const Markdown = lazy(() => import("./Markdown"));
@@ -69,6 +72,7 @@ export function Timeline({
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
+  const [atBottom, setAtBottom] = useState(true);
   const turns = useMemo(() => {
     const byTurn = new Map<string, ThreadItem[]>();
     for (const item of thread.items) {
@@ -92,37 +96,57 @@ export function Timeline({
   }, [thread.id]);
 
   return (
-    <div
-      ref={scroller}
-      className="min-h-0 flex-1 overflow-y-auto"
-      onScroll={(event) => {
-        const element = event.currentTarget;
-        pinned.current =
-          element.scrollHeight - element.scrollTop - element.clientHeight < 80;
-      }}
-    >
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {!atBottom && (
+        <Button
+          size="xs"
+          variant="outline"
+          className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full shadow-popup"
+          onClick={() => {
+            const element = scroller.current;
+            if (element) element.scrollTop = element.scrollHeight;
+            pinned.current = true;
+            setAtBottom(true);
+          }}
+        >
+          <ArrowDownIcon /> Jump to latest
+        </Button>
+      )}
       <div
-        className="mx-auto flex w-full max-w-[46rem] flex-col gap-5 px-4 pt-6 pb-4"
-        role="log"
-        aria-label="Conversation"
+        ref={scroller}
+        className="min-h-0 flex-1 overflow-y-auto"
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          const near =
+            element.scrollHeight - element.scrollTop - element.clientHeight <
+            80;
+          pinned.current = near;
+          setAtBottom(near);
+        }}
       >
-        {thread.forked_from && (
-          <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
-            <GitForkIcon className="size-3" />
-            Forked from {thread.forked_from.title}. The earlier conversation is
-            included as context.
-          </div>
-        )}
-        {turns.map(({ turn, blocks }) => (
-          <TurnView
-            key={turn.id}
-            turn={turn}
-            blocks={blocks}
-            project={thread.project}
-            threadId={thread.id}
-            onShowPanel={onShowPanel}
-          />
-        ))}
+        <div
+          className="mx-auto flex w-full max-w-[46rem] flex-col gap-5 px-4 pt-6 pb-4"
+          role="log"
+          aria-label="Conversation"
+        >
+          {thread.forked_from && (
+            <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
+              <GitForkIcon className="size-3" />
+              Forked from {thread.forked_from.title}. The earlier conversation
+              is included as context.
+            </div>
+          )}
+          {turns.map(({ turn, blocks }) => (
+            <TurnView
+              key={turn.id}
+              turn={turn}
+              blocks={blocks}
+              project={thread.project}
+              threadId={thread.id}
+              onShowPanel={onShowPanel}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -190,7 +214,7 @@ function WorkingIndicator({
 }) {
   const elapsed = useElapsed(started);
   return (
-    <div className="flex items-center gap-2 text-[13px]" role="status">
+    <div className="flex items-center gap-2 text-ui" role="status">
       <Spinner className="size-3.5 text-muted-foreground" />
       <span className="shimmer-text font-medium">
         {quiet ? "Still working" : "Working"}
@@ -198,7 +222,7 @@ function WorkingIndicator({
       <span className="text-muted-foreground text-xs tabular-nums">
         {formatDuration(elapsed)}
       </span>
-      <span className="text-muted-foreground/70 text-xs">· {detail}</span>
+      <span className="text-muted-foreground text-xs">· {detail}</span>
     </div>
   );
 }
@@ -243,11 +267,13 @@ function TurnFooter({
   };
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-muted-foreground text-xs">
-      <span
-        title={`${modelName(providers, turn.provider, turn.model)} · reasoning effort: ${effort.label}`}
+      <Tooltip
+        content={`${modelName(providers, turn.provider, turn.model)} · reasoning effort: ${effort.label}`}
       >
-        {modelName(providers, turn.provider, turn.model)} · {effort.label}
-      </span>
+        <span>
+          {modelName(providers, turn.provider, turn.model)} · {effort.label}
+        </span>
+      </Tooltip>
       <span className="text-muted-foreground/50">·</span>
       <span>
         {turn.status === "interrupted" ? "Stopped after" : "Worked for"}{" "}
@@ -269,7 +295,7 @@ function TurnFooter({
                   : "assets",
             )
           }
-          className="rounded-md border bg-card px-1.5 py-0.5 font-mono text-[11px] text-foreground/80 hover:bg-accent"
+          className="rounded-md border bg-card px-1.5 py-0.5 font-mono text-2xs text-foreground/80 hover:bg-accent"
         >
           {file}
         </button>
@@ -291,14 +317,14 @@ const ItemView = memo(function ItemView({ item }: { item: ThreadItem }) {
   if (item.kind === "user")
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-[14px] leading-relaxed">
+        <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-secondary px-3.5 py-2 text-sm leading-relaxed">
           {item.text}
         </div>
       </div>
     );
   if (item.kind === "assistant")
     return (
-      <div className="chat-markdown text-[14px]">
+      <div className="chat-markdown text-sm">
         <Suspense fallback={<p className="whitespace-pre-wrap">{item.text}</p>}>
           <Markdown>{item.text || ""}</Markdown>
         </Suspense>
@@ -311,7 +337,7 @@ const ItemView = memo(function ItemView({ item }: { item: ThreadItem }) {
     return (
       <div
         role="alert"
-        className="flex gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[13px] text-destructive-foreground"
+        className="flex gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-ui text-destructive-foreground"
       >
         <CircleAlertIcon className="mt-0.5 size-4 shrink-0" />
         <div className="min-w-0 flex-1">
@@ -319,7 +345,7 @@ const ItemView = memo(function ItemView({ item }: { item: ThreadItem }) {
             <>
               <div className="flex flex-wrap items-center gap-2 font-medium">
                 {item.title}
-                <code className="rounded bg-destructive/20 px-1.5 py-0.5 font-mono text-[10.5px] uppercase tracking-wide">
+                <code className="rounded bg-destructive/20 px-1.5 py-0.5 font-mono text-3xs uppercase tracking-wide">
                   {item.code}
                   {item.http_status ? ` · ${item.http_status}` : ""}
                 </code>
@@ -422,7 +448,7 @@ function WorkRow({ item }: { item: ThreadItem }) {
         <div className="mb-1 flex items-center gap-2 text-muted-foreground text-xs">
           <ListChecksIcon className="size-3.5" /> Plan
         </div>
-        <ul className="space-y-0.5 ps-5 text-[13px]">
+        <ul className="space-y-0.5 ps-5 text-ui">
           {item.entries?.map((entry, index) => (
             <li
               key={index}
@@ -444,7 +470,7 @@ function WorkRow({ item }: { item: ThreadItem }) {
     );
   if (item.kind === "file_change")
     return (
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1.5 py-1 text-[13px]">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1.5 py-1 text-ui">
         {item.files?.map((file) => (
           <span key={file.path} className="flex items-center gap-1.5">
             {file.kind === "add" ? (
@@ -485,7 +511,7 @@ function WorkRow({ item }: { item: ThreadItem }) {
         disabled={!detail}
         onClick={() => setOpen(!open)}
         aria-expanded={detail ? open : undefined}
-        className="flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left text-[13px] text-muted-foreground enabled:hover:bg-accent enabled:hover:text-foreground"
+        className="flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1 text-left text-ui text-muted-foreground enabled:hover:bg-accent enabled:hover:text-foreground"
       >
         {icon}
         <span
@@ -499,7 +525,7 @@ function WorkRow({ item }: { item: ThreadItem }) {
         <StatusIcon status={item.status} />
       </button>
       {open && detail && (
-        <pre className="mx-1.5 mt-0.5 mb-1.5 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-code p-2 font-mono text-[11.5px] text-muted-foreground leading-relaxed">
+        <pre className="mx-1.5 mt-0.5 mb-1.5 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-code p-2 font-mono text-2xs text-muted-foreground leading-relaxed">
           {detail}
         </pre>
       )}

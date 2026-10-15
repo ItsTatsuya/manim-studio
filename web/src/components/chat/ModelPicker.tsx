@@ -26,25 +26,31 @@ export interface ModelChoice {
 
 const EMPTY_PROVIDERS: ProviderStatus[] = [];
 
+/** The one set of words for a provider's state, shared by chat, settings and setup. */
+export function providerStateLabel(status: ProviderStatus | undefined) {
+  if (!status || status.status === "checking") return "Checking";
+  if (status.status === "disabled" || !status.enabled) return "Disabled";
+  if (!status.installed) return "Not installed";
+  if (status.auth.status === "unauthenticated") return "Login needed";
+  if (status.status === "ready") return "Ready";
+  return "Needs attention";
+}
+
 export function providerReadiness(status: ProviderStatus | undefined) {
-  if (!status || status.status === "checking")
-    return { ready: false, label: "Checking…" };
-  if (status.status === "disabled") return { ready: false, label: "Off" };
-  if (!status.installed) return { ready: false, label: "Not installed" };
-  if (status.auth.status === "unauthenticated")
-    return { ready: false, label: "Sign in" };
-  if (status.status === "error") return { ready: false, label: "Unavailable" };
-  return { ready: true, label: "" };
+  const ready = providerStateLabel(status) === "Ready";
+  return { ready, label: ready ? "" : providerStateLabel(status) };
 }
 
 export function ModelPicker({
   value,
   onChange,
   lockedProvider,
+  disabled = false,
 }: {
   value: ModelChoice;
   onChange: (choice: ModelChoice) => void;
   lockedProvider?: ProviderId;
+  disabled?: boolean;
 }) {
   const providers = useStudio(
     (state) => state.agents?.providers ?? EMPTY_PROVIDERS,
@@ -66,8 +72,9 @@ export function ModelPicker({
     <div className="flex min-w-0 items-center gap-0.5">
       <Menu>
         <MenuTrigger
+          disabled={disabled}
           aria-label={`Choose agent and model: ${label}`}
-          className="flex h-7 min-w-0 items-center gap-1.5 rounded-md px-2 text-[13px] text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[popup-open]:bg-accent data-[popup-open]:text-foreground"
+          className="flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 text-ui text-muted-foreground outline-none transition-[color,background-color,scale] hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.98] data-[popup-open]:bg-accent data-[popup-open]:text-foreground"
         >
           <ProviderIcon provider={value.provider} className="size-3.5" />
           <span className="truncate">{label}</span>
@@ -100,13 +107,13 @@ export function ModelPicker({
                     {readiness.label && (
                       <Badge
                         tone="warning"
-                        className="ms-auto h-4 px-1.5 text-[10px]"
+                        className="ms-auto h-4 px-1.5 text-3xs"
                       >
                         {readiness.label}
                       </Badge>
                     )}
                     {locked && !readiness.label && (
-                      <span className="ms-auto font-normal text-[10px]">
+                      <span className="ms-auto font-normal text-3xs">
                         New chat to switch
                       </span>
                     )}
@@ -129,22 +136,22 @@ export function ModelPicker({
                         <span className="flex items-center gap-1.5">
                           <span className="truncate">{model.name}</span>
                           {model.id === configured && (
-                            <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                            <Badge className="h-4 px-1.5 text-3xs">
                               Default
-                            </span>
+                            </Badge>
                           )}
                           {model.custom && (
-                            <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                            <Badge className="h-4 px-1.5 text-3xs">
                               Custom
-                            </span>
+                            </Badge>
                           )}
                         </span>
                         {model.description && (
-                          <span className="truncate text-[11px] text-muted-foreground">
+                          <span className="truncate text-2xs text-muted-foreground">
                             {model.description}
                           </span>
                         )}
-                        <span className="font-mono text-[10px] text-muted-foreground/70">
+                        <span className="font-mono text-3xs text-muted-foreground">
                           {model.id}
                         </span>
                       </span>
@@ -162,6 +169,7 @@ export function ModelPicker({
       </Menu>
       {efforts.length > 0 && (
         <Select
+          disabled={disabled}
           aria-label="Reasoning effort"
           size="xs"
           variant="ghost"

@@ -6,6 +6,7 @@ import {
   type Health,
   type Quality,
   type Render,
+  type VideoWorkflow,
 } from "./api";
 
 export interface OutputPreset {
@@ -40,20 +41,20 @@ export const OUTPUT_PRESETS: OutputPreset[] = [
   {
     id: "final",
     label: "High",
-    detail: "1080p · 60 fps",
+    detail: "1080p · 30 fps",
     quality: "final",
     width: 1920,
     height: 1080,
-    fps: 60,
+    fps: 30,
   },
   {
     id: "4k",
     label: "4K",
-    detail: "2160p · 60 fps",
+    detail: "2160p · 30 fps",
     quality: "final",
     width: 3840,
     height: 2160,
-    fps: 60,
+    fps: 30,
   },
   {
     id: "vertical",
@@ -139,42 +140,45 @@ export function latestRender(renders: Render[], projectId: string | undefined) {
 /** Render a project: the open editor's text when it is the current project, otherwise what is on disk. */
 export async function renderProject(
   projectId: string,
-  options: { narration?: boolean } = {},
-): Promise<Render> {
+  options: {
+    narration?: boolean;
+    workspace?: string | null;
+    thread?: string;
+    repair?: boolean;
+    render?: string;
+  } = {},
+): Promise<VideoWorkflow> {
   const doc = useProjectDoc.getState();
-  const open = doc.id === projectId && doc.project;
+  const workspace =
+    options.workspace === undefined
+      ? doc.id === projectId
+        ? doc.workspace
+        : null
+      : options.workspace;
+  const open =
+    doc.id === projectId && doc.workspace === workspace && doc.project;
   if (open && !(await doc.flush()))
     throw new Error("Save your project changes before rendering.");
   const project = open
     ? { ...doc.project!, source: doc.source, narration: doc.narration! }
-    : await api.project(projectId);
-  const analysis = await api.analyze(project.source);
-  const problem = renderProblem(analysis, useStudio.getState().health);
-  if (problem) throw new Error(problem);
-  const scene =
-    open && analysis.scenes.includes(doc.scene)
-      ? doc.scene
-      : analysis.scenes.at(-1)!;
+    : await api.project(projectId, workspace);
   const preset = currentPreset(useStudio.getState().prefs);
   const custom = preset.id !== preset.quality;
-  const render = await api.startRender({
-    source: analysis.source,
-    scene,
-    project: projectId,
-    name: project.name,
+  const video = await api.startVideo(projectId, {
+    workspace,
+    thread: options.thread,
+    repair: options.repair,
+    render: options.render,
+    scene: open ? doc.scene : "",
     quality: preset.quality,
-    narration:
-      project.narration.enabled && options.narration !== false
-        ? project.narration
-        : undefined,
+    narration: {
+      ...project.narration,
+      enabled: project.narration.enabled && options.narration !== false,
+    },
     ...(custom
       ? { width: preset.width, height: preset.height, fps: preset.fps }
       : {}),
   });
-  useStudio.getState().upsertRender({
-    ...render,
-    project: projectId,
-    project_name: project.name,
-  });
-  return render;
+  useStudio.getState().upsertVideo(video);
+  return video;
 }

@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type ProviderId, type ProviderStatus } from "~/lib/api";
 import { formatBytes } from "~/lib/utils";
 import { useStudio } from "~/state/studio";
+import { providerStateLabel } from "./chat/ModelPicker";
 import { ProviderIcon, StudioMark } from "./icons";
 import { Button } from "./ui/button";
 import {
@@ -21,6 +22,7 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { Badge, Spinner } from "./ui/input";
+import { Progress } from "./ui/progress";
 import { toast } from "./ui/toast";
 
 const steps = ["Connect", "Voice", "Quick guide", "Get started"];
@@ -41,7 +43,7 @@ const guide = [
   ],
   [
     "Render and refine",
-    "Preview renders automatically after generation when enabled. Ask for changes in the same chat, or click Render yourself. Download the video from Preview or Renders.",
+    "Preview renders automatically after generation when enabled. Ask for changes in the same chat, or click Render yourself. Download the video from Preview or My renders.",
   ],
 ];
 
@@ -147,7 +149,7 @@ export function Onboarding({
             ))}
           </ol>
         </DialogHeader>
-        <DialogBody className="space-y-4">
+        <DialogBody className="min-h-72 space-y-4">
           {step === 0 && (
             <>
               <div className="flex items-center justify-between gap-3">
@@ -203,7 +205,7 @@ export function Onboarding({
                       {index + 1}
                     </span>
                     <div>
-                      <h2 className="text-sm font-medium">{heading}</h2>
+                      <h3 className="text-sm font-medium">{heading}</h3>
                       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                         {body}
                       </p>
@@ -221,7 +223,7 @@ export function Onboarding({
           {step === 3 && (
             <>
               <div className="rounded-xl border bg-card p-4">
-                <h2 className="text-sm font-medium">Try this prompt</h2>
+                <h3 className="text-sm font-medium">Try this prompt</h3>
                 <p className="mt-2 text-sm leading-relaxed">{example}</p>
                 <Button
                   className="mt-3"
@@ -323,21 +325,11 @@ function SetupProvider({
     >
       <div className="flex items-center gap-2">
         <ProviderIcon provider={provider.id} className="size-5" />
-        <h2 className="text-sm font-medium">{provider.name}</h2>
+        <h3 className="text-sm font-medium">{provider.name}</h3>
       </div>
       <div className="mt-3">
         <Badge tone={connected ? "success" : "neutral"}>
-          {checking
-            ? "Checking"
-            : !provider.enabled
-              ? "Disabled"
-              : !provider.installed
-                ? "Not installed"
-                : provider.auth.status === "unauthenticated"
-                  ? "Login needed"
-                  : connected
-                    ? "Ready"
-                    : "Needs attention"}
+          {providerStateLabel(provider)}
         </Badge>
       </div>
       <p
@@ -361,7 +353,7 @@ function SetupProvider({
             <p className="text-xs text-muted-foreground">
               Requires{" "}
               <a
-                className="text-primary underline"
+                className="text-info-foreground underline"
                 href="https://nodejs.org/en/download"
                 target="_blank"
                 rel="noreferrer"
@@ -474,7 +466,7 @@ function VoiceStep() {
         {(
           [
             ["standard", "Standard", "Good quality, smaller download"],
-            ["high", "High", "Richer voice, larger download"],
+            ["high", "High quality", "Richer voice, larger download"],
           ] as const
         ).map(([id, label, detail]) => (
           <button
@@ -509,16 +501,18 @@ function VoiceStep() {
         <div className="space-y-2 rounded-xl border bg-card p-4">
           {downloading && (
             <>
-              <p className="text-xs text-muted-foreground" role="status">
+              <p
+                className="text-xs text-muted-foreground tabular-nums"
+                role="status"
+              >
                 Downloading · {formatBytes(download.done)} /{" "}
                 {formatBytes(download.total)}. You can continue; it keeps
                 downloading in the background.
               </p>
-              <progress
+              <Progress
                 aria-label="Voice download progress"
                 value={download.done}
                 max={download.total || 1}
-                className="h-1.5 w-full"
               />
             </>
           )}

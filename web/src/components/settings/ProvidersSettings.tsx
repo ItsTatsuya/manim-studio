@@ -1,19 +1,22 @@
 import { RefreshCwIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   api,
   type ProviderId,
   type ProviderSettings,
   type ProviderStatus,
 } from "~/lib/api";
+import { effortName } from "~/lib/models";
 import { useStudio } from "~/state/studio";
+import { providerStateLabel } from "../chat/ModelPicker";
 import { ProviderIcon } from "../icons";
 import { Button } from "../ui/button";
+import { Field } from "../ui/field";
 import { Badge, Input, Spinner, Textarea } from "../ui/input";
 import { Select } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { toast } from "../ui/toast";
-import { SettingsHeading, SettingsRow } from "./SettingsLayout";
+import { SettingsRow, SettingsSection } from "./SettingsLayout";
 
 export function ProvidersSettings() {
   const agents = useStudio((state) => state.agents);
@@ -38,11 +41,11 @@ export function ProvidersSettings() {
   };
   return (
     <>
-      <div className="flex items-start justify-between gap-4">
-        <SettingsHeading title="Providers">
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <p className="text-muted-foreground text-sm leading-relaxed">
           Connect your locally installed CLIs. Studio uses their existing login
           and resumes each chat's session.
-        </SettingsHeading>
+        </p>
         <Button
           size="sm"
           variant="outline"
@@ -56,30 +59,34 @@ export function ProvidersSettings() {
       {!agents ? (
         <Spinner />
       ) : (
-        <div className="space-y-4">
-          {agents.providers.map((provider) => (
-            <ProviderCard
-              key={provider.id}
-              provider={provider}
-              settings={agents.settings.providers[provider.id]}
-            />
-          ))}
-          <SettingsRow
-            title="Default provider"
-            description="Used when you start a new chat."
-          >
-            <Select
-              aria-label="Default provider"
-              value={agents.settings.default_provider}
-              onChange={(value) => void changeDefault(value)}
-              options={[
-                { value: "", label: "First available" },
-                { value: "codex", label: "Codex" },
-                { value: "claude", label: "Claude Code" },
-              ]}
-            />
-          </SettingsRow>
-        </div>
+        <>
+          <div className="mb-8 space-y-4">
+            {agents.providers.map((provider) => (
+              <ProviderCard
+                key={provider.id}
+                provider={provider}
+                settings={agents.settings.providers[provider.id]}
+              />
+            ))}
+          </div>
+          <SettingsSection title="Defaults">
+            <SettingsRow
+              title="Default provider"
+              description="Used when you start a new chat."
+            >
+              <Select
+                aria-label="Default provider"
+                value={agents.settings.default_provider}
+                onChange={(value) => void changeDefault(value)}
+                options={[
+                  { value: "", label: "First available" },
+                  { value: "codex", label: "Codex" },
+                  { value: "claude", label: "Claude Code" },
+                ]}
+              />
+            </SettingsRow>
+          </SettingsSection>
+        </>
       )}
     </>
   );
@@ -92,14 +99,14 @@ function ProviderCard({
   provider: ProviderStatus;
   settings: ProviderSettings;
 }) {
-  const [value, setValue] = useState(settings);
-  const [custom, setCustom] = useState(settings.custom_models.join("\n"));
+  const [draft, setDraft] = useState<Partial<ProviderSettings>>({});
+  const [customDraft, setCustomDraft] = useState<string>();
+  const value = { ...settings, ...draft };
+  const custom = customDraft ?? settings.custom_models.join("\n");
   const [saving, setSaving] = useState(false);
-  useEffect(() => {
-    setValue(settings);
-    setCustom(settings.custom_models.join("\n"));
-  }, [settings]);
   const save = async () => {
+    const submitted = draft;
+    const submittedCustom = customDraft;
     setSaving(true);
     try {
       const custom_models = custom
@@ -116,6 +123,15 @@ function ProviderCard({
         providers: { [provider.id]: { ...value, custom_models } },
       });
       await useStudio.getState().loadAgents();
+      setDraft((current) => {
+        const remaining = { ...current };
+        for (const key of Object.keys(submitted) as (keyof ProviderSettings)[])
+          if (current[key] === submitted[key]) delete remaining[key];
+        return remaining;
+      });
+      setCustomDraft((current) =>
+        current === submittedCustom ? undefined : current,
+      );
       toast.success(`${provider.name} settings saved`);
     } catch (error) {
       toast.error("Couldn't save provider", (error as Error).message);
@@ -123,6 +139,30 @@ function ProviderCard({
       setSaving(false);
     }
   };
+  // Like every other switch in Settings, enabling applies immediately.
+  const toggle = async (enabled: boolean) => {
+    const previous = value.enabled;
+    setDraft((current) => ({ ...current, enabled }));
+    try {
+      await api.saveAgentSettings({
+        providers: { [provider.id]: { enabled } },
+      });
+      await useStudio.getState().loadAgents();
+      setDraft((current) => {
+        if (current.enabled !== enabled) return current;
+        const { enabled: _saved, ...remaining } = current;
+        return remaining;
+      });
+    } catch (error) {
+      setDraft((current) => ({ ...current, enabled: previous }));
+      toast.error("Couldn't save provider", (error as Error).message);
+    }
+  };
+  const dirty =
+    value.binary !== settings.binary ||
+    value.model !== settings.model ||
+    value.effort !== settings.effort ||
+    custom !== settings.custom_models.join("\n");
   const login = async () => {
     try {
       await api.agentLogin(provider.id);
@@ -155,13 +195,14 @@ function ProviderCard({
                 : "neutral"
           }
         >
-          {provider.status}
+          {providerStateLabel(provider)}
         </Badge>
         <Switch
           className="ms-auto"
           aria-label={`Enable ${provider.name}`}
           checked={value.enabled}
-          onCheckedChange={(enabled) => setValue({ ...value, enabled })}
+          disabled={saving}
+          onCheckedChange={(enabled) => void toggle(enabled)}
         />
       </div>
       <p className="mt-3 text-xs text-muted-foreground" role="status">
@@ -195,57 +236,67 @@ function ProviderCard({
         </div>
       )}
       <div className="mt-4 space-y-3">
-        <label className="block space-y-1 text-xs text-muted-foreground">
-          CLI binary override
+        <Field label="CLI binary override">
           <Input
             aria-label={`${provider.name} binary`}
             placeholder="Auto-detect from PATH"
             value={value.binary}
             onChange={(event) =>
-              setValue({ ...value, binary: event.target.value })
+              setDraft((current) => ({
+                ...current,
+                binary: event.target.value,
+              }))
             }
           />
-        </label>
+        </Field>
         <div className="grid grid-cols-2 gap-3">
-          <label className="space-y-1 text-xs text-muted-foreground">
-            Default model
+          <Field label="Default model">
             <Select
               aria-label={`${provider.name} default model`}
               value={value.model}
-              onChange={(next) => setValue({ ...value, model: next })}
+              onChange={(model) =>
+                setDraft((current) => ({ ...current, model }))
+              }
               options={[{ value: "", label: "CLI default" }, ...models]}
             />
-          </label>
-          <label className="space-y-1 text-xs text-muted-foreground">
-            Reasoning effort
+          </Field>
+          <Field label="Reasoning effort">
             <Select
               aria-label={`${provider.name} effort`}
               value={value.effort}
-              onChange={(effort) => setValue({ ...value, effort })}
+              onChange={(effort) =>
+                setDraft((current) => ({ ...current, effort }))
+              }
               options={[
                 { value: "", label: "Default" },
                 ...[
                   ...new Set(
                     [...(model?.efforts ?? []), value.effort].filter(Boolean),
                   ),
-                ].map((effort) => ({ value: effort, label: effort })),
+                ].map((effort) => ({
+                  value: effort,
+                  label: effortName(effort),
+                })),
               ]}
             />
-          </label>
+          </Field>
         </div>
-        <label className="block space-y-1 text-xs text-muted-foreground">
-          Custom model IDs
+        <Field label="Custom model IDs">
           <Textarea
             aria-label={`${provider.name} custom models`}
             placeholder="One model ID per line"
             className="min-h-16 font-mono text-xs"
             value={custom}
-            onChange={(event) => setCustom(event.target.value)}
+            onChange={(event) => setCustomDraft(event.target.value)}
           />
-        </label>
+        </Field>
       </div>
       <div className="mt-4 flex items-center gap-2">
-        <Button size="sm" disabled={saving} onClick={() => void save()}>
+        <Button
+          size="sm"
+          disabled={saving || !dirty}
+          onClick={() => void save()}
+        >
           {saving && <Spinner />} Save provider
         </Button>
         <Button

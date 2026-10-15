@@ -1,8 +1,15 @@
+import { FileTextIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, type Render } from "~/lib/api";
 import { latestRender } from "~/lib/render";
 import { useStudio } from "~/state/studio";
+import { useProjectDoc } from "~/state/project";
 import { Spinner } from "../ui/input";
+import {
+  RepairVideoButton,
+  useVideoWorkflow,
+  videoIsActive,
+} from "../VideoWorkflow";
 
 export function RenderLog({ render }: { render: Render }) {
   const [log, setLog] = useState("");
@@ -37,7 +44,9 @@ export function RenderLog({ render }: { render: Render }) {
           {error}
         </p>
       ) : !log ? (
-        <Spinner />
+        <div className="grid place-items-center py-10">
+          <Spinner />
+        </div>
       ) : (
         <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
           {log}
@@ -48,19 +57,37 @@ export function RenderLog({ render }: { render: Render }) {
 }
 
 export function OutputPanel({ projectId }: { projectId: string }) {
-  const render = useStudio((state) => latestRender(state.renders, projectId));
+  const video = useVideoWorkflow(projectId);
+  const workspace = useProjectDoc((state) => state.workspace);
+  const render = useStudio((state) =>
+    latestRender(
+      state.renders.filter(
+        (render) => (render.workspace ?? null) === workspace,
+      ),
+      projectId,
+    ),
+  );
   if (!render)
     return (
-      <div className="p-6 text-center text-sm text-muted-foreground">
+      <div className="py-14 text-center text-sm text-muted-foreground">
+        <FileTextIcon className="mx-auto mb-3 size-7" />
         Render output appears here.
       </div>
     );
   return (
     <>
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b px-3 text-xs">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3 text-xs">
         <span className="truncate">{render.name}</span>
-        <span className="ms-auto text-muted-foreground">{render.status}</span>
+        <span className="ms-auto text-muted-foreground capitalize">
+          {render.status}
+        </span>
       </div>
+      {render.status === "failed" && !videoIsActive(video) && (
+        <div className="flex items-center justify-between gap-2 border-b px-3 py-2 text-xs">
+          <span>Send the error log for automatic repair.</span>
+          <RepairVideoButton projectId={projectId} renderId={render.id} />
+        </div>
+      )}
       <RenderLog render={render} />
     </>
   );

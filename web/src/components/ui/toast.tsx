@@ -42,11 +42,26 @@ export function toast(
   useToasts.setState((state) => ({
     toasts: [...state.toasts.slice(-3), item],
   }));
-  window.setTimeout(
-    () => dismiss(id),
-    options.duration ?? (item.tone === "error" ? 8000 : 4000),
-  );
+  durations.set(id, options.duration ?? (item.tone === "error" ? 8000 : 4000));
+  schedule(id);
   return id;
+}
+
+const durations = new Map<number, number>();
+const timers = new Map<number, number>();
+
+function schedule(id: number) {
+  window.clearTimeout(timers.get(id));
+  timers.set(
+    id,
+    window.setTimeout(() => dismiss(id), durations.get(id) ?? 4000),
+  );
+}
+
+/** Hovering or focusing a toast keeps it on screen so it can be read. */
+function hold(id: number) {
+  window.clearTimeout(timers.get(id));
+  timers.delete(id);
 }
 
 toast.error = (title: string, description?: string) =>
@@ -55,6 +70,8 @@ toast.success = (title: string, description?: string) =>
   toast(title, { tone: "success", description });
 
 function dismiss(id: number) {
+  hold(id);
+  durations.delete(id);
   useToasts.setState((state) => ({
     toasts: state.toasts.filter((item) => item.id !== id),
   }));
@@ -71,28 +88,32 @@ export function Toaster() {
   return (
     <div
       aria-live="polite"
-      className="pointer-events-none fixed right-4 bottom-4 z-[300] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2"
+      className="pointer-events-none fixed end-4 bottom-4 z-[300] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2"
     >
       {toasts.map((item) => (
         <div
           key={item.id}
           role={item.tone === "error" ? "alert" : "status"}
+          onPointerEnter={() => hold(item.id)}
+          onPointerLeave={() => schedule(item.id)}
+          onFocus={() => hold(item.id)}
+          onBlur={() => schedule(item.id)}
           className={cn(
-            "pointer-events-auto flex animate-[toast-in_160ms_var(--ease-drawer)] items-start gap-2.5 rounded-xl border bg-popover p-3 text-popover-foreground shadow-lg",
+            "pointer-events-auto flex animate-[toast-in_160ms_var(--ease-drawer)] items-start gap-2.5 rounded-xl border bg-popover p-3 text-popover-foreground shadow-popup",
           )}
         >
           <div className="mt-0.5">{icons[item.tone]}</div>
           <div className="min-w-0 flex-1">
-            <div className="font-medium text-[13px]">{item.title}</div>
+            <div className="font-medium text-ui">{item.title}</div>
             {item.description && (
-              <div className="mt-0.5 line-clamp-4 text-muted-foreground text-xs">
+              <div className="mt-0.5 max-h-40 overflow-y-auto break-words text-muted-foreground text-xs">
                 {item.description}
               </div>
             )}
             {item.action && (
               <button
                 type="button"
-                className="mt-1.5 font-medium text-primary text-xs hover:underline"
+                className="mt-1.5 font-medium text-info-foreground text-xs hover:underline"
                 onClick={() => {
                   item.action?.onClick();
                   dismiss(item.id);
@@ -105,7 +126,7 @@ export function Toaster() {
           <button
             type="button"
             aria-label="Dismiss"
-            className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="relative rounded p-0.5 text-muted-foreground after:absolute after:-inset-2 after:content-[''] hover:bg-accent hover:text-foreground"
             onClick={() => dismiss(item.id)}
           >
             <XIcon className="size-3.5" />

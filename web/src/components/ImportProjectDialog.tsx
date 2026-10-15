@@ -89,7 +89,7 @@ export function ImportProjectDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
-      <DialogPopup>
+      <DialogPopup showClose={!busy}>
         <DialogHeader>
           <DialogTitle>Import a project</DialogTitle>
           <DialogDescription>

@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { MessageSquareIcon } from "lucide-react";
+import { ClapperboardIcon, MessageSquareIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { relativeTime } from "~/lib/utils";
@@ -70,19 +70,25 @@ function DraftChat({ projectId }: { projectId: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="mx-auto flex w-full max-w-[46rem] flex-1 flex-col justify-center px-4 py-10">
-        <h1 className="text-center font-semibold text-[26px] tracking-tight">
+        <div
+          aria-hidden
+          className="mx-auto mb-4 grid size-12 place-items-center rounded-2xl bg-primary/10 text-primary ring-1 ring-primary/20"
+        >
+          <ClapperboardIcon className="size-6" />
+        </div>
+        <h1 className="text-balance text-center font-semibold text-2xl tracking-tight">
           What should we animate?
         </h1>
-        <p className="mt-2 mb-7 text-center text-muted-foreground text-sm">
+        <p className="mx-auto mt-2 mb-6 max-w-md text-pretty text-center text-muted-foreground text-sm">
           Describe the video for{" "}
-          <span className="text-foreground">{project?.name}</span>. The agent
-          writes the Manim scene, narration and assets, checks them, and Studio
-          renders the result.
+          <span className="font-medium text-foreground">{project?.name}</span>.
+          The agent writes the Manim scene, narration and assets, checks them,
+          and Studio renders the result.
         </p>
         <Composer key={projectId} projectId={projectId} showQuickActions />
         {!!threads?.length && (
           <div className="mt-8">
-            <div className="mb-1.5 px-1 font-medium text-[11px] text-muted-foreground uppercase tracking-wider">
+            <div className="mb-1.5 px-1 font-medium text-2xs text-muted-foreground uppercase tracking-wider">
               Recent chats
             </div>
             <div className="divide-y rounded-xl border bg-card/50">
@@ -106,7 +112,7 @@ function DraftChat({ projectId }: { projectId: string }) {
                     provider={thread.provider}
                     className="size-3.5 opacity-70"
                   />
-                  <span className="w-8 text-right text-muted-foreground text-xs">
+                  <span className="min-w-8 shrink-0 whitespace-nowrap text-right text-muted-foreground text-xs">
                     {relativeTime(thread.updated)}
                   </span>
                 </Link>

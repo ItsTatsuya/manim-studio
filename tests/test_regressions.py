@@ -686,6 +686,35 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(studio.get_render(job["id"])["log"], "")
 
 
+class PackagingTests(unittest.TestCase):
+    def test_every_local_module_the_app_imports_is_shipped(self):
+        """A module missing from the bundle only fails in the packaged app."""
+        import ast
+        import re
+
+        root = Path(__file__).resolve().parents[1]
+        build = (root / "packaging" / "build.py").read_text(encoding="utf-8")
+        listing = build[build.index('"desktop.py"') : build.index('"manim.cfg"')]
+        shipped = set(re.findall(r'"([a-z_]+)\.py"', listing))
+        local = {path.stem for path in root.glob("*.py")}
+        pending, imported = ["desktop", "studio", "worker"], set()
+        while pending:
+            name = pending.pop()
+            if name in imported:
+                continue
+            imported.add(name)
+            tree = ast.parse((root / f"{name}.py").read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [alias.name.split(".")[0] for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    names = [node.module.split(".")[0]]
+                else:
+                    continue
+                pending.extend(item for item in names if item in local)
+        self.assertEqual(sorted(imported - shipped), [])
+
+
 class DesktopTests(unittest.TestCase):
     def test_initial_window_fits_and_centers_in_taskbar_work_area(self):
         for work in (

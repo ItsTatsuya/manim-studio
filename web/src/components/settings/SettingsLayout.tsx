@@ -1,6 +1,7 @@
-import { Link, Outlet } from "@tanstack/react-router";
+import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { cn } from "~/lib/utils";
+import { WorkspaceBackButton } from "../WorkspaceBackButton";
 
 const pages = [
   { to: "/settings/providers", label: "Providers" },
@@ -9,17 +10,28 @@ const pages = [
   { to: "/settings/about", label: "About & updates" },
 ] as const;
 
+/**
+ * Settings pages live in the sidebar on desktop (see AppSidebar). Below the
+ * drawer breakpoint the sidebar is closed, so the same pages show here.
+ */
 export function SettingsLayout() {
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
+  const current = pages.find((page) => pathname.startsWith(page.to));
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex h-[52px] shrink-0 items-center border-b px-6 text-sm font-medium">
-        Settings
+      <header className="flex h-[52px] shrink-0 items-center gap-1.5 border-b px-4 text-sm">
+        <WorkspaceBackButton className="me-1.5 md:hidden" />
+        <span className="text-muted-foreground">Settings</span>
+        <span className="text-muted-foreground/60">/</span>
+        <h1 className="truncate font-medium">{current?.label ?? "Settings"}</h1>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
         <div className="mx-auto max-w-3xl px-6 py-6">
           <nav
             aria-label="Settings"
-            className="mb-7 flex flex-wrap gap-1 rounded-lg bg-muted p-1"
+            className="mb-6 flex flex-wrap gap-1 rounded-lg bg-muted p-1 md:hidden"
           >
             {pages.map((page) => (
               <Link
@@ -39,23 +51,41 @@ export function SettingsLayout() {
   );
 }
 
-export function SettingsHeading({
+/** A titled group of settings: a muted heading above one bordered card of rows. */
+export function SettingsSection({
   title,
+  description,
+  action,
   children,
+  className,
 }: {
   title: string;
+  description?: ReactNode;
+  action?: ReactNode;
   children: ReactNode;
+  className?: string;
 }) {
   return (
-    <div className="mb-5">
-      <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-      <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+    <section className={cn("mb-8", className)}>
+      <div className="mb-2 flex min-h-8 items-end justify-between gap-4 px-1">
+        <div className="min-w-0">
+          <h2 className="font-medium text-muted-foreground text-sm">{title}</h2>
+          {description && (
+            <p className="mt-0.5 text-muted-foreground text-xs leading-relaxed">
+              {description}
+            </p>
+          )}
+        </div>
+        {action}
+      </div>
+      <div className="divide-y overflow-hidden rounded-xl border bg-card">
         {children}
-      </p>
-    </div>
+      </div>
+    </section>
   );
 }
 
+/** One setting: title and description on the left, its control on the right. */
 export function SettingsRow({
   title,
   description,
@@ -70,14 +100,14 @@ export function SettingsRow({
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-6 border-b py-4",
+        "flex items-center justify-between gap-6 px-4 py-3.5",
         className,
       )}
     >
       <div className="min-w-0">
-        <h2 className="text-sm font-medium">{title}</h2>
+        <h3 className="font-medium text-sm">{title}</h3>
         {description && (
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          <p className="mt-0.5 text-muted-foreground text-xs leading-relaxed">
             {description}
           </p>
         )}

@@ -6,12 +6,14 @@ import {
   type Health,
   type NarrationStatus,
   type ProjectSummary,
+  type QueueState,
   type Render,
   type Thread,
   type ThreadItem,
   type ThreadSummary,
   type Turn,
   type UpdateState,
+  type VideoWorkflow,
 } from "~/lib/api";
 
 interface CompletedTurn {
@@ -30,6 +32,8 @@ interface StudioState {
   details: Record<string, Thread>;
   agents: AgentSnapshot | null;
   renders: Render[];
+  videos: VideoWorkflow[];
+  queue: QueueState | null;
   narration: NarrationStatus | null;
   updates: UpdateState | null;
   installing: boolean;
@@ -44,6 +48,9 @@ interface StudioState {
   loadThreads(projectId: string): Promise<ThreadSummary[]>;
   loadThread(projectId: string, threadId: string): Promise<Thread>;
   loadRenders(): Promise<void>;
+  loadVideos(): Promise<void>;
+  loadQueue(): Promise<void>;
+  upsertVideo(video: VideoWorkflow): void;
   loadAgents(): Promise<void>;
   loadNarration(): Promise<void>;
   setUpdates(state: UpdateState): void;
@@ -62,6 +69,8 @@ type StudioEvent =
       probing: boolean;
     }
   | { type: "render"; render: Render }
+  | { type: "video"; video: VideoWorkflow }
+  | { type: "queue"; queue: QueueState }
   | { type: "thread.item"; project: string; thread: string; item: ThreadItem }
   | { type: "thread.turn"; project: string; thread: string; turn: Turn }
   | { type: "thread.meta"; thread: ThreadSummary }
@@ -129,6 +138,8 @@ export const useStudio = create<StudioState>()((set, get) => ({
   details: {},
   agents: null,
   renders: [],
+  videos: [],
+  queue: null,
   narration: null,
   updates: null,
   installing: false,
@@ -145,6 +156,8 @@ export const useStudio = create<StudioState>()((set, get) => ({
     await Promise.allSettled([
       get().loadAgents(),
       get().loadRenders(),
+      get().loadVideos(),
+      get().loadQueue(),
       get().loadNarration(),
       api.updates().then((updates) => set({ updates })),
     ]);
@@ -189,6 +202,27 @@ export const useStudio = create<StudioState>()((set, get) => ({
     const { projects } = await api.projects();
     set({ projects });
     return projects;
+  },
+
+  async loadVideos() {
+    const videos = await api.videos();
+    for (const video of videos) get().upsertVideo(video);
+  },
+
+  async loadQueue() {
+    set({ queue: await api.queue() });
+  },
+
+  upsertVideo(video) {
+    set((state) => {
+      const current = state.videos.find((item) => item.id === video.id);
+      if (current && current.updated > video.updated) return {};
+      return {
+        videos: upsertById(state.videos, video).sort((a, b) =>
+          b.updated.localeCompare(a.updated),
+        ),
+      };
+    });
   },
 
   async loadThreads(projectId) {
@@ -300,6 +334,12 @@ export const useStudio = create<StudioState>()((set, get) => ({
       case "render":
         get().upsertRender(event.render);
         break;
+      case "video":
+        get().upsertVideo(event.video);
+        break;
+      case "queue":
+        set({ queue: event.queue });
+        break;
       case "thread.item":
         set((state) => {
           const detail = state.details[event.thread];
@@ -395,6 +435,8 @@ export function connectEvents() {
         void state.loadProjects().catch(() => undefined);
         void state.loadAgents().catch(() => undefined);
         void state.loadRenders().catch(() => undefined);
+        void state.loadVideos().catch(() => undefined);
+        void state.loadQueue().catch(() => undefined);
         for (const projectId of Object.keys(state.threads))
           void state.loadThreads(projectId);
         for (const thread of Object.values(state.details))

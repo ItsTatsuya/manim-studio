@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import { api, type UpdateState } from "~/lib/api";
 import { runUpdateAction, type UpdateAction } from "~/lib/updates";
 import { useStudio } from "~/state/studio";
+import { ReleaseNotes } from "../ReleaseNotes";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/input";
+import { Progress } from "../ui/progress";
 import { Switch } from "../ui/switch";
-import { SettingsHeading, SettingsRow } from "./SettingsLayout";
+import { SettingsRow, SettingsSection } from "./SettingsLayout";
 
 function checkedAgo(seconds: number | null | undefined) {
   if (!seconds) return "";
@@ -93,104 +95,130 @@ export function AboutSettings() {
   };
   return (
     <>
-      <SettingsHeading title="Manim Studio">
-        Version {health?.version}
-      </SettingsHeading>
-      <div className="rounded-xl border bg-card p-5">
-        <h2 className="font-medium text-sm">Updates</h2>
-        <p className="mt-2 text-sm text-muted-foreground" role="status">
-          {updateMessage(updates)}
-        </p>
-        {updates?.edition === "source" && (
-          <p className="mt-2 text-xs text-muted-foreground">
-            Download the desktop app to install updates.
-          </p>
-        )}
-        {updates?.error && (
-          <p className="mt-2 text-xs text-destructive-foreground" role="alert">
-            {updates.error}
-          </p>
-        )}
-        {pollError && (
-          <p className="mt-2 text-xs text-destructive-foreground" role="alert">
-            {pollError}
-          </p>
-        )}
-        {updates?.status === "downloading" && (
-          <progress
-            aria-label="Update progress"
-            value={updates.progress}
-            max="100"
-            className="mt-3 w-full"
-          />
-        )}
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy || !!polling}
-            onClick={() => void action("check")}
+      <SettingsSection title="Manim Studio">
+        <SettingsRow title="Version">
+          <span className="text-muted-foreground text-sm tabular-nums">
+            {health?.version}
+          </span>
+        </SettingsRow>
+        <div className="p-4">
+          <h3 className="font-medium text-sm">Updates</h3>
+          <p
+            className="mt-2 text-sm text-muted-foreground tabular-nums"
+            role="status"
           >
-            {busy && <Spinner />} Check for updates
-          </Button>
-          {updates?.can_download && (
-            <Button
-              size="sm"
-              disabled={busy}
-              onClick={() => void action("download")}
-            >
-              Download update
-            </Button>
+            {updateMessage(updates)}
+          </p>
+          {updates?.latest_version && updates.status !== "current" && (
+            <div className="mt-4 rounded-lg border bg-muted/40 p-3">
+              <p className="mb-2 font-medium text-sm">
+                Version {updates.latest_version}
+              </p>
+              <ReleaseNotes
+                summary={updates.release_summary}
+                items={updates.release_notes}
+                url={updates.release_url}
+                limit={12}
+              />
+            </div>
           )}
-          {updates?.can_cancel && (
+          {updates?.edition === "source" && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Download the desktop app to install updates.
+            </p>
+          )}
+          {updates?.error && (
+            <p
+              className="mt-2 text-xs text-destructive-foreground"
+              role="alert"
+            >
+              {updates.error}
+            </p>
+          )}
+          {pollError && (
+            <p
+              className="mt-2 text-xs text-destructive-foreground"
+              role="alert"
+            >
+              {pollError}
+            </p>
+          )}
+          {updates?.status === "downloading" && (
+            <Progress
+              aria-label="Update progress"
+              value={updates.progress}
+              max="100"
+              className="mt-3"
+            />
+          )}
+          <div className="mt-4 flex flex-wrap gap-2">
             <Button
               size="sm"
               variant="outline"
-              disabled={busy}
-              onClick={() => void action("cancel")}
+              disabled={busy || !!polling}
+              onClick={() => void action("check")}
             >
-              Cancel download
+              {busy && <Spinner />} Check for updates
             </Button>
-          )}
-          {updates?.can_install && (
-            <Button
-              size="sm"
-              disabled={busy || running}
-              onClick={() => void action("install")}
-            >
-              Install and restart
-            </Button>
-          )}
-          {updates?.latest_version && updates.release_url && (
-            <a
-              href={updates.release_url}
-              target="_blank"
-              rel="noreferrer"
-              className="self-center text-xs text-muted-foreground hover:underline"
-            >
-              Release notes ↗
-            </a>
+            {updates?.can_download && (
+              <Button
+                size="sm"
+                disabled={busy}
+                onClick={() => void action("download")}
+              >
+                Download update
+              </Button>
+            )}
+            {updates?.can_cancel && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={() => void action("cancel")}
+              >
+                Cancel download
+              </Button>
+            )}
+            {updates?.can_install && (
+              <Button
+                size="sm"
+                disabled={busy || running}
+                onClick={() => void action("install")}
+              >
+                Install and restart
+              </Button>
+            )}
+            {updates?.latest_version && updates.release_url && (
+              <a
+                href={updates.release_url}
+                target="_blank"
+                rel="noreferrer"
+                className="self-center text-xs text-muted-foreground hover:underline"
+              >
+                Release notes ↗
+              </a>
+            )}
+          </div>
+          {running && updates?.can_install && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              Wait for running agents and renders before installing.
+            </p>
           )}
         </div>
-        {running && updates?.can_install && (
-          <p className="mt-2 text-xs text-muted-foreground">
-            Wait for running agents and renders before installing.
-          </p>
+        {health?.standalone && (
+          <SettingsRow title="Check for updates at startup">
+            <Switch
+              aria-label="Check for updates at startup"
+              checked={autoCheck}
+              onCheckedChange={(checked) =>
+                useStudio
+                  .getState()
+                  .setPref("manim-check-updates", String(checked))
+              }
+            />
+          </SettingsRow>
         )}
-      </div>
-      {health?.standalone && (
-        <SettingsRow title="Check for updates at startup">
-          <Switch
-            aria-label="Check for updates at startup"
-            checked={autoCheck}
-            onCheckedChange={(checked) =>
-              useStudio
-                .getState()
-                .setPref("manim-check-updates", String(checked))
-            }
-          />
-        </SettingsRow>
-      )}
+      </SettingsSection>
     </>
   );
 }

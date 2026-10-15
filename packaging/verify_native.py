@@ -47,7 +47,6 @@ def verify():
         assert abs((form.Left - work.Left) * 2 + form.Width - work.Width) <= 1
         assert abs((form.Top - work.Top) * 2 + form.Height - work.Height) <= 1
         print("PASS: native window opens centered above the taskbar", flush=True)
-        wait("document.querySelector('#tab-script')")
         wait(
             "Array.from(document.querySelectorAll('button')).some(b=>b.textContent.trim()==='Set up later')"
         )
@@ -56,7 +55,12 @@ def verify():
         )
         wait("!document.querySelector('[role=dialog]')")
         print("PASS: first-run onboarding opens and can be deferred", flush=True)
-        pid = window.evaluate_js("location.hash.match(/projects\\/([0-9a-f]{32})/)[1]")
+        pid = asynchronous(
+            "fetch('/api/projects', {method:'POST',headers:{'Content-Type':'application/json','X-Studio-Token':document.querySelector('meta[name=studio-token]').content},body:JSON.stringify({name:'Native verification'})}).then(r=>{if(!r.ok)throw new Error('Project creation failed');return r.json()}).then(p=>p.id)"
+        )
+        assert pid, "No project ID returned"
+        window.evaluate_js(f"location.hash='/projects/{pid}'")
+        wait("document.querySelector('#tab-script')")
         script = json.dumps(SOURCE)
         assert asynchronous(
             f"fetch('/api/projects/{pid}', {{method:'POST',headers:{{'Content-Type':'application/json','X-Studio-Token':document.querySelector('meta[name=studio-token]').content}},body:JSON.stringify({{source:{script}}})}}).then(r=>r.ok)"
