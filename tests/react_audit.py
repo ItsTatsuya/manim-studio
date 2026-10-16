@@ -3,7 +3,7 @@
 import re
 from playwright.sync_api import expect
 from browser_artifacts import artifact_directory
-from browser_support import ROOT, api, browser_fixture, open_page, project
+from browser_support import ROOT, api, browser_fixture, open_page, project, wait_api
 
 
 def audit():
@@ -203,6 +203,17 @@ def audit():
                         page.evaluate("document.documentElement.scrollWidth") <= width
                     ), (theme, width, view, "horizontal overflow")
                     if view in ("collapsed-sidebar", "rail-projects"):
+                        if width >= 768:
+                            # The app saves the collapse after a short delay; let it
+                            # land first or it overwrites the reset below.
+                            wait_api(
+                                page,
+                                url,
+                                "/api/preferences",
+                                lambda prefs: (
+                                    prefs.get("studio-sidebar-collapsed") == "true"
+                                ),
+                            )
                         api(
                             page,
                             url,
