@@ -26,6 +26,7 @@ import { Field } from "../ui/field";
 import { Spinner } from "../ui/input";
 import { Select } from "../ui/select";
 import { toast } from "../ui/toast";
+import { Tooltip } from "../ui/tooltip";
 import type { PanelTab } from "./RightPanel";
 import { OutputSettings } from "./OutputSettings";
 import { ProjectWatermarkButton } from "../watermark/ProjectWatermark";
@@ -74,6 +75,9 @@ export function PreviewPanel({
   const video = useVideoWorkflow(projectId);
   const activeVideo = videoIsActive(video);
   const source = useProjectDoc((state) => state.source);
+  // While a project opens its script is empty and unchecked for a moment; the
+  // hints below wait for it so the panel does not jump when switching chats.
+  const loaded = useProjectDoc((state) => state.project !== null);
   const multipleScenes = (analysis?.scenes.length ?? 0) > 1;
   const autoPlay =
     !!shown &&
@@ -88,29 +92,98 @@ export function PreviewPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="p-3">
-        <div className="relative aspect-video overflow-hidden rounded-xl border bg-black">
-          {shown?.video ? (
-            <video
-              key={shown.id}
-              src={`${shown.video}?v=${shown.id}`}
-              controls
-              loop={loop}
-              autoPlay={autoPlay}
-              className="size-full object-contain"
-              aria-label={`Rendered video: ${shown.name}`}
-            />
-          ) : (
-            <div className="grid size-full place-items-center text-center text-sm text-white/60">
-              <div>
-                <PlayIcon className="mx-auto mb-2 size-8 opacity-50" />
-                Render to see your animation
+        <div className="overflow-hidden rounded-xl border bg-card shadow-xs/5">
+          <div className="relative aspect-video bg-black">
+            {shown?.video ? (
+              <video
+                key={shown.id}
+                src={`${shown.video}?v=${shown.id}`}
+                controls
+                loop={loop}
+                autoPlay={autoPlay}
+                className="size-full object-contain"
+                aria-label={`Rendered video: ${shown.name}`}
+              />
+            ) : (
+              <div className="grid size-full place-items-center text-center text-sm text-white/60">
+                <div>
+                  <PlayIcon className="mx-auto mb-2 size-8 opacity-50" />
+                  Render to see your animation
+                </div>
+              </div>
+            )}
+            {mine && <RenderProgress render={mine} />}
+          </div>
+          {shown && (
+            <div className="flex items-center gap-3 border-t px-3 py-2.5">
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium text-sm">{shown.name}</div>
+                <div className="mt-0.5 flex flex-wrap gap-x-1.5 text-muted-foreground text-xs">
+                  {[
+                    shown.resolution,
+                    shown.fps
+                      ? `${Math.round(shown.fps * 100) / 100} fps`
+                      : null,
+                    shown.narrated ? "Narrated" : null,
+                    shown.elapsed
+                      ? `Rendered in ${formatDuration(shown.elapsed)}`
+                      : null,
+                    shown.size ? formatBytes(shown.size) : null,
+                  ]
+                    .filter(Boolean)
+                    .map((item, index) => (
+                      <span key={item} className="whitespace-nowrap">
+                        {index > 0 && (
+                          <span aria-hidden className="me-1.5 opacity-50">
+                            ·
+                          </span>
+                        )}
+                        {item}
+                      </span>
+                    ))}
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <Tooltip content={loop ? "Stop looping" : "Loop playback"}>
+                  <Button
+                    size="icon-xs"
+                    variant={loop ? "secondary" : "ghost-muted"}
+                    aria-label="Loop"
+                    aria-pressed={loop}
+                    onClick={() => setLoop(!loop)}
+                  >
+                    <RepeatIcon />
+                  </Button>
+                </Tooltip>
+                <Tooltip content="Show in folder">
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    aria-label="Show in folder"
+                    onClick={() => void api.openOutputs()}
+                  >
+                    <FolderOpenIcon />
+                  </Button>
+                </Tooltip>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  render={
+                    <a
+                      href={`${shown.video}?download=true`}
+                      download
+                      aria-label="Save video"
+                    />
+                  }
+                >
+                  <DownloadIcon /> Save
+                </Button>
               </div>
             </div>
           )}
-          {mine && <RenderProgress render={mine} />}
         </div>
 
-        <div className="mt-3">
+        <div className="mt-3 empty:hidden">
           <VideoWorkflowNotice projectId={projectId} />
         </div>
         {last?.status === "failed" &&
@@ -154,51 +227,6 @@ export function PreviewPanel({
               </div>
             </div>
           )}
-
-        {shown && (
-          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <div className="min-w-0 flex-1">
-              <div className="truncate font-medium text-sm">{shown.name}</div>
-              <div className="text-muted-foreground text-xs">
-                {[
-                  shown.resolution,
-                  shown.fps ? `${Math.round(shown.fps * 100) / 100} fps` : null,
-                  shown.narrated ? "Narrated" : null,
-                  shown.elapsed
-                    ? `Rendered in ${formatDuration(shown.elapsed)}`
-                    : null,
-                  shown.size ? formatBytes(shown.size) : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </div>
-            </div>
-            <div className="flex items-center gap-1">
-              <Button
-                size="xs"
-                variant={loop ? "secondary" : "ghost-muted"}
-                aria-pressed={loop}
-                onClick={() => setLoop(!loop)}
-              >
-                <RepeatIcon /> Loop
-              </Button>
-              <Button
-                size="xs"
-                variant="outline"
-                render={<a href={`${shown.video}?download=true`} download />}
-              >
-                <DownloadIcon /> Save video
-              </Button>
-              <Button
-                size="xs"
-                variant="ghost-muted"
-                onClick={() => void api.openOutputs()}
-              >
-                <FolderOpenIcon /> Folder
-              </Button>
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="sticky bottom-0 mt-auto border-t bg-card/60 p-3 backdrop-blur supports-[backdrop-filter]:bg-card/40">
@@ -260,6 +288,7 @@ export function PreviewPanel({
           </Button>
         </div>
         {problem &&
+          !!analysis &&
           !!source.trim() &&
           !activeVideo &&
           video?.status !== "failed" && (
@@ -270,7 +299,7 @@ export function PreviewPanel({
               {analysis && <RepairVideoButton projectId={projectId} />}
             </div>
           )}
-        {!source.trim() && !activeVideo && !mine && (
+        {loaded && !source.trim() && !activeVideo && !mine && (
           <p className="mt-2 text-muted-foreground text-xs">
             Ask the agent for a scene, or add one in Script, to enable Render.
           </p>

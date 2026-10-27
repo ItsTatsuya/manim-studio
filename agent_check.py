@@ -21,7 +21,12 @@ APP_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(APP_ROOT))
 
 import narration  # noqa: E402
+from runtime import DATA_ROOT  # noqa: E402
 import scenes  # noqa: E402
+import styles  # noqa: E402
+
+# Render-like font lookup before Manim loads Pango (inherited from Studio).
+styles.configure_fonts(DATA_ROOT)
 
 WORDS_PER_SECOND = 2.5
 
@@ -49,10 +54,155 @@ def narration_end(text: str) -> float:
     return cursor
 
 
-def run_scene(script: Path, scene_name: str) -> float:
+def _label(mobject) -> str:
+    text = (
+        getattr(mobject, "original_text", None)
+        or getattr(mobject, "tex_string", None)
+        or getattr(mobject, "text", None)
+    )
+    text = " ".join(str(text or type(mobject).__name__).split())
+    return text if len(text) <= 32 else text[:31] + "…"
+
+
+def _box(mobject):
+    from manim import DL, UR
+
+    (x0, y0, _), (x1, y1, _) = (
+        mobject.get_critical_point(DL),
+        mobject.get_critical_point(UR),
+    )
+    return x0, y0, x1, y1
+
+
+def _shared(a, b) -> float:
+    """How much of the smaller of two boxes the other one covers (0 to 1)."""
+    width = min(a[2], b[2]) - max(a[0], b[0])
+    height = min(a[3], b[3]) - max(a[1], b[1])
+    if width <= 0 or height <= 0:
+        return 0.0
+    smaller = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+    return width * height / smaller if smaller > 1e-6 else 0.0
+
+
+def _visible(mobject) -> bool:
+    try:
+        return (
+            mobject.has_points()
+            and max(mobject.get_fill_opacity(), mobject.get_stroke_opacity()) > 0.05
+        )
+    except Exception:
+        return mobject.has_points()
+
+
+def _texts(mobjects) -> list:
+    """Visible text and equations, without descending into their letters."""
+    from manim import MarkupText, SingleStringMathTex, Text
+
+    kinds = [Text, MarkupText, SingleStringMathTex]
+    try:
+        from manim import MathTypst, Typst
+
+        kinds += [MathTypst, Typst]
+    except ImportError:
+        pass
+    found = []
+
+    def walk(mobject):
+        if isinstance(mobject, tuple(kinds)):
+            if any(_visible(part) for part in mobject.family_members_with_points()):
+                found.append(mobject)
+            return
+        for part in mobject.submobjects:
+            walk(part)
+
+    for mobject in mobjects:
+        walk(mobject)
+    return found
+
+
+def watch_layout(script: Path, problems: list[str]):
+    """Report text that overlaps, leaves the frame or ghosts through a crossfade.
+
+    Checked after every play() and wait() of the dry run, like a viewer would
+    see the settled frame.
+    """
+    from manim import FadeOut, Scene, config
+
+    original_play = Scene.play
+    seen = set()
+
+    def where() -> str:
+        for frame in reversed(traceback.extract_stack()):
+            if Path(frame.filename).resolve() == script.resolve():
+                return f"line {frame.lineno}"
+        return "the scene"
+
+    def report(key, message):
+        if key not in seen and len(seen) < 6:
+            seen.add(key)
+            problems.append(message)
+
+    def play(self, *args, **kwargs):
+        animations = [arg for arg in args if hasattr(arg, "mobject")]
+        leaving = [anim.mobject for anim in animations if isinstance(anim, FadeOut)]
+        on_screen = {id(part) for item in self.mobjects for part in item.get_family()}
+        arriving = [
+            anim.mobject
+            for anim in animations
+            if not isinstance(anim, FadeOut) and id(anim.mobject) not in on_screen
+        ]
+        for old in _texts(leaving):
+            for new in _texts(arriving):
+                if _shared(_box(old), _box(new)) > 0.25:
+                    report(
+                        ("fade", where()),
+                        f"Ghosting at {where()}: '{_label(new)}' appears while "
+                        f"'{_label(old)}' is still fading out in the same place. "
+                        "Fade the old content out first (swap() or new_slide()), or "
+                        "use ReplacementTransform/TransformMatchingTex.",
+                    )
+        result = original_play(self, *args, **kwargs)
+        texts = _texts(self.mobjects)
+        boxes = [(text, _box(text)) for text in texts]
+        half_w, half_h = config.frame_width / 2, config.frame_height / 2
+        for text, (x0, y0, x1, y1) in boxes:
+            edges = [
+                name
+                for name, out in (
+                    ("left", x0 < -half_w),
+                    ("right", x1 > half_w),
+                    ("bottom", y0 < -half_h),
+                    ("top", y1 > half_h),
+                )
+                if out
+            ]
+            if edges:
+                report(
+                    ("edge", _label(text)),
+                    f"'{_label(text)}' runs off the {' and '.join(edges)} edge after "
+                    f"{where()}. Scale it down or use fit().",
+                )
+        for index, (first, a) in enumerate(boxes):
+            for second, b in boxes[index + 1 :]:
+                if _shared(a, b) > 0.2:
+                    report(
+                        ("overlap", _label(first), _label(second)),
+                        f"'{_label(first)}' and '{_label(second)}' overlap after "
+                        f"{where()}. Move one with next_to(..., buff=0.2) or arrange().",
+                    )
+        return result
+
+    Scene.play = play
+
+
+def run_scene(
+    script: Path, scene_name: str, problems: list[str] | None = None
+) -> float:
     """Execute construct() with Manim's dry run and return the scene length."""
     from manim import config, tempconfig
 
+    if problems is not None:
+        watch_layout(script, problems)
     with tempfile.TemporaryDirectory(prefix="studio-check-") as media:
         options = {
             "dry_run": True,
@@ -121,7 +271,7 @@ def main(argv: list[str]) -> int:
         sys.path.insert(0, str(folder))
         os.chdir(folder)
         try:
-            duration = run_scene(script, scene_name)
+            duration = run_scene(script, scene_name, problems)
         except (
             BaseException
         ) as error:  # Report any scene failure, including SystemExit.

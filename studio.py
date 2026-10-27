@@ -25,7 +25,7 @@ import threading
 import time
 import uuid
 import tokenize
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import request_validation_exception_handler
@@ -71,6 +71,8 @@ from video_workflow import VideoProblem, VideoWorkflows
 WatermarkSettings = watermark.Settings
 
 ROOT = DATA_ROOT
+# Pango finds Studio's fonts through fontconfig; renders and agents inherit it.
+styles.configure_fonts(ROOT)
 WEB = APP_ROOT / "studio_ui"
 RENDERS = ROOT / ".renders" / "studio"
 OUTPUTS = ROOT / "outputs" / "studio"
@@ -1587,6 +1589,8 @@ class ProjectUpdate(BaseModel):
     narration: NarrationSettings | None = None
     # A house style id, or "" to follow the default (or parent project) style.
     style: str | None = Field(default=None, max_length=64)
+    # Heading, body and code fonts over the style's own; {} clears them.
+    fonts: dict[str, str] | None = Field(default=None, max_length=3)
 
 
 def project_root() -> Path:
@@ -1763,9 +1767,10 @@ def update_project(project_id: str, body: ProjectUpdate, workspace: str | None =
             narration=body.narration.model_dump() if body.narration else None,
             workspace=workspace,
             style=check_style(body.style),
+            fonts=body.fonts,
         )
     )
-    if body.style is not None:
+    if body.style is not None or body.fonts is not None:
         refresh_style_module(project_id, workspace)
     return result
 
@@ -2116,14 +2121,36 @@ def delete_style(style_id: str):
 
 @app.get("/api/fonts")
 def list_fonts(project: str | None = None, workspace: str | None = None):
-    """Installed font families, plus font files uploaded to a project's assets."""
+    """Studio's own fonts, installed families and fonts in a project's assets."""
     uploaded = []
     if project is not None:
         folder = project_call(
             lambda: projects.workspace_folder(project_root(), project, workspace)
         )
         uploaded = styles.project_fonts(folder)
-    return {"system": styles.system_fonts(), "project": uploaded}
+    return {
+        "bundled": [
+            {
+                "family": font["family"],
+                "url": "/api/fonts/bundled/" + quote(font["file"]),
+            }
+            for font in styles.bundled_fonts()
+        ],
+        "system": styles.system_fonts(),
+        "project": uploaded,
+    }
+
+
+@app.get("/api/fonts/bundled/{name}")
+def bundled_font(name: str):
+    """A font file Studio ships, for previews; only listed files are served."""
+    if not any(font["file"] == name for font in styles.bundled_fonts()):
+        raise HTTPException(404, "Font not found.")
+    return FileResponse(
+        styles.FONT_DIR / name,
+        media_type="font/ttf",
+        headers={"Cache-Control": "max-age=86400"},
+    )
 
 
 class NarrationDownload(BaseModel):

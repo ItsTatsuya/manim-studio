@@ -12,9 +12,12 @@ function family(name: string, fallback: string) {
 export function StyleSwatch({
   style,
   className,
+  detailed = false,
 }: {
   style: HouseStyle;
   className?: string;
+  /** Also show a heading, bullets and an equation line, like a full slide. */
+  detailed?: boolean;
 }) {
   const { colors, fonts, sizes, layout } = style;
   // Manim's frame is 8 units tall; the preview scales font sizes to its height.
@@ -52,9 +55,38 @@ export function StyleSwatch({
           className="mt-[1.5cqh] h-[0.8cqh] w-[18cqh] rounded-full"
           style={{ background: colors.primary }}
         />
+        {detailed && layout.title !== "center" && (
+          <div
+            className="mt-[3cqh] flex w-full flex-col gap-[1cqh] leading-snug"
+            style={{
+              fontFamily: family(fonts.body, "system-ui, sans-serif"),
+              fontSize: scale(sizes.body),
+            }}
+          >
+            <div
+              className="truncate"
+              style={{
+                color: colors.primary,
+                fontFamily: family(fonts.heading, "system-ui, sans-serif"),
+                fontSize: scale(sizes.heading),
+              }}
+            >
+              Why it works
+            </div>
+            <div className="truncate">• A small change passes through both</div>
+            <div className="truncate">
+              • Multiply the rates:{" "}
+              <span style={{ color: colors.primary }}>f′(g(x))</span> ·{" "}
+              <span style={{ color: colors.secondary }}>g′(x)</span>
+            </div>
+          </div>
+        )}
         {layout.title !== "center" && (
           <div
-            className="mt-[4cqh] grid w-full grid-cols-2 gap-[3cqh]"
+            className={cn(
+              "grid w-full grid-cols-2 gap-[3cqh]",
+              detailed ? "mt-[3cqh]" : "mt-[4cqh]",
+            )}
             style={{
               fontFamily: family(fonts.body, "system-ui, sans-serif"),
               fontSize: scale(sizes.body),

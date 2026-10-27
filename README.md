@@ -5,13 +5,13 @@ Claude Code to generate the scene, narration and assets, or edit Python directly
 Render and preview videos without installing Python.
 
 **[Download Manim Studio](https://github.com/ItsTatsuya/manim-studio/releases/latest)**
-Â· [Report a bug](https://github.com/ItsTatsuya/manim-studio/issues)
+· [Report a bug](https://github.com/ItsTatsuya/manim-studio/issues)
 
 ![Manim Studio with project chats, Python editor and animation tools](docs/images/manim-studio.png)
 
-**1.3.0** adds a render queue, videos from PDFs, automatic script repair,
-provider usage indicators, and faster rendering and narration. The workspace
-also has a compact sidebar and clearer update notes.
+**1.4.0** makes narration sound natural by timing the animation to the voice,
+cleans up generated videos, and adds redesigned house styles set in bundled
+Google Fonts, with live style previews, per-project fonts and a Queue button.
 
 ## Install
 
@@ -20,9 +20,9 @@ during setup. The app is unsigned, so Windows may display a security warning.
 
 | Download                                                                                                                      | Use it when                                                                                 |
 | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| [Setup](https://github.com/ItsTatsuya/manim-studio/releases/download/v1.3.0/Manim-Studio-1.3.0-Setup-x64.exe)                 | You have internet. Setup downloads and prepares the rendering engine.                       |
-| [Portable ZIP](https://github.com/ItsTatsuya/manim-studio/releases/download/v1.3.0/Manim-Studio-1.3.0-Portable-x64.zip)       | You want a folder you can move. Extract the **entire ZIP**, then open **Manim Studio.exe**. |
-| [Offline setup](https://github.com/ItsTatsuya/manim-studio/releases/download/v1.3.0/Manim-Studio-1.3.0-Offline-Setup-x64.exe) | You need to install without downloading rendering tools.                                    |
+| [Setup](https://github.com/ItsTatsuya/manim-studio/releases/download/v1.4.0/Manim-Studio-1.4.0-Setup-x64.exe)                 | You have internet. Setup downloads and prepares the rendering engine.                       |
+| [Portable ZIP](https://github.com/ItsTatsuya/manim-studio/releases/download/v1.4.0/Manim-Studio-1.4.0-Portable-x64.zip)       | You want a folder you can move. Extract the **entire ZIP**, then open **Manim Studio.exe**. |
+| [Offline setup](https://github.com/ItsTatsuya/manim-studio/releases/download/v1.4.0/Manim-Studio-1.4.0-Offline-Setup-x64.exe) | You need to install without downloading rendering tools.                                    |
 
 All downloads include **standard LaTeX and Typst equation support**. Studio uses
 shared Microsoft WebView2; portable first launch needs internet only if that
@@ -40,12 +40,12 @@ scripts manually, or reopen it from **Settings â†’ General â†’ Open se
 3. In **Preview**, choose an output preset. **Custom** sets exact dimensions and frame rate.
    Studio selects the animation automatically; **Animation** appears only when the script contains several.
 4. Click **Render** or press **Ctrl+Enter**. Agent changes render automatically when enabled in Settings.
-5. Preview the result and save the MP4. Find previous work in **My renders**.
+5. Preview the result and save the MP4. Find previous work, and the queue of videos waiting to render, in **Renders & queue** (or the **Queue** button beside Render).
 
 The editor includes autocomplete, formatting, and errors linked to script lines.
 Script errors after generation or rendering go back to the same chat automatically.
 Studio retries rendering after each repair, up to three repairs, and shows progress in
-chat, Preview and My renders. **Stop video** cancels the remaining work. You can also
+chat, Preview and Renders & queue. **Stop video** cancels the remaining work. You can also
 choose **Send to LLM** beside a script error or failed render to start repair yourself.
 Provider/login failures or repeated unsuccessful repairs pause the video with details.
 Scripts and agent commands run with your Windows account's
@@ -80,8 +80,8 @@ your choices.
 
 Collapse the sidebar into an icon rail with the button beside **Manim Studio**.
 The rail keeps New project, an import/PDF menu and a searchable project switcher
-at the top, with Settings, My renders, usage and updates below. Settings and
-My renders share a Back button in the sidebar footer; on phones it appears in
+at the top, with Settings, Renders & queue, usage and updates below. Settings and
+Renders & queue share a Back button in the sidebar footer; on phones it appears in
 the page header.
 Use the paperclip in chat to upload reference documents, images or audio. Uploads
 finish before the message can be sent.
@@ -89,11 +89,11 @@ The **â‹¯** button on each row opens Rename, Open project folder and Delete,
 for projects you are not currently editing.
 
 Deleting asks for confirmation and removes that project's script, narration and
-assets. Finished videos remain in **My renders**. You cannot delete a project while
+assets. Finished videos remain in **Renders & queue**. You cannot delete a project while
 it is rendering. Studio starts with no project folders until you create or import
 one. Deleting the last project returns to the empty workspace.
 
-Current release: **1.3.0**. See the [release notes](docs/releases/v1.3.0.md).
+Current release: **1.4.0**. See the [release notes](docs/releases/v1.4.0.md).
 
 ## Assets
 
@@ -109,7 +109,7 @@ Download the narration voice before starting if you want narrated renders.
 
 With automatic rendering enabled in Settings, finished scripts enter the render
 queue. You can also click **Add to queue** while another video renders. Studio
-renders videos one at a time. **My renders** shows the queue: pause or start it,
+renders videos one at a time. **Renders & queue** shows the queue: pause or start it,
 move waiting videos up or down, clear them, or cancel them individually. Two
 queue preferences (here and in Settings → General) control how it behaves:
 
@@ -119,7 +119,7 @@ queue preferences (here and in Settings → General) control how it behaves:
 - **If a video fails** is _Fix and re-render_ by default: the agent repairs the
   script in the same chat (up to three attempts) and the video rejoins the queue
   while the other videos keep rendering. _Skip it_ leaves the failed video in
-  **My renders** and carries on; _Pause the queue_ stops after the failure.
+  **Renders & queue** and carries on; _Pause the queue_ stops after the failure.
 
 Keep Studio open until the queue finishes; waiting jobs are cancelled when Studio
 closes.

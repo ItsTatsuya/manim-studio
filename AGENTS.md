@@ -58,10 +58,23 @@ starter scripts and manual rendering launchers have been retired.
   create a new project transactionally. Reject traversal, duplicate Windows paths,
   ZIP symlinks and packages over 512 MB / 2000 files; never install package requirements.
 - House styles (`styles.py`) live in `DATA_ROOT/.studio/styles.json`; built-ins are
-  read-only. Projects and videos store only a `style` id (absent: parent, then default).
+  read-only. Projects and videos store a `style` id (absent: parent, then default) and
+  optional `fonts` overrides for heading/body/code (a video's override the parent's
+  role by role); the style picker sets both and previews the result, drawing fonts
+  uploaded to Assets through `FontFace`.
   Studio writes `studio_style.py` beside `script.py` before renders and agent turns,
   only when its text changes so render cache keys stay stable, and adds a short style
-  guide to the agent instructions.
+  guide to the agent instructions. The module's layout helpers (`fit`, `swap`,
+  `new_slide`, `content_box`) keep slides centred and transitions free of overlap;
+  `agent_check.py` fails on overlapping text, text off the frame and crossfade ghosting.
+- Built-in styles use only the OFL fonts in `fonts/` (pinned google/fonts files,
+  checksums and licences in `fonts/SOURCES.json`; `packaging/build.py` ships the
+  folder). The default style is `clean`; keep built-in ids stable since projects
+  store them. On Windows `styles.configure_fonts()` points Pango at fontconfig
+  (`.studio/fontconfig/fonts.conf`: system, user and Studio fonts) before Manim
+  loads, in Studio, the worker and the agent check: ManimPango's native font
+  registration re-adds each font for every Text (about 0.5 s per font). Previews
+  load the same files from `/api/fonts/bundled/<file>`.
 - Watermarks (`watermark.py`): a global default in `.studio/watermark.json`, logos
   rasterised into `.studio/watermark/logos/`, per-project/video overrides in metadata.
   The worker overlays the final movie with PyAV (the bundled ffmpeg is audio-only)
@@ -168,7 +181,7 @@ Keep the portable recovery journal and installer AppId compatible.
 Version 1.0.0 was the first public release; releases ship minimal TeX plus Typst. Publish the intended stable
 release as GitHub's latest release. Preserve Git tags and published asset bytes;
 retire an older GitHub release only when explicitly requested.
-Current source version: 1.3.0. Version metadata and builders read pyproject.toml;
+Current source version: 1.4.0. Version metadata and builders read pyproject.toml;
 keep runtime.py's fallback version in sync. Project expansion persists in the
 manim-project-expanded preference. Fresh workspaces and deletion of the last project
 leave the project list empty and preserve render history; every UI deletion requires confirmation.

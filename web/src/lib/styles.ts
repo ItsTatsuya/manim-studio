@@ -27,11 +27,34 @@ export const useStyles = create<{
   },
 }));
 
+let bundledFonts: Promise<void> | null = null;
+
+/** Register the fonts Studio ships so style previews draw them as renders do. */
+export function loadBundledFonts() {
+  bundledFonts ??= api
+    .fonts()
+    .then(async (list) => {
+      await Promise.all(
+        (list.bundled ?? []).map(async (font) => {
+          const face = new FontFace(font.family, `url("${font.url}")`, {
+            weight: "100 900",
+          });
+          document.fonts.add(await face.load());
+        }),
+      );
+    })
+    .catch(() => {
+      bundledFonts = null;
+    });
+  return bundledFonts;
+}
+
 /** Subscribe to the library, loading it when first shown. */
 export function useStyleLibrary() {
   const library = useStyles((state) => state.library);
   useEffect(() => {
     if (!useStyles.getState().library) void useStyles.getState().load();
+    void loadBundledFonts();
   }, []);
   return library;
 }
@@ -47,22 +70,28 @@ export function styleById(
   );
 }
 
-/** Options for a style select; "" follows the default (or parent) style. */
+/**
+ * Options for a style select; "" follows the default (or parent) style.
+ * With `showDefault` the default style itself stands for "" (marked as the
+ * default) instead of appearing twice; otherwise `inherit` names "".
+ */
 export function styleOptions(
   library: StyleLibrary | null,
   inherit: string,
   showDefault = true,
 ) {
-  const fallback = showDefault ? styleById(library, null) : undefined;
-  return [
-    {
-      value: "",
-      label: fallback ? `${inherit} · ${fallback.name}` : inherit,
-    },
-    ...(library?.styles ?? []).map((style) => ({
-      value: style.id,
-      label: style.name,
+  const styles = library?.styles ?? [];
+  const options = styles.map((style) => {
+    const isDefault = showDefault && style.id === library?.default;
+    return {
+      value: isDefault ? "" : style.id,
+      label: isDefault ? `${style.name} (default)` : style.name,
       group: style.builtin ? "Built-in" : "Your styles",
-    })),
-  ];
+    };
+  });
+  return showDefault || !library
+    ? options.length
+      ? options
+      : [{ value: "", label: inherit }]
+    : [{ value: "", label: inherit }, ...options];
 }

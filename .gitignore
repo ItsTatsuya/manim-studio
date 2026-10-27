@@ -17,3 +17,6 @@ UserData/
 Thumbs.db
 /projects/
 /assets/
+
+# Manim caches from running scenes in the repository root.
+/media/

@@ -43,7 +43,7 @@ export function RendersView() {
       <header className="flex h-[52px] shrink-0 items-center justify-between gap-2 border-b px-4">
         <div className="flex min-w-0 items-center gap-2">
           <WorkspaceBackButton className="md:hidden" />
-          <h1 className="truncate text-sm font-medium">My renders</h1>
+          <h1 className="truncate text-sm font-medium">Renders &amp; queue</h1>
           <span
             className="hidden text-xs text-muted-foreground sm:inline"
             role="status"

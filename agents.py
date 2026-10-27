@@ -743,6 +743,10 @@ Manim rules
 - The frame is about 14.2 x 8 units. Keep everything on screen and readable: use
   arrange, next_to and buff to avoid overlaps, scale long text to fit, fade out old
   content before new sections, keep one consistent color palette.
+- Aim for a polished explainer: one idea per slide, content centred in the
+  space below the title and large enough to read, nothing overlapping, and old
+  content gone before new content fades in. The check reports overlapping text,
+  text off the frame and crossfade ghosting; fix every one.
 - Time the animation from the narration with narrate() (below), so the video
   waits for the voice instead of the voice being squeezed into fixed slots. End
   with a short self.wait().

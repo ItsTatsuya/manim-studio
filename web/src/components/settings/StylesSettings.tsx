@@ -1,10 +1,11 @@
 import { CopyIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { api, type FontList, type HouseStyle } from "~/lib/api";
 import { useStyleLibrary, useStyles } from "~/lib/styles";
 import { useStudio } from "~/state/studio";
 import { StyleSwatch } from "../styles/StyleSwatch";
+import { FontPicker } from "../ui/font-picker";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -194,24 +195,22 @@ export function StylesSettings() {
 function FontInput({
   label,
   value,
-  list,
+  fonts,
   onChange,
 }: {
   label: string;
   value: string;
-  list: string;
+  fonts: FontList | null;
   onChange: (value: string) => void;
 }) {
   return (
     <Field label={label}>
-      <Input
+      <FontPicker
         aria-label={`${label} font`}
-        list={list}
         value={value}
-        maxLength={80}
-        placeholder="Default font"
-        style={{ fontFamily: value ? `"${value}", inherit` : undefined }}
-        onChange={(event) => onChange(event.target.value)}
+        fonts={fonts}
+        onCommit={onChange}
+        className="[&_input]:h-10 [&_input]:text-sm"
       />
     </Field>
   );
@@ -262,7 +261,6 @@ function StyleEditor({
   const projects = useStudio((state) => state.projects);
   const lastProject = useStudio((state) => state.prefs["manim-project"]);
   const [fontProject, setFontProject] = useState("");
-  const listId = useId();
   const open = !!style;
   // Start from the saved style each time the editor opens; keep the last draft
   // while the dialog animates out.
@@ -317,12 +315,6 @@ function StyleEditor({
       setBusy(false);
     }
   };
-  const families = [
-    ...new Set([
-      ...(fonts?.project.map((font) => font.family) ?? []),
-      ...(fonts?.system ?? []),
-    ]),
-  ];
   return (
     <Dialog
       open={open}
@@ -400,27 +392,22 @@ function StyleEditor({
 
               <fieldset>
                 <legend className="mb-2 font-medium text-sm">Fonts</legend>
-                <datalist id={listId}>
-                  {families.map((family) => (
-                    <option key={family} value={family} />
-                  ))}
-                </datalist>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <FontInput
                     label="Headings"
-                    list={listId}
+                    fonts={fonts}
                     value={draft.fonts.heading}
                     onChange={(heading) => edit("fonts", { heading })}
                   />
                   <FontInput
                     label="Body"
-                    list={listId}
+                    fonts={fonts}
                     value={draft.fonts.body}
                     onChange={(body) => edit("fonts", { body })}
                   />
                   <FontInput
                     label="Code"
-                    list={listId}
+                    fonts={fonts}
                     value={draft.fonts.code}
                     onChange={(code) => edit("fonts", { code })}
                   />
@@ -440,7 +427,7 @@ function StyleEditor({
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-muted-foreground text-xs">
                   <span>
                     {fonts
-                      ? `${fonts.system.length} installed fonts`
+                      ? `${fonts.bundled?.length ?? 0} Studio fonts and ${fonts.system.length} installed fonts`
                       : "Loading fonts…"}
                     {fonts?.project.length
                       ? `, plus ${fonts.project.length} from`

@@ -74,7 +74,7 @@ export function ModelPicker({
         <MenuTrigger
           disabled={disabled}
           aria-label={`Choose agent and model: ${label}`}
-          className="flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 text-ui text-muted-foreground outline-none transition-[color,background-color,scale] hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.98] data-[popup-open]:bg-accent data-[popup-open]:text-foreground"
+          className="flex h-8 min-w-0 items-center gap-1.5 rounded-md px-2 text-ui text-muted-foreground outline-none transition-[color,background-color] hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[popup-open]:bg-accent data-[popup-open]:text-foreground"
         >
           <ProviderIcon provider={value.provider} className="size-3.5" />
           <span className="truncate">{label}</span>

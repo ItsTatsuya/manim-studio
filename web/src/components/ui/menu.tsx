@@ -9,7 +9,7 @@ export const MenuTrigger = MenuPrimitive.Trigger;
 export const MenuRadioGroup = MenuPrimitive.RadioGroup;
 
 export const popupSurface =
-  "rounded-lg border bg-popover text-popover-foreground shadow-popup outline-none origin-[var(--transform-origin)] transition-[opacity,scale] duration-100 ease-out data-[ending-style]:ease-in data-[ending-style]:scale-[0.98] data-[starting-style]:scale-[0.98] data-[ending-style]:opacity-0 data-[starting-style]:opacity-0";
+  "rounded-lg border bg-popover text-popover-foreground shadow-popup outline-none transition-opacity duration-100 ease-out data-[ending-style]:opacity-0 data-[starting-style]:opacity-0";
 
 export function MenuPopup({
   children,

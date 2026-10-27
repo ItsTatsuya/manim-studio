@@ -53,7 +53,7 @@ export function Select<T extends string>({
       <SelectPrimitive.Trigger
         aria-labelledby={ariaLabel ? `${labelId} ${valueId}` : valueId}
         className={cn(
-          "inline-flex min-w-0 select-none items-center justify-between gap-1.5 rounded-[var(--control-radius)] border text-left text-sm outline-none transition-[color,background-color,border-color,box-shadow,scale] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/20 active:scale-[0.98] data-[disabled]:opacity-50",
+          "inline-flex min-w-0 select-none items-center justify-between gap-1.5 rounded-[var(--control-radius)] border text-left text-sm outline-none transition-[color,background-color,border-color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/20 data-[disabled]:opacity-50",
           variant === "outline"
             ? "border-input bg-background shadow-xs/5 hover:bg-accent/50 dark:bg-input/30"
             : "border-transparent text-muted-foreground hover:bg-accent hover:text-foreground data-[popup-open]:bg-accent data-[popup-open]:text-foreground",

@@ -56,29 +56,91 @@ class StyleError(Exception):
 
 BUILTIN = [
     {
-        "id": "textbook",
-        "name": "Clean textbook",
-        "description": "Light handout look with teal, amber and red accents.",
+        "id": "clean",
+        "name": "Clean",
+        "description": "Crisp white slides set in Inter with an indigo accent.",
         "fonts": {
-            "heading": "Segoe UI",
-            "body": "Segoe UI",
-            "code": "Consolas",
+            "heading": "Inter",
+            "body": "Inter",
+            "code": "JetBrains Mono",
             "math": "auto",
         },
         "colors": {
             "background": "#FFFFFF",
-            "text": "#1F2933",
+            "text": "#111827",
             "muted": "#6B7280",
+            "primary": "#4F46E5",
+            "secondary": "#0284C7",
+            "accent": "#E11D48",
+            "positive": "#059669",
+            "negative": "#DC2626",
+            "key_fill": "#EEF2FF",
+            "example_fill": "#F0F9FF",
+        },
+        "sizes": {"title": 50, "heading": 38, "body": 30, "small": 22},
+        "layout": {"margin": 0.6, "title": "top-left"},
+        "pacing": {"run_time": 1.0, "wait": 1.0, "words_per_second": 2.4},
+        "voice": "Warm, clear and confident, like a favourite teacher.",
+        "rules": (
+            "One idea per slide. Introduce a term before using it and highlight it "
+            "in PRIMARY. Finish with a one-line takeaway."
+        ),
+    },
+    {
+        "id": "editorial",
+        "name": "Editorial",
+        "description": "Magazine feel: Lora headlines on cream with terracotta and forest.",
+        "fonts": {
+            "heading": "Lora",
+            "body": "Inter",
+            "code": "JetBrains Mono",
+            "math": "auto",
+        },
+        "colors": {
+            "background": "#F7F3EA",
+            "text": "#27221C",
+            "muted": "#7A7064",
+            "primary": "#C2410C",
+            "secondary": "#166534",
+            "accent": "#9F1239",
+            "positive": "#166534",
+            "negative": "#B91C1C",
+            "key_fill": "#F4E2D2",
+            "example_fill": "#E2EDDB",
+        },
+        "sizes": {"title": 56, "heading": 40, "body": 30, "small": 22},
+        "layout": {"margin": 0.7, "title": "top-left"},
+        "pacing": {"run_time": 1.2, "wait": 1.2, "words_per_second": 2.3},
+        "voice": "Thoughtful storyteller who ties ideas to the real world.",
+        "rules": (
+            "Open with a question or a real-world hook. One striking visual per slide "
+            "and few words."
+        ),
+    },
+    {
+        "id": "textbook",
+        "name": "Textbook",
+        "description": "Warm paper, Source Serif headings and teal and amber highlights.",
+        "fonts": {
+            "heading": "Source Serif 4",
+            "body": "Inter",
+            "code": "JetBrains Mono",
+            "math": "auto",
+        },
+        "colors": {
+            "background": "#FBFAF7",
+            "text": "#1C1917",
+            "muted": "#78716C",
             "primary": "#0F766E",
-            "secondary": "#D97706",
-            "accent": "#DC2626",
+            "secondary": "#B45309",
+            "accent": "#BE123C",
             "positive": "#15803D",
             "negative": "#B91C1C",
-            "key_fill": "#CCFBF1",
-            "example_fill": "#FEF3C7",
+            "key_fill": "#E3F2EF",
+            "example_fill": "#FBF0DC",
         },
-        "sizes": {"title": 52, "heading": 40, "body": 30, "small": 22},
-        "layout": {"margin": 0.5, "title": "top-left"},
+        "sizes": {"title": 54, "heading": 40, "body": 30, "small": 22},
+        "layout": {"margin": 0.6, "title": "top-left"},
         "pacing": {"run_time": 1.0, "wait": 1.2, "words_per_second": 2.3},
         "voice": "Calm, clear teacher: precise, friendly and unhurried.",
         "rules": (
@@ -89,28 +151,28 @@ BUILTIN = [
     {
         "id": "dark",
         "name": "Dark explainer",
-        "description": "Dark canvas with bright blue and yellow, in the 3Blue1Brown spirit.",
+        "description": "Deep navy with sky blue and gold, built for visual intuition.",
         "fonts": {
-            "heading": "Segoe UI",
-            "body": "Segoe UI",
-            "code": "Cascadia Mono",
+            "heading": "Inter",
+            "body": "Inter",
+            "code": "JetBrains Mono",
             "math": "auto",
         },
         "colors": {
-            "background": "#14171C",
-            "text": "#ECEFF4",
-            "muted": "#8B95A5",
-            "primary": "#58C4DD",
-            "secondary": "#F4D35E",
-            "accent": "#FC6255",
-            "positive": "#83C167",
-            "negative": "#E65A4C",
-            "key_fill": "#1E2A36",
-            "example_fill": "#2A2618",
+            "background": "#0F172A",
+            "text": "#E2E8F0",
+            "muted": "#94A3B8",
+            "primary": "#38BDF8",
+            "secondary": "#FACC15",
+            "accent": "#FB7185",
+            "positive": "#4ADE80",
+            "negative": "#F87171",
+            "key_fill": "#132A45",
+            "example_fill": "#2B2614",
         },
-        "sizes": {"title": 56, "heading": 42, "body": 32, "small": 24},
-        "layout": {"margin": 0.5, "title": "top-center"},
-        "pacing": {"run_time": 1.5, "wait": 1.5, "words_per_second": 2.3},
+        "sizes": {"title": 54, "heading": 40, "body": 32, "small": 24},
+        "layout": {"margin": 0.6, "title": "top-center"},
+        "pacing": {"run_time": 1.5, "wait": 1.2, "words_per_second": 2.3},
         "voice": "Curious, conversational storyteller who builds intuition.",
         "rules": (
             "Build intuition visually before showing formulas. Prefer animated "
@@ -118,13 +180,75 @@ BUILTIN = [
         ),
     },
     {
+        "id": "midnight",
+        "name": "Midnight",
+        "description": "Near-black and quiet, with one violet accent and generous space.",
+        "fonts": {
+            "heading": "Inter",
+            "body": "Inter",
+            "code": "JetBrains Mono",
+            "math": "auto",
+        },
+        "colors": {
+            "background": "#0A0A0B",
+            "text": "#F4F4F5",
+            "muted": "#A1A1AA",
+            "primary": "#A78BFA",
+            "secondary": "#5EEAD4",
+            "accent": "#F472B6",
+            "positive": "#86EFAC",
+            "negative": "#FCA5A5",
+            "key_fill": "#1C1830",
+            "example_fill": "#10251F",
+        },
+        "sizes": {"title": 52, "heading": 38, "body": 30, "small": 22},
+        "layout": {"margin": 0.7, "title": "top-left"},
+        "pacing": {"run_time": 1.2, "wait": 1.2, "words_per_second": 2.3},
+        "voice": "Relaxed and thoughtful, with room to breathe.",
+        "rules": (
+            "Show very little at once: one shape or formula and a few words. Use "
+            "PRIMARY only for the thing the viewer should look at."
+        ),
+    },
+    {
+        "id": "blueprint",
+        "name": "Blueprint",
+        "description": "Engineering look: Space Grotesk and cyan lines on deep blue.",
+        "fonts": {
+            "heading": "Space Grotesk",
+            "body": "Inter",
+            "code": "JetBrains Mono",
+            "math": "auto",
+        },
+        "colors": {
+            "background": "#0B1D33",
+            "text": "#E6F1FF",
+            "muted": "#8BA3C0",
+            "primary": "#5EEAD4",
+            "secondary": "#93C5FD",
+            "accent": "#FDE047",
+            "positive": "#86EFAC",
+            "negative": "#FCA5A5",
+            "key_fill": "#11304F",
+            "example_fill": "#16324A",
+        },
+        "sizes": {"title": 52, "heading": 38, "body": 30, "small": 22},
+        "layout": {"margin": 0.6, "title": "top-left"},
+        "pacing": {"run_time": 1.2, "wait": 1.0, "words_per_second": 2.4},
+        "voice": "Precise engineer walking through a design, step by step.",
+        "rules": (
+            "Prefer diagrams, arrows and measurements to prose. Tag parts with short "
+            "code_text labels."
+        ),
+    },
+    {
         "id": "high-contrast",
         "name": "High contrast",
-        "description": "Large type and strong colours for accessibility.",
+        "description": "Atkinson Hyperlegible, large type and strong colours for accessibility.",
         "fonts": {
-            "heading": "Verdana",
-            "body": "Verdana",
-            "code": "Consolas",
+            "heading": "Atkinson Hyperlegible Next",
+            "body": "Atkinson Hyperlegible Next",
+            "code": "JetBrains Mono",
             "math": "auto",
         },
         "colors": {
@@ -150,7 +274,58 @@ BUILTIN = [
     },
 ]
 BUILTIN_IDS = {style["id"] for style in BUILTIN}
-DEFAULT_ID = "textbook"
+DEFAULT_ID = "clean"
+# Open-licence fonts shipped with Studio (fonts/SOURCES.json lists their origin),
+# so every built-in style renders the same on any computer.
+FONT_DIR = Path(__file__).resolve().parent / "fonts"
+
+
+def bundled_fonts() -> list[dict]:
+    """The font files Studio ships, with the family name scripts use."""
+    try:
+        listed = json.loads((FONT_DIR / "SOURCES.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [
+        {"family": item["family"], "file": item["file"]}
+        for item in listed.get("fonts", [])
+        if isinstance(item, dict)
+        and isinstance(item.get("family"), str)
+        and isinstance(item.get("file"), str)
+        and (FONT_DIR / item["file"]).is_file()
+    ]
+
+
+def configure_fonts(data_root: Path) -> None:
+    """Have Pango find fonts through fontconfig, Studio's own fonts included.
+
+    On Windows ManimPango re-adds every font registered with the native API
+    to Pango for each Text, about half a second per font file. Fontconfig
+    reads Studio's fonts, the system's and the user's once from a cached scan.
+    Call before Pango loads; child processes inherit the environment.
+    """
+    if os.name != "nt" or os.environ.get("PANGOCAIRO_BACKEND"):
+        return
+    from xml.sax.saxutils import escape
+
+    folder = data_root / ".studio" / "fontconfig"
+    windows = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+    user = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Microsoft"
+    dirs = [windows, user / "Windows" / "Fonts", FONT_DIR]
+    text = (
+        '<?xml version="1.0"?>\n'
+        '<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n<fontconfig>\n'
+        + "".join(f"  <dir>{escape(str(path))}</dir>\n" for path in dirs)
+        + f"  <cachedir>{escape(str(folder / 'cache'))}</cachedir>\n</fontconfig>\n"
+    )
+    config = folder / "fonts.conf"
+    try:
+        if not config.is_file() or config.read_text(encoding="utf-8") != text:
+            _write_atomic(config, text)
+    except OSError:
+        return
+    os.environ["FONTCONFIG_FILE"] = str(config)
+    os.environ["PANGOCAIRO_BACKEND"] = "fc"
 
 
 def _write_atomic(path: Path, text: str):
@@ -363,22 +538,46 @@ def valid_id(value) -> bool:
 # ---------------------------------------------------------------- projects
 
 
-def _project_style(folder: Path) -> str | None:
+def _metadata(folder: Path) -> dict:
     try:
         data = json.loads((folder / "project.json").read_text(encoding="utf-8"))
     except (OSError, ValueError, RecursionError):
-        return None
-    value = data.get("style") if isinstance(data, dict) else None
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _project_style(folder: Path) -> str | None:
+    value = _metadata(folder).get("style")
     return value if valid_id(value) else None
 
 
+def _project_fonts(folder: Path) -> dict:
+    value = _metadata(folder).get("fonts")
+    if not isinstance(value, dict):
+        return {}
+    return {
+        role: value[role].strip()
+        for role in ("heading", "body", "code")
+        if isinstance(value.get(role), str)
+        and value[role].strip()
+        and FONT.fullmatch(value[role].strip())
+    }
+
+
 def for_folder(data_root: Path, folder: Path) -> dict:
-    """The style a project or video workspace folder uses."""
+    """The style a project or video workspace folder uses, with its own fonts."""
     style_id = _project_style(folder)
-    if style_id is None and folder.parent.name == "videos":
+    fonts = _project_fonts(folder)
+    if folder.parent.name == "videos":
         # PDF-batch videos follow their parent project unless they pick one.
-        style_id = _project_style(folder.parent.parent)
-    return get(data_root, style_id)
+        parent = folder.parent.parent
+        if style_id is None:
+            style_id = _project_style(parent)
+        fonts = {**_project_fonts(parent), **fonts}
+    style = get(data_root, style_id)
+    if fonts:
+        style = {**style, "fonts": {**style["fonts"], **fonts}}
+    return style
 
 
 def _python(value) -> str:
@@ -387,7 +586,11 @@ def _python(value) -> str:
 
 def module_source(style: dict, families: list[str] | None = None) -> str:
     """The generated helper that scripts import as ``from studio_style import *``."""
-    project_families = _python(sorted(set(families or [])))
+    shipped = bundled_fonts()
+    project_families = _python(
+        sorted(set(families or []) | {font["family"] for font in shipped})
+    )
+    shipped_files = _python([str(FONT_DIR / font["file"]) for font in shipped])
     colors, fonts, sizes = style["colors"], style["fonts"], style["sizes"]
     constants = "\n".join(
         [
@@ -399,6 +602,7 @@ def module_source(style: dict, families: list[str] | None = None) -> str:
             f"FONT_CODE = _family({_python(fonts['code'])}, 'Monospace')",
             f"MATH = {_python(fonts['math'])}",
             *(f"{key.upper()}_SIZE = {sizes[key]}" for key in SIZES),
+            f"MATH_SIZE = {round(sizes['body'] * 1.3)}",
             f"MARGIN = {style['layout']['margin']!r}",
             f"TITLE_POSITION = {_python(style['layout']['title'])}",
             f"RUN_TIME = {style['pacing']['run_time']!r}",
@@ -423,16 +627,20 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from manim import (
-    BOLD,
     DOWN,
     LEFT,
     ORIGIN,
+    FadeIn,
+    FadeOut,
+    MEDIUM,
+    SEMIBOLD,
     ManimColor,
     UL,
     UP,
     SurroundingRectangle,
     Text,
     VGroup,
+    Write,
     config,
 )
 from manim.mobject.text.text_mobject import register_font
@@ -441,19 +649,39 @@ _HERE = Path(__file__).resolve().parent
 _FONTS = ExitStack()
 
 
+# Fonts Studio ships with every style, then any uploaded to this project.
+_STUDIO_FONTS = {shipped_files}
+
+
 def _register_fonts():
-    """Make font files uploaded to this project's assets usable by name."""
-    found = []
+    """Make Studio's fonts and those uploaded to this project's assets usable.
+
+    Through fontconfig when Studio set it up (or on Linux): fonts are added
+    once. The native Windows route costs about half a second per font for
+    every Text, so it is only the fallback.
+    """
+    import os
+    import sys
+
+    import manimpango
+
+    found = [Path(path) for path in _STUDIO_FONTS if Path(path).is_file()]
     assets = _HERE / "assets"
     if assets.is_dir():
         for path in sorted(assets.rglob("*")):
             if path.suffix.lower() in {sorted(FONT_SUFFIXES)!r} and path.is_file():
                 found.append(path)
-                if len(found) >= {MAX_FONT_FILES}:
+                if len(found) >= {MAX_FONT_FILES + 16}:
                     break
+    fontconfig = os.environ.get("PANGOCAIRO_BACKEND") == "fc" or sys.platform.startswith(
+        "linux"
+    )
     for path in found:
         try:
-            _FONTS.enter_context(register_font(str(path)))
+            if fontconfig:
+                manimpango.fc_register_font(str(path))
+            else:
+                _FONTS.enter_context(register_font(str(path)))
         except Exception:
             pass
 
@@ -524,12 +752,12 @@ def place_title(mobject):
 
 def title(text, **options):
     """A slide title in the heading font, placed where the style puts titles."""
-    options = {{"font": FONT_HEADING, "font_size": TITLE_SIZE, "color": TEXT, "weight": BOLD, **options}}
+    options = {{"font": FONT_HEADING, "font_size": TITLE_SIZE, "color": TEXT, "weight": SEMIBOLD, **options}}
     return place_title(Text(text, **options))
 
 
 def heading(text, **options):
-    options = {{"font": FONT_HEADING, "font_size": HEADING_SIZE, "color": PRIMARY, **options}}
+    options = {{"font": FONT_HEADING, "font_size": HEADING_SIZE, "color": PRIMARY, "weight": MEDIUM, **options}}
     return Text(text, **options)
 
 
@@ -552,8 +780,9 @@ def _box(mobject, fill, stroke, label):
     frame = SurroundingRectangle(
         mobject,
         color=stroke,
-        buff=0.25,
-        corner_radius=0.12,
+        buff=0.3,
+        corner_radius=0.16,
+        stroke_width=2.5,
         fill_color=fill,
         fill_opacity=1,
     )
@@ -578,16 +807,73 @@ def example_box(mobject, label=None):
 def bullets(*lines, **options):
     """Left-aligned bullet points in the body style."""
     items = VGroup(*(body("\\u2022 " + line, **options) for line in lines))
-    return items.arrange(DOWN, aligned_edge=LEFT, buff=0.3)
+    return items.arrange(DOWN, aligned_edge=LEFT, buff=0.35)
+
+
+_TITLE_HEIGHT = []
+
+
+def content_box():
+    """(left, right, bottom, top) of the area below the title, inside MARGIN."""
+    width, height = config.frame_width, config.frame_height
+    top = height / 2 - MARGIN
+    if TITLE_POSITION != "center":
+        if not _TITLE_HEIGHT:
+            _TITLE_HEIGHT.append(title("Ag").height)
+        top -= _TITLE_HEIGHT[0] + 0.45
+    return -width / 2 + MARGIN, width / 2 - MARGIN, -height / 2 + MARGIN, top
+
+
+def fit(mobject, grow=False):
+    """Centre a slide's content in the space below the title, shrunk to fit.
+
+    With grow=True small content is also enlarged (up to 1.5x) to use the space.
+    """
+    left, right, bottom, top = content_box()
+    if mobject.width and mobject.height:
+        factor = min((right - left) / mobject.width, (top - bottom) / mobject.height)
+        if factor < 1 or grow:
+            mobject.scale(min(factor, 1.5 if grow else 1))
+    return mobject.move_to([(left + right) / 2, (bottom + top) / 2, 0])
+
+
+def _items(value):
+    if value is None:
+        return []
+    return [item for item in value if item is not None] if isinstance(value, (list, tuple)) else [value]
+
+
+def swap(scene, old, new, run_time=None):
+    """Fade `old` out, then `new` in, so the two never overlap on screen."""
+    run_time = RUN_TIME if run_time is None else run_time
+    olds = _items(old)
+    if olds:
+        scene.play(*(FadeOut(item) for item in olds), run_time=run_time * 0.4)
+    scene.play(*(FadeIn(item, shift=UP * 0.15) for item in _items(new)), run_time=run_time * 0.6)
+    return new
+
+
+def new_slide(scene, text=None, run_time=None, keep=()):
+    """Clear the slide (all but `keep`) and show a new title; returns the title."""
+    run_time = RUN_TIME if run_time is None else run_time
+    kept = set(map(id, _items(list(keep))))
+    leaving = [item for item in scene.mobjects if id(item) not in kept]
+    if leaving:
+        scene.play(*(FadeOut(item) for item in leaving), run_time=run_time * 0.4)
+    if not text:
+        return None
+    heading_text = title(text)
+    scene.play(Write(heading_text), run_time=run_time * 0.6)
+    return heading_text
 
 
 __all__ = [
     "STYLE_NAME", "BG", {", ".join(_python(key.upper()) for key in COLORS[1:])},
     "FONT_HEADING", "FONT_BODY", "FONT_CODE", "MATH",
     {", ".join(_python(key.upper() + "_SIZE") for key in SIZES)},
-    "MARGIN", "TITLE_POSITION", "RUN_TIME", "WAIT", "WORDS_PER_SECOND",
+    "MATH_SIZE", "MARGIN", "TITLE_POSITION", "RUN_TIME", "WAIT", "WORDS_PER_SECOND",
     "apply", "place_title", "title", "heading", "body", "caption", "code_text",
-    "key_box", "example_box", "bullets",
+    "key_box", "example_box", "bullets", "content_box", "fit", "swap", "new_slide",
 ]
 '''
 
@@ -629,7 +915,11 @@ def guide(style: dict) -> str:
   TITLE_SIZE {sizes["title"]}, HEADING_SIZE {sizes["heading"]}, BODY_SIZE {sizes["body"]}, SMALL_SIZE {sizes["small"]}.
 - Helpers: title(text) ({style["layout"]["title"]}), heading, body, caption, code_text,
   bullets(*lines), key_box(mob, label), example_box(mob, label). Keep MARGIN
-  ({style["layout"]["margin"]}) clear at frame edges.
+  ({style["layout"]["margin"]}) clear at frame edges. Equations use font_size=MATH_SIZE.
+- Layout: place each slide's content as one VGroup with fit(group) (centred
+  below the title; grow=True fills sparse slides). Labels sit outside shapes.
+- Transitions: new_slide(self, "Title") clears the slide for the next title;
+  swap(self, old, new) replaces content without overlap. Both take run_time.
 - Pacing: run_time=RUN_TIME ({pacing["run_time"]}s), self.wait(WAIT) ({pacing["wait"]}s);
   narration about {pacing["words_per_second"]} words per second.{math}{voice}{rules}"""
 

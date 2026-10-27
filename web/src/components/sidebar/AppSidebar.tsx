@@ -460,7 +460,7 @@ export function AppSidebar({
               <FooterIcon
                 to="/renders"
                 icon={<ClapperboardIcon />}
-                label="My renders"
+                label="Renders & queue"
                 collapsed={collapsed}
               />
               <UsageButton collapsed={collapsed} />
@@ -607,7 +607,7 @@ function ProjectGroup({
     const ok = await confirmAction({
       title: `Delete “${project.name}”?`,
       description:
-        "This removes the project's script, narration, assets and chats. Finished videos stay in My renders.",
+        "This removes the project's script, narration, assets and chats. Finished videos stay in Renders & queue.",
       confirm: "Delete project",
       destructive: true,
     });

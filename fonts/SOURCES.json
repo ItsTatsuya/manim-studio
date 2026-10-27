@@ -1,0 +1,60 @@
+{
+  "repository": "https://github.com/google/fonts",
+  "commit": "a4c0b21f839d7ac65a7d8b49eb81bddd110774a3",
+  "fonts": [
+    {
+      "file": "AtkinsonHyperlegibleNext[wght].ttf",
+      "family": "Atkinson Hyperlegible Next",
+      "license": "OFL-1.1",
+      "license_file": "AtkinsonHyperlegibleNext-OFL.txt",
+      "source": "https://github.com/google/fonts/raw/a4c0b21f839d7ac65a7d8b49eb81bddd110774a3/ofl/atkinsonhyperlegiblenext/AtkinsonHyperlegibleNext%5Bwght%5D.ttf",
+      "sha256": "5a455d1cfa099b601ab70751bb9673e8fe1854dc4500c80e1a220d0d75e31745",
+      "size": 114552
+    },
+    {
+      "file": "Inter[opsz,wght].ttf",
+      "family": "Inter",
+      "license": "OFL-1.1",
+      "license_file": "Inter-OFL.txt",
+      "source": "https://github.com/google/fonts/raw/a4c0b21f839d7ac65a7d8b49eb81bddd110774a3/ofl/inter/Inter%5Bopsz%2Cwght%5D.ttf",
+      "sha256": "29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031",
+      "size": 876576
+    },
+    {
+      "file": "JetBrainsMono[wght].ttf",
+      "family": "JetBrains Mono",
+      "license": "OFL-1.1",
+      "license_file": "JetBrainsMono-OFL.txt",
+      "source": "https://github.com/google/fonts/raw/a4c0b21f839d7ac65a7d8b49eb81bddd110774a3/ofl/jetbrainsmono/JetBrainsMono%5Bwght%5D.ttf",
+      "sha256": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda",
+      "size": 187208
+    },
+    {
+      "file": "Lora[wght].ttf",
+      "family": "Lora",
+      "license": "OFL-1.1",
+      "license_file": "Lora-OFL.txt",
+      "source": "https://github.com/google/fonts/raw/a4c0b21f839d7ac65a7d8b49eb81bddd110774a3/ofl/lora/Lora%5Bwght%5D.ttf",
+      "sha256": "822a6621ccbe8d97d20ac88c1c41f5615c9c2c202eaa75f272cd452aac6475a7",
+      "size": 212196
+    },
+    {
+      "file": "SourceSerif4[opsz,wght].ttf",
+      "family": "Source Serif 4",
+      "license": "OFL-1.1",
+      "license_file": "SourceSerif4-OFL.txt",
+      "source": "https://github.com/google/fonts/raw/a4c0b21f839d7ac65a7d8b49eb81bddd110774a3/ofl/sourceserif4/SourceSerif4%5Bopsz%2Cwght%5D.ttf",
+      "sha256": "97b2d4da6e3cb494b5a1e66ae176914d852ccabef49e0c02c0df25f3e39aca0b",
+      "size": 1209508
+    },
+    {
+      "file": "SpaceGrotesk[wght].ttf",
+      "family": "Space Grotesk",
+      "license": "OFL-1.1",
+      "license_file": "SpaceGrotesk-OFL.txt",
+      "source": "https://github.com/google/fonts/raw/a4c0b21f839d7ac65a7d8b49eb81bddd110774a3/ofl/spacegrotesk/SpaceGrotesk%5Bwght%5D.ttf",
+      "sha256": "acad6de1fc93436f5c0f1f4137751ef04f1aea3063e7036535970ffcfbd79f72",
+      "size": 136676
+    }
+  ]
+}

@@ -30,7 +30,7 @@ class Lesson(Scene):
         self.play(FadeIn(heading_text), run_time=RUN_TIME)
         key = key_box(body("Key idea"), label="Definition")
         example = example_box(bullets("one", "two"), label="Example")
-        self.add(key, example.next_to(key, DOWN), Square(), caption("c"))
+        self.add(key, example.next_to(key, DOWN), Square(), caption("c").to_corner(DR))
         assert self.camera.background_color.to_hex().upper() == BG
         assert Square().color.to_hex().upper() == TEXT
         assert Text("x")[0].get_fill_color().to_hex().upper() == TEXT
@@ -48,12 +48,28 @@ class StyleCase(unittest.TestCase):
 class LibraryTests(StyleCase):
     def test_builtins_and_default(self):
         library = styles.library(self.root)
-        self.assertEqual(library["default"], "textbook")
+        self.assertEqual(library["default"], "clean")
         ids = [style["id"] for style in library["styles"]]
-        self.assertEqual(ids, ["textbook", "dark", "high-contrast"])
+        self.assertEqual(
+            ids,
+            [
+                "clean",
+                "editorial",
+                "textbook",
+                "dark",
+                "midnight",
+                "blueprint",
+                "high-contrast",
+            ],
+        )
         self.assertTrue(all(style["builtin"] for style in library["styles"]))
-        self.assertEqual(styles.get(self.root, "missing")["id"], "textbook")
-        self.assertEqual(styles.get(self.root, None)["id"], "textbook")
+        self.assertEqual(styles.get(self.root, "missing")["id"], "clean")
+        self.assertEqual(styles.get(self.root, None)["id"], "clean")
+        # Every built-in style uses fonts Studio ships, so renders match anywhere.
+        shipped = {font["family"] for font in styles.bundled_fonts()}
+        for style in library["styles"]:
+            for role in ("heading", "body", "code"):
+                self.assertIn(style["fonts"][role], shipped, style["id"])
 
     def test_validation(self):
         with self.assertRaises(styles.StyleError):
@@ -97,7 +113,7 @@ class LibraryTests(StyleCase):
             self.root, copy["id"], {"name": "Mine", "colors": {"primary": "#112233"}}
         )
         self.assertEqual(changed["colors"]["primary"], "#112233")
-        self.assertEqual(changed["colors"]["background"], "#14171C")
+        self.assertEqual(changed["colors"]["background"], "#0F172A")
         stored = json.loads((self.root / ".studio" / "styles.json").read_text())
         self.assertEqual(stored["styles"][0]["name"], "Mine")
         self.assertEqual(
@@ -112,8 +128,8 @@ class LibraryTests(StyleCase):
         with self.assertRaises(KeyError):
             styles.create(self.root, {}, "nope")
         library = styles.delete(self.root, copy["id"])
-        self.assertEqual(library["default"], "textbook")
-        self.assertEqual(len(library["styles"]), 3)
+        self.assertEqual(library["default"], "clean")
+        self.assertEqual(len(library["styles"]), len(styles.BUILTIN))
 
     def test_corrupt_library_is_ignored(self):
         path = self.root / ".studio" / "styles.json"
@@ -131,8 +147,10 @@ class LibraryTests(StyleCase):
             )
         )
         library = styles.library(self.root)
-        self.assertEqual(library["default"], "textbook")
-        self.assertEqual([s["id"] for s in library["styles"]][3:], ["custom-2"])
+        self.assertEqual(library["default"], "clean")
+        self.assertEqual(
+            [s["id"] for s in library["styles"]][len(styles.BUILTIN) :], ["custom-2"]
+        )
         self.assertEqual(styles.get(self.root, "dark")["name"], "Dark explainer")
 
 
@@ -156,7 +174,7 @@ class ProjectStyleTests(StyleCase):
         self.assertNotIn("style", projects.read(home, project["id"]))
         self.assertEqual(
             styles.for_folder(self.root, projects.folder(home, project["id"]))["id"],
-            "textbook",
+            "clean",
         )
         with self.assertRaises(projects.ProjectError):
             projects.update(home, project["id"], style="Bad Id")
@@ -164,6 +182,46 @@ class ProjectStyleTests(StyleCase):
         projects.update(home, project["id"], style="dark")
         projects.update(home, project["id"], name="Renamed")
         self.assertEqual(projects.read(home, project["id"])["style"], "dark")
+
+    def test_project_fonts_override_the_style(self):
+        home = self.root / "projects"
+        project = projects.create(home, "Lesson", style="dark")
+        folder = projects.folder(home, project["id"])
+        projects.update(
+            home,
+            project["id"],
+            fonts={"heading": " Georgia ", "body": 'Bad "name"', "math": "x"},
+        )
+        self.assertEqual(
+            projects.read(home, project["id"])["fonts"], {"heading": "Georgia"}
+        )
+        style = styles.for_folder(self.root, folder)
+        self.assertEqual(style["id"], "dark")
+        self.assertEqual(style["fonts"]["heading"], "Georgia")
+        self.assertEqual(style["fonts"]["code"], "JetBrains Mono")
+        styles.write_module(self.root, folder)
+        module = (folder / styles.MODULE_FILE).read_text(encoding="utf-8")
+        self.assertIn('FONT_HEADING = _family("Georgia"', module)
+        # A batch video inherits the project's fonts and can override one of them.
+        video = projects.create_video(home, project["id"], "Part 1")
+        video_folder = projects.workspace_folder(
+            home, project["id"], video["workspace"]
+        )
+        projects.update(
+            home, project["id"], fonts={"body": "Verdana"}, workspace=video["workspace"]
+        )
+        fonts = styles.for_folder(self.root, video_folder)["fonts"]
+        self.assertEqual((fonts["heading"], fonts["body"]), ("Georgia", "Verdana"))
+        # Other updates keep the fonts; an empty choice clears them.
+        projects.update(home, project["id"], name="Renamed", style="textbook")
+        self.assertEqual(
+            projects.read(home, project["id"])["fonts"], {"heading": "Georgia"}
+        )
+        projects.update(home, project["id"], fonts={})
+        self.assertNotIn("fonts", projects.read(home, project["id"]))
+        self.assertEqual(
+            styles.for_folder(self.root, folder)["fonts"]["heading"], "Source Serif 4"
+        )
 
     def test_import_keeps_style_id(self):
         buffer = io.BytesIO()
@@ -187,7 +245,7 @@ class ProjectStyleTests(StyleCase):
         self.assertEqual(path.stat().st_mtime_ns, stamp)
         projects.update(home, project["id"], style="dark")
         guide = styles.prepare(self.root, folder)
-        self.assertIn('BG = "#14171C"', path.read_text(encoding="utf-8"))
+        self.assertIn('BG = "#0F172A"', path.read_text(encoding="utf-8"))
         self.assertIn('House style "Dark explainer"', guide)
         self.assertIn("from studio_style import *", guide)
         self.assertLess(len(guide), 1600)
@@ -210,6 +268,56 @@ class ProjectStyleTests(StyleCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("OK:", result.stdout)
 
+    def test_agent_check_reports_layout_problems(self):
+        messy = (
+            "from manim import *\nfrom studio_style import *\n\n\n"
+            "class Lesson(Scene):\n"
+            "    def construct(self):\n"
+            "        apply(self)\n"
+            "        first = body('First idea')\n"
+            "        self.play(FadeIn(first))\n"
+            "        self.play(FadeOut(first), FadeIn(body('Second idea')))\n"
+            "        self.add(body('Over here'), body('Over there'))\n"
+            "        self.add(body('A very long line that leaves').to_edge(RIGHT, buff=-2))\n"
+            "        self.wait()\n"
+        )
+        tidy = (
+            "from manim import *\nfrom studio_style import *\n\n\n"
+            "class Lesson(Scene):\n"
+            "    def construct(self):\n"
+            "        apply(self)\n"
+            "        new_slide(self, 'Learning objectives')\n"
+            "        first = fit(bullets('one', 'two'), grow=True)\n"
+            "        self.play(FadeIn(first))\n"
+            "        swap(self, first, fit(key_box(body('Key idea'), 'Key')))\n"
+            "        new_slide(self, 'Next')\n"
+            "        self.wait()\n"
+        )
+        home = self.root / "projects"
+        outputs = []
+        for source in (messy, tidy):
+            project = projects.create(home, "Layout", source)
+            folder = projects.folder(home, project["id"])
+            styles.write_module(self.root, folder)
+            outputs.append(
+                subprocess.run(
+                    [sys.executable, str(Path(studio.APP_ROOT) / "agent_check.py")],
+                    cwd=folder,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    timeout=180,
+                )
+            )
+        messy_result, tidy_result = outputs
+        self.assertEqual(messy_result.returncode, 1)
+        self.assertIn("Ghosting at line 10", messy_result.stdout)
+        self.assertIn("'Over here' and 'Over there' overlap", messy_result.stdout)
+        self.assertIn("runs off the right edge", messy_result.stdout)
+        self.assertEqual(
+            tidy_result.returncode, 0, tidy_result.stdout + tidy_result.stderr
+        )
+
     @unittest.skipUnless(
         os.name == "nt" and Path(r"C:\Windows\Fonts\arial.ttf").is_file(),
         "Windows font files",
@@ -228,7 +336,7 @@ class ProjectStyleTests(StyleCase):
         )
         styles.write_module(self.root, folder)
         self.assertIn(
-            '_PROJECT_FAMILIES = ["Arial"]',
+            '_PROJECT_FAMILIES = ["Arial", "Atkinson Hyperlegible Next", "Inter"',
             (folder / styles.MODULE_FILE).read_text(encoding="utf-8"),
         )
 
@@ -239,6 +347,66 @@ class StyleEndpointTests(StyleCase):
         patcher = patch.object(studio, "ROOT", self.root)
         patcher.start()
         self.addCleanup(patcher.stop)
+
+    def test_bundled_fonts_ship_with_licences(self):
+        import hashlib
+
+        listed = json.loads((styles.FONT_DIR / "SOURCES.json").read_text("utf-8"))
+        fonts = styles.bundled_fonts()
+        self.assertEqual(len(fonts), len(listed["fonts"]))
+        for item in listed["fonts"]:
+            path = styles.FONT_DIR / item["file"]
+            self.assertEqual(
+                hashlib.sha256(path.read_bytes()).hexdigest(), item["sha256"]
+            )
+            self.assertEqual(styles.font_family(path), item["family"])
+            self.assertIn(
+                "SIL OPEN FONT LICENSE",
+                (styles.FONT_DIR / item["license_file"]).read_text("utf-8").upper(),
+            )
+        listing = studio.list_fonts()
+        self.assertEqual(
+            {font["family"] for font in listing["bundled"]},
+            {font["family"] for font in fonts},
+        )
+        name = fonts[0]["file"]
+        self.assertEqual(Path(studio.bundled_font(name).path), styles.FONT_DIR / name)
+        for bad in ("SOURCES.json", "../styles.py", "missing.ttf"):
+            with self.assertRaises(HTTPException) as caught:
+                studio.bundled_font(bad)
+            self.assertEqual(caught.exception.status_code, 404)
+
+    @unittest.skipUnless(os.name == "nt", "fontconfig set-up is for Windows")
+    def test_fonts_are_found_through_fontconfig(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PANGOCAIRO_BACKEND", None)
+            os.environ.pop("FONTCONFIG_FILE", None)
+            styles.configure_fonts(self.root)
+            self.assertEqual(os.environ["PANGOCAIRO_BACKEND"], "fc")
+            config = Path(os.environ["FONTCONFIG_FILE"])
+            self.assertIn(str(styles.FONT_DIR), config.read_text("utf-8"))
+            # A family Windows does not have renders as itself, without the
+            # per-Text cost of the native font registration.
+            probe = (
+                "import time, uuid\n"
+                "from manim import Text\n"
+                "sample = 'Hamburgefonstiv ' + uuid.uuid4().hex[:6]\n"
+                "widths = [Text(sample, font=f, warn_missing_font=False).width"
+                " for f in ('Lora', 'Space Grotesk')]\n"
+                "start = time.perf_counter()\n"
+                "for _ in range(3): Text(uuid.uuid4().hex, font='Lora')\n"
+                "print(widths[0] != widths[1], (time.perf_counter() - start) / 3)\n"
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", probe],
+                capture_output=True,
+                text=True,
+                timeout=180,
+                env=dict(os.environ),
+            )
+        distinct, seconds = result.stdout.split()[-2:]
+        self.assertEqual(distinct, "True", result.stdout + result.stderr)
+        self.assertLess(float(seconds), 0.3)
 
     def test_style_endpoints(self):
         created = studio.create_style(
@@ -262,7 +430,7 @@ class StyleEndpointTests(StyleCase):
         with self.assertRaises(HTTPException) as caught:
             studio.create_style(studio.StyleCreate(style={"colors": {"text": "red"}}))
         self.assertEqual(caught.exception.status_code, 422)
-        self.assertEqual(len(studio.list_styles()["styles"]), 4)
+        self.assertEqual(len(studio.list_styles()["styles"]), 8)
 
     def test_project_style_selection(self):
         project = studio.create_project(studio.ProjectCreate(name="P", style="dark"))
@@ -282,6 +450,14 @@ class StyleEndpointTests(StyleCase):
             )
             with self.assertRaises(HTTPException):
                 studio.update_project(project["id"], studio.ProjectUpdate(style="x y"))
+            result = studio.update_project(
+                project["id"], studio.ProjectUpdate(fonts={"heading": "Georgia"})
+            )
+            self.assertEqual(result["fonts"], {"heading": "Georgia"})
+            self.assertIn(
+                'FONT_HEADING = _family("Georgia"',
+                (folder / styles.MODULE_FILE).read_text(encoding="utf-8"),
+            )
         fonts = studio.list_fonts(project["id"])
         self.assertIsInstance(fonts["system"], list)
         self.assertEqual(fonts["project"], [])

@@ -14,6 +14,7 @@ import { useProjectDoc } from "~/state/project";
 import { useStudio } from "~/state/studio";
 import { ChatPane } from "./chat/ChatPane";
 import { RightPanel, type PanelTab } from "./panel/RightPanel";
+import { QueueButton } from "./QueueButton";
 import { Button } from "./ui/button";
 import { Kbd, Spinner } from "./ui/input";
 import { toast } from "./ui/toast";
@@ -181,6 +182,7 @@ export function ProjectView() {
           )}
         </div>
         <div className="flex items-center gap-1.5">
+          <QueueButton />
           {(renderingHere && localRender) || makingVideo ? (
             <Tooltip content="Stop video">
               <Button

@@ -19,6 +19,7 @@ import {
 } from "../ui/dialog";
 import { Spinner } from "../ui/input";
 import { Switch } from "../ui/switch";
+import { toast } from "../ui/toast";
 import { WatermarkEditor, WatermarkPreview } from "./WatermarkEditor";
 
 function inheritedLabel(state: ProjectWatermark, workspace?: string | null) {
@@ -46,11 +47,13 @@ export function ProjectWatermarkDialog({
   const [draft, setDraft] = useState<WatermarkSettings | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [makeDefault, setMakeDefault] = useState(false);
   useEffect(() => {
     if (!open) return;
     let active = true;
     setState(null);
     setError("");
+    setMakeDefault(false);
     watermarkApi
       .project(projectId, workspace)
       .then((loaded) => {
@@ -72,13 +75,22 @@ export function ProjectWatermarkDialog({
     setSaving(true);
     setError("");
     try {
+      const asDefault = custom && makeDefault;
+      if (asDefault) await watermarkApi.saveDefaults(draft);
+      // A project whose watermark became the default simply follows it; a batch
+      // video keeps its own copy because it follows its project first.
       const saved = await watermarkApi.saveProject(
         projectId,
-        custom ? draft : null,
+        custom && !(asDefault && !workspace) ? draft : null,
         workspace,
       );
       onSaved?.(saved);
       onOpenChange(false);
+      if (asDefault)
+        toast.success(
+          "Default watermark updated",
+          "Projects without their own watermark use it from their next render.",
+        );
     } catch (failure) {
       setError((failure as Error).message);
     } finally {
@@ -132,12 +144,30 @@ export function ProjectWatermarkDialog({
                   />
                 </div>
                 {custom ? (
-                  <WatermarkEditor
-                    value={draft}
-                    onChange={setDraft}
-                    projectId={projectId}
-                    workspace={workspace}
-                  />
+                  <>
+                    <WatermarkEditor
+                      value={draft}
+                      onChange={setDraft}
+                      projectId={projectId}
+                      workspace={workspace}
+                    />
+                    <div className="mt-4 flex items-center justify-between gap-4 rounded-lg border p-3">
+                      <span className="min-w-0">
+                        <span className="block font-medium text-sm">
+                          Make this the default watermark
+                        </span>
+                        <span className="block text-muted-foreground text-xs">
+                          Every project without its own watermark uses it, as
+                          set in Settings.
+                        </span>
+                      </span>
+                      <Switch
+                        aria-label="Make this the default watermark"
+                        checked={makeDefault}
+                        onCheckedChange={setMakeDefault}
+                      />
+                    </div>
+                  </>
                 ) : (
                   <WatermarkPreview
                     settings={state.inherited}

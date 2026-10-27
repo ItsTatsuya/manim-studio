@@ -126,7 +126,11 @@ export interface ProjectSummary {
   narration: NarrationSettings;
   /** House style id; absent means the default (or parent project's) style. */
   style?: string;
+  /** Fonts this project uses instead of its style's. */
+  fonts?: ProjectFonts;
 }
+
+export type ProjectFonts = Partial<Record<"heading" | "body" | "code", string>>;
 
 export interface Project extends ProjectSummary {
   workspace?: string | null;
@@ -466,6 +470,8 @@ export interface StyleLibrary {
 }
 
 export interface FontList {
+  /** Open-licence fonts Studio ships, served for previews. */
+  bundled?: { family: string; url: string }[];
   system: string[];
   project: { family: string; path: string }[];
 }
@@ -498,6 +504,7 @@ export const api = {
       source?: string;
       narration?: NarrationSettings;
       style?: string;
+      fonts?: ProjectFonts;
     },
     workspace?: string | null,
   ) =>

@@ -106,6 +106,22 @@ def _style_id(value) -> bool:
     )
 
 
+FONT_ROLES = ("heading", "body", "code")
+_FONT_NAME = re.compile(r"[^\x00-\x1f\"'\\{}<>]{1,80}")
+
+
+def clean_fonts(value) -> dict:
+    """Font families that replace the house style's own for this project."""
+    if not isinstance(value, dict):
+        return {}
+    return {
+        role: value[role].strip()
+        for role in FONT_ROLES
+        if isinstance(value.get(role), str)
+        and _FONT_NAME.fullmatch(value[role].strip())
+    }
+
+
 def _read_metadata(folder: Path) -> dict | None:
     try:
         data = json.loads((folder / PROJECT_FILE).read_text(encoding="utf-8"))
@@ -138,6 +154,8 @@ def _read_metadata(folder: Path) -> dict | None:
         else None,
         # House style id (styles.py); absent means the default style.
         **({"style": data["style"]} if _style_id(data.get("style")) else {}),
+        # Fonts chosen for this project over the style's (absent: the style's).
+        **({"fonts": fonts} if (fonts := clean_fonts(data.get("fonts"))) else {}),
     }
 
 
@@ -229,6 +247,8 @@ def _save_metadata(path: Path, metadata: dict):
     stored = {key: metadata[key] for key in ("id", "name", "created", "updated")}
     if _style_id(metadata.get("style")):
         stored["style"] = metadata["style"]
+    if clean_fonts(metadata.get("fonts")):
+        stored["fonts"] = clean_fonts(metadata["fonts"])
     stored["narration"] = {
         key: value for key, value in metadata["narration"].items() if key != "text"
     }
@@ -286,8 +306,12 @@ def update(
     narration=None,
     workspace=None,
     style=None,
+    fonts=None,
 ):
-    """``style`` is a style id, or "" to follow the default (or parent) style."""
+    """``style`` is a style id, or "" to follow the default (or parent) style.
+
+    ``fonts`` replaces the project's font choices; an empty dict clears them.
+    """
     if workspace is not None:
         path = workspace_folder(root, project_id, workspace)
         video = update(
@@ -297,6 +321,7 @@ def update(
             source=source,
             narration=narration,
             style=style,
+            fonts=fonts,
         )
         return {
             **video,
@@ -317,6 +342,10 @@ def update(
             metadata.pop("style", None)
             if style:
                 metadata["style"] = style
+        if fonts is not None:
+            metadata.pop("fonts", None)
+            if clean_fonts(fonts):
+                metadata["fonts"] = clean_fonts(fonts)
         if source is not None:
             if len(source) > MAX_SOURCE:
                 raise ProjectError("Scripts must be smaller than 500 KB.")

@@ -43,7 +43,7 @@ const guide = [
   ],
   [
     "Render and refine",
-    "Preview renders automatically after generation when enabled. Ask for changes in the same chat, or click Render yourself. Download the video from Preview or My renders.",
+    "Preview renders automatically after generation when enabled. Ask for changes in the same chat, or click Render yourself. Download the video from Preview or Renders & queue.",
   ],
 ];
 

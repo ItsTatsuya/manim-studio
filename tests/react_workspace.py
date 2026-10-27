@@ -115,8 +115,10 @@ class WorkspaceTests(unittest.TestCase):
         expect(nav.get_by_role("link", name="Folder Alpha", exact=True)).to_be_visible()
         expect(nav.get_by_role("link", name="Folder Beta", exact=True)).to_have_count(0)
         nav.get_by_role("link", name="Folder Alpha", exact=True).click()
-        p.get_by_role("link", name="My renders", exact=True).click()
-        expect(p.get_by_role("heading", name="My renders", exact=True)).to_be_visible()
+        p.get_by_role("link", name="Renders & queue", exact=True).click()
+        expect(
+            p.get_by_role("heading", name="Renders & queue", exact=True)
+        ).to_be_visible()
         p.get_by_role("complementary", name="Studio sidebar").get_by_role(
             "link", name="Back", exact=True
         ).click()
@@ -311,6 +313,14 @@ class WorkspaceTests(unittest.TestCase):
         # Manual start: nothing renders until the queue is started.
         self.assertTrue(queue["paused"])
         self.assertIsNone(queue["active"])
+        # The Queue button beside Render shows the waiting videos in order.
+        p.goto(self.url + f"/#/projects/{value['id']}")
+        p.get_by_role("button", name="Queue 3, 3 videos in the render queue").click()
+        listing = p.get_by_role("list", name="Queued videos")
+        expect(listing.get_by_role("listitem")).to_have_count(3)
+        expect(listing.get_by_role("listitem").first).to_contain_text("Queue first")
+        expect(p.get_by_role("heading", name="Queue on hold")).to_be_visible()
+        p.keyboard.press("Escape")
         p.goto(self.url + "/#/renders")
         bar = p.get_by_role("region", name="Render queue")
         expect(bar).to_contain_text("3 videos waiting")
@@ -1451,7 +1461,7 @@ class WorkspaceTests(unittest.TestCase):
         with p.expect_download() as downloaded:
             p.get_by_role("link", name="Save video").click()
         self.assertGreater(Path(downloaded.value.path()).stat().st_size, 1000)
-        p.get_by_role("link", name="My renders").click()
+        p.get_by_role("link", name="Renders & queue").click()
         p.get_by_role("button", name="View video", exact=True).first.click()
         expect(p.get_by_role("dialog").locator("video")).to_be_visible()
 
@@ -1939,7 +1949,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertTrue(all(x == 28 for x, _ in open_icons.values()), open_icons)
         self.assertEqual(open_folder[0], 28)
         # The footer is a row when open and one column in the rail.
-        footer = """aside => ['My renders', 'Settings'].map(name => {
+        footer = """aside => ['Renders & queue', 'Settings'].map(name => {
           const box = aside.querySelector(`[aria-label="${name}"]`).getBoundingClientRect();
           return [Math.round(box.left), Math.round(box.top)];
         })"""

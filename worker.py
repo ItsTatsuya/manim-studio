@@ -37,6 +37,10 @@ if parallel_setting is not None or helper is not None:
 
 from runtime import DATA_ROOT
 import parallel
+import styles
+
+# Studio sets this up already; a worker started on its own does it here.
+styles.configure_fonts(DATA_ROOT)
 
 if watermark_spec is not None:
     # Imported before the project folder joins sys.path, like Studio's modules.
