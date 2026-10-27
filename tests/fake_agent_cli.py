@@ -44,6 +44,20 @@ def log(prompt=""):
                         "cwd": os.getcwd(),
                         "prompt": prompt,
                         "references": references,
+                        "env": {
+                            name: os.environ.get(name)
+                            for name in (
+                                "CLAUDE_CODE_DISABLE_CLAUDE_MDS",
+                                "CLAUDE_CODE_DISABLE_AUTO_MEMORY",
+                            )
+                        },
+                        "files": {
+                            name: Path(argv[argv.index(name) + 1]).read_text(
+                                encoding="utf-8"
+                            )
+                            for name in ("--mcp-config", "--settings")
+                            if name in argv
+                        },
                     }
                 )
                 + "\n"
@@ -75,8 +89,27 @@ def write_project():
     )
 
 
+LEGACY = os.environ.get("FAKE_AGENT_LEGACY") == "1"  # An older CLI release.
+
 if argv == ["--version"]:
     print("fake-cli 1.2.3 (test)")
+elif argv == ["--help"] and not LEGACY:
+    print(
+        "Usage: claude [options]\n  --strict-mcp-config  Only use --mcp-config\n"
+        "  --mcp-config <configs...>\n  --setting-sources <sources>\n"
+        "  --settings <file-or-json>\n  --disable-slash-commands\n"
+        "  --tools <tools...>\n  --append-system-prompt-file <file>"
+    )
+elif argv[-2:] == ["features", "list"] and not LEGACY:
+    overrides = argv[1:-2:2]
+    # Mimic Codex rejecting a value of the wrong type for a known key.
+    if any(value.startswith("mcp_servers.broken") for value in overrides):
+        print("Error: failed to load bootstrap configuration", file=sys.stderr)
+        sys.exit(1)
+    print("apps                stable   true")
+    print("multi_agent         stable   true")
+    print("shell_tool          stable   true")
+    print("web_search_request  removed  false")
 elif argv == ["login", "status"]:
     if os.environ.get("FAKE_AGENT_AUTH") == "none":
         print("Not logged in")

@@ -227,6 +227,13 @@ function WorkingIndicator({
   );
 }
 
+function formatTokens(count: number) {
+  if (count < 1000) return String(count);
+  if (count < 1_000_000)
+    return `${(count / 1000).toFixed(count < 10_000 ? 1 : 0)}k`;
+  return `${(count / 1_000_000).toFixed(1)}M`;
+}
+
 function TurnFooter({
   turn,
   project,
@@ -279,6 +286,18 @@ function TurnFooter({
         {turn.status === "interrupted" ? "Stopped after" : "Worked for"}{" "}
         {formatDuration(seconds)}
       </span>
+      {turn.tokens && (
+        <>
+          <span className="text-muted-foreground/50">·</span>
+          <Tooltip
+            content={`${turn.tokens.input.toLocaleString()} input tokens (${turn.tokens.cached.toLocaleString()} cached) · ${turn.tokens.output.toLocaleString()} output tokens`}
+          >
+            <span>
+              {formatTokens(turn.tokens.input + turn.tokens.output)} tokens
+            </span>
+          </Tooltip>
+        </>
+      )}
       {turn.changed.length > 0 && (
         <span className="text-muted-foreground/50">·</span>
       )}
