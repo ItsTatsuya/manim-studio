@@ -63,6 +63,7 @@ import usage
 import projects
 import watermark
 import scenes
+import styles
 from scenes import format_source
 from video_workflow import VideoProblem, VideoWorkflows
 
@@ -810,6 +811,11 @@ def render_worker(job_id: str, source: str):
                 ROOT / "projects", job["project"], job.get("workspace")
             )
             (working / projects.ASSETS).mkdir(exist_ok=True)
+            try:
+                # Refresh the house-style helper before the cache key reads it.
+                styles.write_module(ROOT, working)
+            except OSError:
+                logging.exception("Unable to write the project style module")
         config = ROOT / "manim.cfg"
         render_options = (
             ["--config_file", str(config)]
@@ -1551,12 +1557,15 @@ def open_folder(folder: str):
 class ProjectCreate(BaseModel):
     name: str = Field(default="Untitled project", max_length=100)
     source: str = Field(default="", max_length=500_000)
+    style: str | None = Field(default=None, max_length=64)
 
 
 class ProjectUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=100)
     source: str | None = Field(default=None, max_length=500_000)
     narration: NarrationSettings | None = None
+    # A house style id, or "" to follow the default (or parent project) style.
+    style: str | None = Field(default=None, max_length=64)
 
 
 def project_root() -> Path:
@@ -1581,7 +1590,12 @@ def list_projects():
 
 @app.post("/api/projects")
 def create_project(body: ProjectCreate):
-    return project_call(lambda: projects.create(project_root(), body.name, body.source))
+    check_style(body.style)
+    return project_call(
+        lambda: projects.create(
+            project_root(), body.name, body.source, style=body.style or None
+        )
+    )
 
 
 @app.post("/api/projects/import")
@@ -1719,7 +1733,7 @@ def update_project(project_id: str, body: ProjectUpdate, workspace: str | None =
         raise HTTPException(
             409, "Wait for the agent to finish before editing this project's files."
         )
-    return project_call(
+    result = project_call(
         lambda: projects.update(
             project_root(),
             project_id,
@@ -1727,8 +1741,12 @@ def update_project(project_id: str, body: ProjectUpdate, workspace: str | None =
             source=body.source,
             narration=body.narration.model_dump() if body.narration else None,
             workspace=workspace,
+            style=check_style(body.style),
         )
     )
+    if body.style is not None:
+        refresh_style_module(project_id, workspace)
+    return result
 
 
 @app.delete("/api/projects/{project_id}")
@@ -1998,6 +2016,93 @@ def watermark_logo_from_asset(
     except OSError as error:
         raise HTTPException(404, "Asset not found.") from error
     return store_watermark_logo(data, file.name)
+
+
+# ------------------------------------------------------------------ house styles
+
+
+class StyleCreate(BaseModel):
+    style: dict = Field(default_factory=dict)
+    # Duplicate this style (built-in or custom) and apply the changes on top.
+    source: str | None = Field(default=None, max_length=64)
+
+
+class StyleUpdate(BaseModel):
+    style: dict
+
+
+class StyleDefault(BaseModel):
+    id: str = Field(max_length=64)
+
+
+def style_call(action):
+    try:
+        with LOCK:
+            return action()
+    except KeyError as error:
+        raise HTTPException(404, "This style no longer exists.") from error
+    except styles.StyleError as error:
+        raise HTTPException(422, str(error)) from error
+    except OSError as error:
+        raise HTTPException(500, "Couldn't save the style library.") from error
+
+
+def check_style(style_id: str | None) -> str | None:
+    if style_id and not any(
+        style["id"] == style_id for style in styles.library(ROOT)["styles"]
+    ):
+        raise HTTPException(422, "Choose a style from the Styles list.")
+    return style_id
+
+
+def refresh_style_module(project_id: str, workspace: str | None = None):
+    try:
+        styles.write_module(
+            ROOT, projects.workspace_folder(project_root(), project_id, workspace)
+        )
+    except (KeyError, OSError):
+        logging.exception("Unable to write the project style module")
+
+
+@app.get("/api/styles")
+def list_styles():
+    return styles.library(ROOT)
+
+
+@app.post("/api/styles", status_code=201)
+def create_style(body: StyleCreate):
+    style = style_call(lambda: styles.create(ROOT, body.style, body.source))
+    return style
+
+
+@app.post("/api/styles/default")
+def default_style(body: StyleDefault):
+    result = style_call(lambda: styles.set_default(ROOT, body.id))
+    return result
+
+
+@app.post("/api/styles/{style_id}")
+def update_style(style_id: str, body: StyleUpdate):
+    style = style_call(lambda: styles.update(ROOT, style_id, body.style))
+    return style
+
+
+@app.delete("/api/styles/{style_id}")
+def delete_style(style_id: str):
+    result = style_call(lambda: styles.delete(ROOT, style_id))
+    return result
+
+
+@app.get("/api/fonts")
+def list_fonts(project: str | None = None, workspace: str | None = None):
+    """Installed font families, plus font files uploaded to a project's assets."""
+    uploaded = []
+    if project is not None:
+        folder = project_call(
+            lambda: projects.workspace_folder(project_root(), project, workspace)
+        )
+        uploaded = styles.project_fonts(folder)
+    return {"system": styles.system_fonts(), "project": uploaded}
 
 
 class NarrationDownload(BaseModel):

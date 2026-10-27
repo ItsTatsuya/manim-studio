@@ -124,6 +124,8 @@ export interface ProjectSummary {
   updated: string;
   folder: string;
   narration: NarrationSettings;
+  /** House style id; absent means the default (or parent project's) style. */
+  style?: string;
 }
 
 export interface Project extends ProjectSummary {
@@ -415,6 +417,47 @@ export interface UpdateState {
   can_cancel: boolean;
 }
 
+export interface HouseStyle {
+  id: string;
+  name: string;
+  description: string;
+  builtin: boolean;
+  fonts: {
+    heading: string;
+    body: string;
+    code: string;
+    math: "auto" | "typst" | "tex";
+  };
+  colors: Record<
+    | "background"
+    | "text"
+    | "muted"
+    | "primary"
+    | "secondary"
+    | "accent"
+    | "positive"
+    | "negative"
+    | "key_fill"
+    | "example_fill",
+    string
+  >;
+  sizes: { title: number; heading: number; body: number; small: number };
+  layout: { margin: number; title: "top-left" | "top-center" | "center" };
+  pacing: { run_time: number; wait: number; words_per_second: number };
+  voice: string;
+  rules: string;
+}
+
+export interface StyleLibrary {
+  default: string;
+  styles: HouseStyle[];
+}
+
+export interface FontList {
+  system: string[];
+  project: { family: string; path: string }[];
+}
+
 // ------------------------------------------------------------------ calls
 
 function workspacePath(path: string, workspace?: string | null) {
@@ -432,11 +475,18 @@ export const api = {
   projects: () => request<{ projects: ProjectSummary[] }>("/api/projects"),
   project: (id: string, workspace?: string | null) =>
     request<Project>(workspacePath(`/api/projects/${id}`, workspace)),
-  createProject: (name: string, source = "") =>
-    request<Project>("/api/projects", { body: { name, source } }),
+  createProject: (name: string, source = "", style?: string) =>
+    request<Project>("/api/projects", {
+      body: { name, source, ...(style ? { style } : {}) },
+    }),
   updateProject: (
     id: string,
-    changes: { name?: string; source?: string; narration?: NarrationSettings },
+    changes: {
+      name?: string;
+      source?: string;
+      narration?: NarrationSettings;
+      style?: string;
+    },
     workspace?: string | null,
   ) =>
     request<ProjectSummary>(workspacePath(`/api/projects/${id}`, workspace), {
@@ -611,6 +661,26 @@ export const api = {
     request(`/api/projects/${projectId}/threads/${threadId}/interrupt`, {
       method: "POST",
     }),
+
+  styles: () => request<StyleLibrary>("/api/styles"),
+  createStyle: (style: Partial<HouseStyle>, source?: string) =>
+    request<HouseStyle>("/api/styles", { body: { style, source } }),
+  updateStyle: (id: string, style: Partial<HouseStyle>) =>
+    request<HouseStyle>(`/api/styles/${encodeURIComponent(id)}`, {
+      body: { style },
+    }),
+  deleteStyle: (id: string) =>
+    request<StyleLibrary>(`/api/styles/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+  setDefaultStyle: (id: string) =>
+    request<StyleLibrary>("/api/styles/default", { body: { id } }),
+  fonts: (project?: string | null, workspace?: string | null) => {
+    const query = new URLSearchParams();
+    if (project) query.set("project", project);
+    if (project && workspace) query.set("workspace", workspace);
+    return request<FontList>(`/api/fonts?${query}`);
+  },
 
   updates: () => request<UpdateState>("/api/updates"),
   checkUpdates: () =>

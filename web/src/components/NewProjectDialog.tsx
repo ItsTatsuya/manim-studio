@@ -2,6 +2,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
 import { api } from "~/lib/api";
+import { styleOptions, useStyleLibrary } from "~/lib/styles";
 import { useStudio } from "~/state/studio";
 import { Button } from "./ui/button";
 import {
@@ -13,7 +14,9 @@ import {
   DialogPopup,
   DialogTitle,
 } from "./ui/dialog";
+import { Field } from "./ui/field";
 import { Input } from "./ui/input";
+import { Select } from "./ui/select";
 import { toast } from "./ui/toast";
 
 export function NewProjectDialog({
@@ -26,8 +29,13 @@ export function NewProjectDialog({
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [style, setStyle] = useState("");
+  const styles = useStyleLibrary();
   useEffect(() => {
-    if (open) setName("");
+    if (open) {
+      setName("");
+      setStyle("");
+    }
   }, [open]);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -39,6 +47,8 @@ export function NewProjectDialog({
             try {
               const project = await api.createProject(
                 name.trim() || "Untitled project",
+                "",
+                style || undefined,
               );
               await useStudio.getState().loadProjects();
               onOpenChange(false);
@@ -72,6 +82,16 @@ export function NewProjectDialog({
               autoFocus
               onChange={(event) => setName(event.target.value)}
             />
+            <Field label="House style" className="mt-3">
+              <Select
+                aria-label="House style"
+                className="w-full"
+                value={style}
+                disabled={!styles}
+                onChange={setStyle}
+                options={styleOptions(styles, "Default")}
+              />
+            </Field>
           </DialogBody>
           <DialogFooter>
             <Button variant="ghost" onClick={() => onOpenChange(false)}>

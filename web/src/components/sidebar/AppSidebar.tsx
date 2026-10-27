@@ -14,6 +14,7 @@ import {
   FilesIcon,
   InfoIcon,
   MicIcon,
+  PaletteIcon,
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
   PencilIcon,
@@ -85,6 +86,7 @@ const SETTINGS_PAGES = [
     icon: <SlidersHorizontalIcon />,
   },
   { to: "/settings/narration", label: "Narration", icon: <MicIcon /> },
+  { to: "/settings/styles", label: "Styles", icon: <PaletteIcon /> },
   { to: "/settings/about", label: "About & updates", icon: <InfoIcon /> },
 ] as const;
 

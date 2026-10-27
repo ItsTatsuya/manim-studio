@@ -52,6 +52,11 @@ starter scripts and manual rendering launchers have been retired.
 - Folder and ZIP imports use `/api/projects/import`, preserve nested assets and
   create a new project transactionally. Reject traversal, duplicate Windows paths,
   ZIP symlinks and packages over 512 MB / 2000 files; never install package requirements.
+- House styles (`styles.py`) live in `DATA_ROOT/.studio/styles.json`; built-ins are
+  read-only. Projects and videos store only a `style` id (absent: parent, then default).
+  Studio writes `studio_style.py` beside `script.py` before renders and agent turns,
+  only when its text changes so render cache keys stay stable, and adds a short style
+  guide to the agent instructions.
 - Narration (`narration.py`) uses Kokoro-82M through `kokoro-onnx` and ONNX Runtime
   on the CPU; do not add PyTorch. Model files download on demand into
   `DATA_ROOT/.studio/models/kokoro` from pinned release URLs with SHA256 checks.

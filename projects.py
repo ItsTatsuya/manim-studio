@@ -99,6 +99,12 @@ def clean_narration(value) -> dict:
     return result
 
 
+def _style_id(value) -> bool:
+    return isinstance(value, str) and bool(
+        re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", value)
+    )
+
+
 def _read_metadata(folder: Path) -> dict | None:
     try:
         data = json.loads((folder / PROJECT_FILE).read_text(encoding="utf-8"))
@@ -129,6 +135,8 @@ def _read_metadata(folder: Path) -> dict | None:
         "watermark": data["watermark"]
         if isinstance(data.get("watermark"), dict)
         else None,
+        # House style id (styles.py); absent means the default style.
+        **({"style": data["style"]} if _style_id(data.get("style")) else {}),
     }
 
 
@@ -217,6 +225,8 @@ def read(root: Path, project_id: str, workspace: str | None = None) -> dict:
 
 def _save(path: Path, metadata: dict):
     stored = {key: metadata[key] for key in ("id", "name", "created", "updated")}
+    if _style_id(metadata.get("style")):
+        stored["style"] = metadata["style"]
     stored["narration"] = {
         key: value for key, value in metadata["narration"].items() if key != "text"
     }
@@ -226,7 +236,7 @@ def _save(path: Path, metadata: dict):
     _write_atomic(path / PROJECT_FILE, json.dumps(stored, indent=2))
 
 
-def create(root: Path, name: str, source: str = "", narration=None) -> dict:
+def create(root: Path, name: str, source: str = "", narration=None, style=None) -> dict:
     name = (name or "").strip()[:100] or "Untitled project"
     if len(source) > MAX_SOURCE:
         raise ProjectError("Scripts must be smaller than 500 KB.")
@@ -254,6 +264,8 @@ def create(root: Path, name: str, source: str = "", narration=None) -> dict:
             "narration": clean_narration(narration),
             "folder": path.name,
         }
+        if _style_id(style):
+            metadata["style"] = style
         _write_atomic(path / SCRIPT_FILE, source)
         _save(path, metadata)
     return {**metadata, "source": source}
@@ -267,11 +279,18 @@ def update(
     source=None,
     narration=None,
     workspace=None,
+    style=None,
 ):
+    """``style`` is a style id, or "" to follow the default (or parent) style."""
     if workspace is not None:
         path = workspace_folder(root, project_id, workspace)
         video = update(
-            path.parent, workspace, name=name, source=source, narration=narration
+            path.parent,
+            workspace,
+            name=name,
+            source=source,
+            narration=narration,
+            style=style,
         )
         return {
             **video,
@@ -286,6 +305,12 @@ def update(
             metadata["name"] = name.strip()[:100] or metadata["name"]
         if narration is not None:
             metadata["narration"] = clean_narration(narration)
+        if style is not None:
+            if style and not _style_id(style):
+                raise ProjectError("Choose a style from the Styles list.")
+            metadata.pop("style", None)
+            if style:
+                metadata["style"] = style
         if source is not None:
             if len(source) > MAX_SOURCE:
                 raise ProjectError("Scripts must be smaller than 500 KB.")
@@ -663,7 +688,12 @@ def import_package(root: Path, files: list, name="Imported project") -> dict:
     with tempfile.TemporaryDirectory(prefix=".import-", dir=root) as temporary:
         staging = Path(temporary)
         project = create(
-            staging, str(manifest.get("name") or name), sources[entrypoint], settings
+            staging,
+            str(manifest.get("name") or name),
+            sources[entrypoint],
+            settings,
+            # Keep a house style id; unknown ids fall back to the default style.
+            style=manifest.get("style"),
         )
         target = staging / project["folder"]
         for path, (stream, _) in entries.items():
