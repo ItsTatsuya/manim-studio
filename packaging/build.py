@@ -224,6 +224,7 @@ def main():
         "parallel.py",
         "projects.py",
         "agents.py",
+        "agent_updates.py",
         "agent_check.py",
         "events.py",
         "processes.py",
