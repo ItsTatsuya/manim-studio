@@ -272,3 +272,73 @@ class PdfVideoTests(unittest.TestCase):
                 self.upload(data, name)
             self.assertEqual(error.exception.status_code, 422)
         self.assertEqual(projects.list_projects(studio.project_root()), [])
+
+
+RICH_LOG = """Manim Community v0.21.0
+
+Animation 0: Create(Circle):  40%|####      | 6/15 [00:00<00:00, 50it/s]
+[10/27/26 14:40:22] INFO     Animation 0 : Partial     scene_file_writer.py:192
+                             movie file written in
+                             'C:\\media\\partial_movie_files\\Intro\\1.mp4'
+╭──────────────────── Traceback (most recent call last) ────────────────────╮
+│ C:\\app\\.venv\\Lib\\site-packages\\manim\\cli\\render\\commands.py:125 in render │
+│                                                                             │
+│   124 │   │   │   │   │   scene = SceneClass()                              │
+│ ❱ 125 │   │   │   │   │   scene.render()                                    │
+│                                                                             │
+│ C:\\data\\projects\\Demo\\script.py:8 in construct                        │
+│                                                                             │
+│    7 │   │   c = Circle()                                                   │
+│ ❱  8 │   │   self.play(Transform(c, 5))                                     │
+│                                                                             │
+│ C:\\app\\.venv\\Lib\\site-packages\\manim\\scene\\scene.py:1207 in play       │
+│                                                                             │
+│   1206 │   │   start_time = self.time                                      │
+│ ❱ 1207 │   │   self.renderer.play(self, *args, **kwargs)                    │
+│                                                                             │
+│ C:\\app\\.venv\\Lib\\sit                                                  │
+│ e-packages\\manim\\animation\\transform.py:205 in begin                     │
+│                                                                             │
+│   204 │   │   self.target_mobject = self.create_target()                   │
+│ ❱ 205 │   │   self.target_copy = self.target_mobject.copy()                │
+│   206 │   │   # Note, this potentially changes the structure               │
+╰─────────────────────────────────────────────────────────────────────────────╯
+AttributeError: 'int' object has no attribute 'copy'
+"""
+
+
+class DiagnosticsTests(unittest.TestCase):
+    def test_render_logs_keep_the_project_frames_and_the_error(self):
+        from video_workflow import compact_diagnostics
+
+        text = compact_diagnostics("Render error: Manim failed\n" + RICH_LOG * 3)
+        self.assertIn("script.py:8 in construct", text)
+        self.assertIn("self.play(Transform(c, 5))", text)
+        self.assertIn("transform.py:205 in begin", text)  # The frame that raised.
+        self.assertIn("self.target_mobject.copy()", text)
+        self.assertIn("AttributeError: 'int' object has no attribute 'copy'", text)
+        for noise in ("commands.py", "scene.py:1207", "Partial", "40%", "# Note"):
+            self.assertNotIn(noise, text)
+        self.assertIn("library frame(s) omitted", text)
+        self.assertLess(len(text), len(RICH_LOG))
+
+    def test_plain_tracebacks_and_long_logs_are_capped(self):
+        from video_workflow import DIAGNOSTIC_LIMIT, compact_diagnostics
+
+        plain = (
+            "Traceback (most recent call last):\n"
+            '  File "C:\\data\\Demo\\script.py", line 4, in construct\n'
+            "    self.play(Write(MathTex('x')))\n"
+            '  File "C:\\py\\Lib\\site-packages\\manim\\tex.py", line 9, in run\n'
+            "    raise ValueError('latex failed')\n"
+            "ValueError: latex failed\n"
+        )
+        text = compact_diagnostics(plain)
+        self.assertIn('script.py", line 4', text)
+        self.assertIn("raise ValueError('latex failed')", text)
+        self.assertIn("ValueError: latex failed", text)
+        long = "\n".join(f"line {number} of output" for number in range(5000))
+        capped = compact_diagnostics("Render error: first\n" + long)
+        self.assertLessEqual(len(capped), DIAGNOSTIC_LIMIT + 40)
+        self.assertTrue(capped.startswith("Render error: first"))
+        self.assertTrue(capped.endswith("line 4999 of output"))

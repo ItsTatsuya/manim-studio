@@ -2196,6 +2196,79 @@ class WorkspaceTests(unittest.TestCase):
         threads = api(p, self.url, f"/api/projects/{value['id']}/threads")["threads"]
         self.assertEqual(len(threads), 2)
 
+    def test_plan_mode_storyboard_review_edit_and_approve(self):
+        p = self.page
+        value = project(p, self.url, "Lesson plan")
+        p.get_by_role("combobox", name=re.compile("^Chat mode")).click()
+        p.get_by_role("option", name=re.compile("^Plan")).click()
+        p.get_by_role("textbox", name="Message the agent").fill(
+            "Plan video 1.01 on solving two linear equations"
+        )
+        p.get_by_role("button", name="Send", exact=True).click()
+        expect(p).to_have_url(re.compile("thread="))
+        tid = p.url.split("thread=")[-1]
+        path = f"/api/projects/{value['id']}/threads/{tid}"
+        thread = wait_api(
+            p, self.url, path, lambda thread: thread["status"] == "completed"
+        )
+        self.assertEqual(thread["turns"][-1]["mode"], "plan")
+        self.assertEqual(thread["turns"][-1]["changed"], ["storyboard.md"])
+        log = p.get_by_role("log", name="Conversation")
+        expect(log.get_by_text("Plan", exact=True)).to_be_visible()
+        log.get_by_role("button", name="storyboard.md").click()
+        panel = p.get_by_role("tabpanel", name="Storyboard")
+        expect(
+            panel.get_by_role("heading", name=re.compile("Two Equations, Two Lines"))
+        ).to_be_visible()
+        expect(panel.get_by_text("Draft", exact=True)).to_be_visible()
+        # No render was started for the plan.
+        self.assertFalse(
+            [
+                r
+                for r in api(p, self.url, "/api/renders")
+                if r.get("project") == value["id"]
+            ]
+        )
+
+        panel.get_by_role("button", name="Edit").click()
+        board = panel.get_by_role("textbox", name="Storyboard markdown")
+        board.fill(board.input_value() + "\n### Extra section\nAdded by hand.\n")
+        panel.get_by_role("button", name="Save", exact=True).click()
+        expect(panel.get_by_role("heading", name="Extra section")).to_be_visible()
+        stored = api(p, self.url, f"/api/projects/{value['id']}/storyboard")
+        self.assertIn("Added by hand.", stored["text"])
+
+        panel.get_by_role("textbox", name="Storyboard feedback").fill(
+            "Add a pause and think question"
+        )
+        panel.get_by_role("button", name="Revise with agent").click()
+        wait_api(
+            p,
+            self.url,
+            path,
+            lambda thread: (
+                len(thread["turns"]) == 2 and thread["status"] == "completed"
+            ),
+        )
+        expect(panel.get_by_text(re.compile("Add a pause and think"))).to_be_visible()
+
+        panel.get_by_role("button", name="Approve & generate video").click()
+        thread = wait_api(
+            p,
+            self.url,
+            path,
+            lambda thread: (
+                len(thread["turns"]) == 3 and thread["status"] == "completed"
+            ),
+        )
+        self.assertEqual(thread["turns"][-1]["mode"], "build")
+        expect(panel.get_by_text("Approved", exact=True)).to_be_visible()
+        doc = api(p, self.url, f"/api/projects/{value['id']}")
+        self.assertIn("class Intro", doc["source"])
+        expect(
+            p.get_by_role("combobox", name=re.compile("^Chat mode"))
+        ).to_contain_text("Build")
+
     def test_update_progress_cancel_confirmation_and_failed_restart(self):
         p = self.page
         state = {

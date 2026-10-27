@@ -7,6 +7,7 @@ const pages = [
   { to: "/settings/providers", label: "Providers" },
   { to: "/settings/general", label: "General" },
   { to: "/settings/narration", label: "Narration" },
+  { to: "/settings/styles", label: "Styles" },
   { to: "/settings/about", label: "About & updates" },
 ] as const;
 

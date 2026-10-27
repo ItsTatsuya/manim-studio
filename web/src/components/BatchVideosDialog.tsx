@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { api } from "~/lib/api";
+import { styleOptions, useStyleLibrary } from "~/lib/styles";
 import { useStudio } from "~/state/studio";
 import {
   ModelPicker,
@@ -27,6 +28,7 @@ import {
 } from "./ui/dialog";
 import { Input, Spinner } from "./ui/input";
 import { Select } from "./ui/select";
+import { Switch } from "./ui/switch";
 import { Field } from "./ui/field";
 import { cn } from "~/lib/utils";
 
@@ -57,6 +59,10 @@ export function BatchVideosDialog({
   const [existingFolder, setExistingFolder] = useState("");
   const [sharedFolder, setSharedFolder] = useState<string | null>(null);
   const [inputError, setInputError] = useState("");
+  const [style, setStyle] = useState("");
+  const styles = useStyleLibrary();
+  // Plan first: each chat writes a storyboard for review instead of a video.
+  const [planFirst, setPlanFirst] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const projects = useStudio((state) => state.projects);
   const folderSupport = useStudio(
@@ -80,7 +86,11 @@ export function BatchVideosDialog({
     let parent = destination === "existing" ? existingFolder : sharedFolder;
     if (destination === "same" && !parent) {
       try {
-        const project = await api.createProject(folderName.trim());
+        const project = await api.createProject(
+          folderName.trim(),
+          "",
+          style || undefined,
+        );
         parent = project.id;
         setSharedFolder(parent);
         await useStudio.getState().loadProjects();
@@ -104,6 +114,9 @@ export function BatchVideosDialog({
           );
           projectId = project.id;
           workspace = project.workspace;
+          // Videos in a new shared folder follow its style; others choose it here.
+          if (style && (destination !== "same" || !workspace))
+            await api.updateProject(projectId, { style }, workspace);
           update(item.file, { project: projectId, workspace });
           await useStudio.getState().loadProjects();
         }
@@ -121,9 +134,12 @@ export function BatchVideosDialog({
           details: { ...state.details, [thread.id]: thread },
         }));
         const turn = await api.sendTurn(projectId, thread.id, {
-          text: "Create the video from the supplied script. Read assets/video-script.txt (the extracted PDF text) and consult assets/video-script.pdf for layout if needed. Follow its scenes, timing and narration. Write script.py and narration.txt, and check the scene before finishing. Keep the supplied narration faithful to the script.",
+          text: planFirst
+            ? "Plan this video from the supplied script. Read assets/video-script.txt (the extracted PDF text) and consult assets/video-script.pdf for layout if needed. Write the lesson storyboard in storyboard.md, keeping the script's content, examples and order."
+            : "Create the video from the supplied script. Read assets/video-script.txt (the extracted PDF text) and consult assets/video-script.pdf for layout if needed. Follow its scenes, timing and narration. Write script.py and narration.txt, and check the scene before finishing. Keep the supplied narration faithful to the script.",
           context:
             'Reference files for this video:\n"assets/video-script.txt"\n"assets/video-script.pdf"',
+          mode: planFirst ? "plan" : "build",
         });
         useStudio.getState().handleEvent({
           type: "thread.turn",
@@ -131,7 +147,10 @@ export function BatchVideosDialog({
           thread: thread.id,
           turn,
         });
-        update(item.file, { started: true, status: "Chat started" });
+        update(item.file, {
+          started: true,
+          status: planFirst ? "Storyboard started" : "Chat started",
+        });
       } catch (error) {
         update(item.file, {
           status: "Needs attention",
@@ -148,7 +167,10 @@ export function BatchVideosDialog({
         if (!busy) onOpenChange(value);
       }}
     >
-      <DialogPopup className="max-w-[36rem]" showClose={!busy}>
+      <DialogPopup
+        className="max-h-[calc(100dvh-2rem)] max-w-[36rem]"
+        showClose={!busy}
+      >
         <DialogHeader className="px-6 pt-6 pb-5">
           <DialogTitle>Videos from PDFs</DialogTitle>
           <DialogDescription>
@@ -255,6 +277,20 @@ export function BatchVideosDialog({
               )}
             </div>
           </fieldset>
+          <Field label="House style">
+            <Select
+              aria-label="House style"
+              className="w-full text-foreground"
+              value={style}
+              disabled={busy}
+              onChange={setStyle}
+              options={styleOptions(
+                styles,
+                destination === "existing" ? "Project style" : "Default",
+                destination !== "existing",
+              )}
+            />
+          </Field>
           <div className="space-y-2">
             <Button
               variant="outline"
@@ -365,10 +401,23 @@ export function BatchVideosDialog({
             <span className="text-sm font-medium">Coding assistant</span>
             <ModelPicker value={choice} onChange={setChoice} disabled={busy} />
           </div>
+          <div className="flex items-center justify-between gap-3 px-1">
+            <span className="text-sm font-medium">
+              Plan first, review before generating
+            </span>
+            <Switch
+              aria-label="Plan first, review before generating"
+              checked={planFirst}
+              disabled={busy}
+              onCheckedChange={setPlanFirst}
+            />
+          </div>
           <p className="text-xs text-muted-foreground">
-            {autoRender
-              ? "Finished code is added to the render queue automatically. Videos render one at a time."
-              : "Automatic rendering is off. Open each video and click Render to add it to the queue."}
+            {planFirst
+              ? "Each chat writes a lesson storyboard. Nothing renders until you approve it in the Storyboard tab."
+              : autoRender
+                ? "Finished code is added to the render queue automatically. Videos render one at a time."
+                : "Automatic rendering is off. Open each video and click Render to add it to the queue."}
           </p>
           {!readiness.ready && (
             <p className="text-xs text-muted-foreground">
@@ -399,7 +448,9 @@ export function BatchVideosDialog({
             {busy
               ? "Starting videos…"
               : pending.length
-                ? `Create and start ${pending.length} video${pending.length === 1 ? "" : "s"}`
+                ? planFirst
+                  ? `Plan ${pending.length} video${pending.length === 1 ? "" : "s"}`
+                  : `Create and start ${pending.length} video${pending.length === 1 ? "" : "s"}`
                 : "Create videos"}
           </Button>
         </DialogFooter>

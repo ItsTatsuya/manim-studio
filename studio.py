@@ -55,14 +55,20 @@ from processes import (
     stop_process,
 )
 import agents
+import agent_updates
 import file_picker
 from events import BUS, publish
 import narration
 import usage
 import projects
+import watermark
 import scenes
+import styles
+import storyboard
 from scenes import format_source
 from video_workflow import VideoProblem, VideoWorkflows
+
+WatermarkSettings = watermark.Settings
 
 ROOT = DATA_ROOT
 WEB = APP_ROOT / "studio_ui"
@@ -93,7 +99,9 @@ QUEUE_SEQ = itertools.count(1)
 PROCESS: subprocess.Popen | None = None
 WORKER: threading.Thread | None = None
 ANSI = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
-STUDIO_MARKER = re.compile(r"^STUDIO_(?:STAGE|WARNING|NARRATION_ERROR)\|")
+STUDIO_MARKER = re.compile(
+    r"^STUDIO_(?:STAGE|WARNING|NARRATION_ERROR|WATERMARK_ERROR)\|"
+)
 UPDATES = UpdateManager(
     APP_VERSION,
     "portable" if PORTABLE else "installed" if STANDALONE else "source",
@@ -109,6 +117,8 @@ AGENTS = agents.AgentManager(
     latex=lambda: shutil.which("latex") and shutil.which("dvisvgm"),
 )
 NARRATION = narration.ModelDownloader(DATA_ROOT)
+# desktop.py turns on the automatic check; tests and imports stay manual.
+AGENT_UPDATES = agent_updates.AgentUpdater(lambda: AGENTS, automatic=False)
 MAX_ASSET_BYTES = 2 * 1024**3
 
 
@@ -138,6 +148,8 @@ class RenderRequest(Script):
     scene: str = Field(min_length=1, max_length=200)
     project: str | None = Field(default=None, max_length=32)
     narration: NarrationSettings | None = None
+    # Explicit watermark; when omitted the project's (or global) settings apply.
+    watermark: WatermarkSettings | None = None
     quality: str = "preview"
     name: str = Field(default="Untitled animation", max_length=100)
     width: int | None = Field(default=None, strict=True, gt=0, le=MAX_CAIRO_DIMENSION)
@@ -438,6 +450,8 @@ async def lifespan(app):
     VIDEOS.closed = False
     reset_queue()
     BUS.open()
+    AGENT_UPDATES.load()
+    AGENT_UPDATES.start()
     watcher_stop = threading.Event()
     watcher = threading.Thread(target=watch_renders, args=(watcher_stop,), daemon=True)
     watcher.start()
@@ -447,6 +461,7 @@ async def lifespan(app):
         watcher_stop.set()
         VIDEOS.close()
         BUS.close()
+        await asyncio.to_thread(AGENT_UPDATES.shutdown)
         await asyncio.to_thread(AGENTS.shutdown)
         await asyncio.to_thread(shutdown_render)
         await asyncio.to_thread(UPDATES.shutdown)
@@ -751,7 +766,14 @@ def video_cache_key(job: dict, source: str, working: Path) -> str:
                     if name != "__pycache__" and not name.startswith(".")
                 )
                 for name in sorted(names):
-                    if name in {"script.py", "narration.txt", "project.json"}:
+                    # The storyboard is a plan for review; it never changes frames.
+                    if name in {
+                        "script.py",
+                        "narration.txt",
+                        "project.json",
+                        storyboard.FILE,
+                        storyboard.STATE,
+                    }:
                         continue
                     path = Path(current) / name
                     info = path.stat()
@@ -797,6 +819,11 @@ def render_worker(job_id: str, source: str):
                 ROOT / "projects", job["project"], job.get("workspace")
             )
             (working / projects.ASSETS).mkdir(exist_ok=True)
+            try:
+                # Refresh the house-style helper before the cache key reads it.
+                styles.write_module(ROOT, working)
+            except OSError:
+                logging.exception("Unable to write the project style module")
         config = ROOT / "manim.cfg"
         render_options = (
             ["--config_file", str(config)]
@@ -846,6 +873,7 @@ def render_worker(job_id: str, source: str):
         )
         env.pop("MANIM_STUDIO_CUSTOM_FPS", None)
         env.pop("MANIM_STUDIO_NARRATION", None)
+        env.pop("MANIM_STUDIO_WATERMARK", None)
         env.pop("MANIM_STUDIO_PARALLEL", None)
         env.pop("MANIM_STUDIO_HELPER", None)
         # Long scenes are split across helper processes (parallel.py); setting
@@ -877,6 +905,16 @@ def render_worker(job_id: str, source: str):
                 encoding="utf-8",
             )
             env["MANIM_STUDIO_NARRATION"] = str(spec)
+        if job.get("_watermark"):
+            # Applied after narration, so the cached animation stays unmarked.
+            spec = directory / "watermark.json"
+            spec.write_text(
+                json.dumps(
+                    {**job["_watermark"], "media_dir": str(directory / "media")}
+                ),
+                encoding="utf-8",
+            )
+            env["MANIM_STUDIO_WATERMARK"] = str(spec)
         with LOCK:
             if job.get("_cancel"):
                 job.update(status="cancelled", stage="Render cancelled")
@@ -935,6 +973,8 @@ def render_worker(job_id: str, source: str):
                         )
                     elif clean.startswith("STUDIO_NARRATION_ERROR|"):
                         job["_narration_error"] = clean.split("|", 1)[1][:1000]
+                    elif clean.startswith("STUDIO_WATERMARK_ERROR|"):
+                        job["_watermark_error"] = clean.split("|", 1)[1][:1000]
                     elif match:
                         job["stage"] = f"Animation {int(match[1]) + 1} · {match[2]}%"
                     elif "Combining" in clean or "Writing" in clean:
@@ -947,6 +987,8 @@ def render_worker(job_id: str, source: str):
                 return
         if result and job.get("_narration_error"):
             raise RuntimeError(job["_narration_error"])
+        if result and job.get("_watermark_error"):
+            raise RuntimeError(job["_watermark_error"])
         if result:
             job["repairable"] = True
             raise RuntimeError(
@@ -1229,6 +1271,25 @@ def start_next_render():
     publish_queue()
 
 
+def render_watermark(body: RenderRequest) -> dict | None:
+    """Snapshot the watermark a render will use when it is requested."""
+    if body.watermark is not None:
+        settings = body.watermark.model_dump()
+    elif body.project is not None:
+        own, parent = project_call(
+            lambda: projects.watermark_settings(
+                project_root(), body.project, body.workspace
+            )
+        )
+        settings, _ = watermark.effective(ROOT, own, parent)
+    else:
+        settings = watermark.load_default(ROOT)
+    try:
+        return watermark.render_spec(ROOT, settings)
+    except watermark.WatermarkError as error:
+        raise HTTPException(422, str(error)) from error
+
+
 @app.post("/api/render", status_code=202)
 def start_render(body: RenderRequest):
     global ACTIVE, WORKER
@@ -1272,6 +1333,7 @@ def start_render(body: RenderRequest):
                     "Download the narration voice in the Narration tab, or turn narration off.",
                 )
             narration_job = body.narration.model_dump(exclude={"enabled"})
+    watermark_job = render_watermark(body)
     with LOCK:
         if UPDATE_INSTALLING:
             raise HTTPException(
@@ -1314,6 +1376,8 @@ def start_render(body: RenderRequest):
                 job["workspace"] = body.workspace
         if narration_job is not None:
             job.update(narrated=True, _narration=narration_job)
+        if watermark_job is not None:
+            job.update(watermarked=True, _watermark=watermark_job)
         if body.width is not None or body.fps is not None:
             preset_width, preset_height = QUALITY_DIMENSIONS[body.quality]
             job.update(
@@ -1501,12 +1565,15 @@ def open_folder(folder: str):
 class ProjectCreate(BaseModel):
     name: str = Field(default="Untitled project", max_length=100)
     source: str = Field(default="", max_length=500_000)
+    style: str | None = Field(default=None, max_length=64)
 
 
 class ProjectUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=100)
     source: str | None = Field(default=None, max_length=500_000)
     narration: NarrationSettings | None = None
+    # A house style id, or "" to follow the default (or parent project) style.
+    style: str | None = Field(default=None, max_length=64)
 
 
 def project_root() -> Path:
@@ -1531,7 +1598,12 @@ def list_projects():
 
 @app.post("/api/projects")
 def create_project(body: ProjectCreate):
-    return project_call(lambda: projects.create(project_root(), body.name, body.source))
+    check_style(body.style)
+    return project_call(
+        lambda: projects.create(
+            project_root(), body.name, body.source, style=body.style or None
+        )
+    )
 
 
 @app.post("/api/projects/import")
@@ -1669,7 +1741,7 @@ def update_project(project_id: str, body: ProjectUpdate, workspace: str | None =
         raise HTTPException(
             409, "Wait for the agent to finish before editing this project's files."
         )
-    return project_call(
+    result = project_call(
         lambda: projects.update(
             project_root(),
             project_id,
@@ -1677,8 +1749,12 @@ def update_project(project_id: str, body: ProjectUpdate, workspace: str | None =
             source=body.source,
             narration=body.narration.model_dump() if body.narration else None,
             workspace=workspace,
+            style=check_style(body.style),
         )
     )
+    if body.style is not None:
+        refresh_style_module(project_id, workspace)
+    return result
 
 
 @app.delete("/api/projects/{project_id}")
@@ -1831,6 +1907,212 @@ def delete_project_asset(project_id: str, path: str, workspace: str | None = Non
     return {"ok": True}
 
 
+# ------------------------------------------------------------------ watermark
+
+
+class WatermarkUpdate(BaseModel):
+    # None removes the override, so the project (or the default) applies again.
+    settings: WatermarkSettings | None = None
+
+
+class WatermarkAsset(BaseModel):
+    path: str = Field(min_length=1, max_length=1000)
+
+
+def require_logo(settings: WatermarkSettings | None):
+    if settings is not None and settings.type == "image":
+        if not watermark.logo_path(ROOT, settings.logo).is_file():
+            raise HTTPException(
+                422, "The watermark logo is missing. Upload or choose it again."
+            )
+
+
+def store_watermark_logo(data: bytes, filename: str) -> dict:
+    try:
+        return watermark.store_logo(ROOT, data, filename)
+    except watermark.WatermarkError as error:
+        raise HTTPException(422, str(error)) from error
+    except OSError as error:
+        raise HTTPException(
+            507, "Couldn’t save the logo. Check free disk space, then retry."
+        ) from error
+
+
+@app.get("/api/watermark")
+def watermark_default():
+    return {"settings": watermark.load_default(ROOT)}
+
+
+@app.post("/api/watermark")
+def save_watermark_default(body: WatermarkSettings):
+    require_logo(body)
+    try:
+        return {"settings": watermark.save_default(ROOT, body.model_dump())}
+    except OSError as error:
+        raise HTTPException(
+            507, "Couldn’t save the watermark. Check folder permissions, then retry."
+        ) from error
+
+
+@app.post("/api/watermark/logos")
+async def upload_watermark_logo(request: Request):
+    filename = unquote(request.headers.get("X-Filename", "")).strip()
+    if Path(filename).suffix.lower() not in watermark.LOGO_SUFFIXES:
+        raise HTTPException(422, "Choose a PNG, JPG, WebP, GIF, BMP or SVG logo.")
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > watermark.MAX_LOGO_BYTES:
+            raise HTTPException(413, "Logos must be smaller than 10 MB.")
+    return await run_in_threadpool(store_watermark_logo, bytes(data), filename)
+
+
+@app.get("/api/watermark/logos/{logo}")
+def read_watermark_logo(logo: str):
+    try:
+        path = watermark.logo_path(ROOT, logo)
+    except KeyError as error:
+        raise HTTPException(404, "Logo not found.") from error
+    if not path.is_file():
+        raise HTTPException(404, "Logo not found.")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.get("/api/projects/{project_id}/watermark")
+def project_watermark(project_id: str, workspace: str | None = None):
+    own, parent = project_call(
+        lambda: projects.watermark_settings(project_root(), project_id, workspace)
+    )
+    settings, source = watermark.effective(ROOT, own, parent)
+    inherited, inherited_from = watermark.effective(ROOT, None, parent)
+    return {
+        "own": watermark.clean(own),
+        "settings": settings,
+        "source": source,
+        "inherited": inherited,
+        "inherited_from": inherited_from,
+    }
+
+
+@app.post("/api/projects/{project_id}/watermark")
+def save_project_watermark(
+    project_id: str, body: WatermarkUpdate, workspace: str | None = None
+):
+    require_logo(body.settings)
+    project_call(
+        lambda: projects.set_watermark(
+            project_root(),
+            project_id,
+            workspace,
+            body.settings.model_dump() if body.settings is not None else None,
+        )
+    )
+    return project_watermark(project_id, workspace)
+
+
+@app.post("/api/projects/{project_id}/watermark/logo")
+def watermark_logo_from_asset(
+    project_id: str, body: WatermarkAsset, workspace: str | None = None
+):
+    file = project_asset(project_id, body.path, workspace)
+    if file.suffix.lower() not in watermark.LOGO_SUFFIXES:
+        raise HTTPException(422, "Choose a PNG, JPG, WebP, GIF, BMP or SVG logo.")
+    try:
+        if file.stat().st_size > watermark.MAX_LOGO_BYTES:
+            raise HTTPException(413, "Logos must be smaller than 10 MB.")
+        data = file.read_bytes()
+    except OSError as error:
+        raise HTTPException(404, "Asset not found.") from error
+    return store_watermark_logo(data, file.name)
+
+
+# ------------------------------------------------------------------ house styles
+
+
+class StyleCreate(BaseModel):
+    style: dict = Field(default_factory=dict)
+    # Duplicate this style (built-in or custom) and apply the changes on top.
+    source: str | None = Field(default=None, max_length=64)
+
+
+class StyleUpdate(BaseModel):
+    style: dict
+
+
+class StyleDefault(BaseModel):
+    id: str = Field(max_length=64)
+
+
+def style_call(action):
+    # styles.py serializes its own library writes; the render LOCK is not needed.
+    try:
+        return action()
+    except KeyError as error:
+        raise HTTPException(404, "This style no longer exists.") from error
+    except styles.StyleError as error:
+        raise HTTPException(422, str(error)) from error
+    except OSError as error:
+        raise HTTPException(500, "Couldn't save the style library.") from error
+
+
+def check_style(style_id: str | None) -> str | None:
+    if style_id and not any(
+        style["id"] == style_id for style in styles.library(ROOT)["styles"]
+    ):
+        raise HTTPException(422, "Choose a style from the Styles list.")
+    return style_id
+
+
+def refresh_style_module(project_id: str, workspace: str | None = None):
+    try:
+        styles.write_module(
+            ROOT, projects.workspace_folder(project_root(), project_id, workspace)
+        )
+    except (KeyError, OSError):
+        logging.exception("Unable to write the project style module")
+
+
+@app.get("/api/styles")
+def list_styles():
+    return styles.library(ROOT)
+
+
+@app.post("/api/styles", status_code=201)
+def create_style(body: StyleCreate):
+    style = style_call(lambda: styles.create(ROOT, body.style, body.source))
+    return style
+
+
+@app.post("/api/styles/default")
+def default_style(body: StyleDefault):
+    result = style_call(lambda: styles.set_default(ROOT, body.id))
+    return result
+
+
+@app.post("/api/styles/{style_id}")
+def update_style(style_id: str, body: StyleUpdate):
+    style = style_call(lambda: styles.update(ROOT, style_id, body.style))
+    return style
+
+
+@app.delete("/api/styles/{style_id}")
+def delete_style(style_id: str):
+    result = style_call(lambda: styles.delete(ROOT, style_id))
+    return result
+
+
+@app.get("/api/fonts")
+def list_fonts(project: str | None = None, workspace: str | None = None):
+    """Installed font families, plus font files uploaded to a project's assets."""
+    uploaded = []
+    if project is not None:
+        folder = project_call(
+            lambda: projects.workspace_folder(project_root(), project, workspace)
+        )
+        uploaded = styles.project_fonts(folder)
+    return {"system": styles.system_fonts(), "project": uploaded}
+
+
 class NarrationDownload(BaseModel):
     quality: str = "standard"
 
@@ -1926,6 +2208,7 @@ class AgentSettings(BaseModel):
     auto_render: bool | None = None
     queue_start: str | None = Field(default=None, pattern="^(auto|manual)$")
     queue_on_error: str | None = Field(default=None, pattern="^(fix|skip|pause)$")
+    auto_update_agents: bool | None = None
 
 
 class ThreadCreate(BaseModel):
@@ -1948,6 +2231,7 @@ class TurnRequest(BaseModel):
     context: str = Field(default="", max_length=agents.MAX_PROMPT)
     model: str | None = Field(default=None, max_length=100)
     effort: str | None = Field(default=None, max_length=20)
+    mode: str = Field(default="build", pattern="^(build|plan)$")
 
 
 class VideoRequest(RenderRequest):
@@ -1999,7 +2283,7 @@ def prepare_video(project: dict, options: dict, automatic: bool):
     return {
         **{
             key: options[key]
-            for key in ("quality", "width", "height", "fps")
+            for key in ("quality", "width", "height", "fps", "watermark")
             if options.get(key) is not None
         },
         "source": analysis["source"],
@@ -2071,7 +2355,7 @@ def start_video(project_id: str, body: VideoRequest):
             diagnostics=diagnostics,
             options={
                 **body.model_dump(
-                    include={"scene", "quality", "width", "height", "fps"},
+                    include={"scene", "quality", "width", "height", "fps", "watermark"},
                     exclude_none=True,
                 ),
                 "narration": body.narration is None or body.narration.enabled,
@@ -2128,7 +2412,32 @@ def update_agent_settings(body: AgentSettings):
         # Switching to automatic start releases anything that was being held.
         start_next_render()
         publish_queue()
+    if body.auto_update_agents is not None:
+        AGENT_UPDATES.wake()
+        AGENT_UPDATES.emit()
     return result
+
+
+def agent_update_call(action):
+    try:
+        return action()
+    except agent_updates.AgentUpdateError as error:
+        raise HTTPException(409, str(error)) from error
+
+
+@app.get("/api/agents/updates")
+def agent_update_status():
+    return AGENT_UPDATES.snapshot()
+
+
+@app.post("/api/agents/updates/check")
+def check_agent_updates():
+    return agent_update_call(AGENT_UPDATES.check_now)
+
+
+@app.post("/api/agents/{provider}/update")
+def update_agent_cli(provider: str):
+    return agent_update_call(lambda: AGENT_UPDATES.update_now(provider))
 
 
 @app.post("/api/agents/{provider}/login")
@@ -2217,6 +2526,7 @@ def start_turn(project_id: str, thread_id: str, body: TurnRequest):
             model=body.model,
             effort=body.effort,
             context=body.context,
+            mode=body.mode,
         )
     )
 
@@ -2224,6 +2534,68 @@ def start_turn(project_id: str, thread_id: str, body: TurnRequest):
 @app.post("/api/projects/{project_id}/threads/{thread_id}/interrupt")
 def interrupt_turn(project_id: str, thread_id: str):
     return agent_call(lambda: AGENTS.interrupt(project_id, thread_id))
+
+
+class StoryboardUpdate(BaseModel):
+    text: str = Field(max_length=storyboard.MAX_TEXT)
+
+
+class StoryboardApproval(BaseModel):
+    thread: str | None = Field(default=None, max_length=32)
+
+
+def storyboard_folder(project_id: str, workspace: str | None) -> Path:
+    return project_call(
+        lambda: projects.workspace_folder(project_root(), project_id, workspace)
+    )
+
+
+def storyboard_call(project_id: str, workspace: str | None, action):
+    if AGENTS.busy_workspace(project_id, workspace):
+        raise HTTPException(
+            409, "Wait for the agent to finish before changing the storyboard."
+        )
+    try:
+        result = action(storyboard_folder(project_id, workspace))
+    except storyboard.StoryboardError as error:
+        raise HTTPException(422, str(error)) from error
+    publish(
+        "project.changed",
+        {"project": project_id, "files": [storyboard.FILE], "workspace": workspace},
+    )
+    return result
+
+
+@app.get("/api/projects/{project_id}/storyboard")
+def read_storyboard(project_id: str, workspace: str | None = None):
+    return storyboard.read(storyboard_folder(project_id, workspace))
+
+
+@app.post("/api/projects/{project_id}/storyboard")
+def save_storyboard(
+    project_id: str, body: StoryboardUpdate, workspace: str | None = None
+):
+    return storyboard_call(
+        project_id, workspace, lambda folder: storyboard.save(folder, body.text)
+    )
+
+
+@app.post("/api/projects/{project_id}/storyboard/approve")
+def approve_storyboard(
+    project_id: str, body: StoryboardApproval, workspace: str | None = None
+):
+    """Approve the storyboard and, with a chat, start building the video from it."""
+    if body.thread:
+        thread = agent_call(lambda: AGENTS.get(project_id, body.thread))
+        if thread.get("workspace") != workspace:
+            raise HTTPException(422, "Choose the chat for this video.")
+    result = storyboard_call(project_id, workspace, storyboard.approve)
+    turn = (
+        start_turn(project_id, body.thread, TurnRequest(text=storyboard.BUILD_PROMPT))
+        if body.thread
+        else None
+    )
+    return {"storyboard": result, "turn": turn}
 
 
 app.mount("/static", StaticFiles(directory=WEB, check_dir=False), name="static")

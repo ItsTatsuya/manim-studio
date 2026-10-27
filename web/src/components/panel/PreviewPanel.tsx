@@ -28,6 +28,8 @@ import { Select } from "../ui/select";
 import { toast } from "../ui/toast";
 import type { PanelTab } from "./RightPanel";
 import { OutputSettings } from "./OutputSettings";
+import { ProjectWatermarkButton } from "../watermark/ProjectWatermark";
+import { ProjectStylePicker } from "../styles/ProjectStylePicker";
 import {
   RepairVideoButton,
   useVideoWorkflow,
@@ -200,6 +202,9 @@ export function PreviewPanel({
       </div>
 
       <div className="sticky bottom-0 mt-auto border-t bg-card/60 p-3 backdrop-blur supports-[backdrop-filter]:bg-card/40">
+        <div className="mb-3">
+          <ProjectStylePicker projectId={projectId} />
+        </div>
         <div
           className={`grid ${multipleScenes ? "grid-cols-[1fr_1fr_auto]" : "grid-cols-[1fr_auto]"} items-end gap-3`}
         >
@@ -297,15 +302,18 @@ export function PreviewPanel({
             </Button>
           </div>
         )}
-        {preset.id === "custom" && (
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            onClick={() => setCustom(true)}
-          >
-            Edit custom output
-          </Button>
-        )}
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          {preset.id === "custom" && (
+            <Button
+              size="xs"
+              variant="ghost-muted"
+              onClick={() => setCustom(true)}
+            >
+              Edit custom output
+            </Button>
+          )}
+          <ProjectWatermarkButton projectId={projectId} workspace={workspace} />
+        </div>
         <OutputSettings open={custom} onOpenChange={setCustom} value={preset} />
       </div>
     </div>

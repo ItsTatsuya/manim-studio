@@ -419,6 +419,21 @@
   }
 }
 
+/* Lesson storyboards: section breaks and callouts read like a handout. */
+.storyboard-markdown {
+  & h2,
+  & h3 {
+    margin-top: 1.5em;
+  }
+  & blockquote {
+    border-left-color: var(--primary);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    background: var(--muted);
+    padding: 0.5em 0.75em;
+    color: var(--foreground);
+  }
+}
+
 /* CodeMirror inherits the app palette. */
 .cm-editor {
   height: 100%;

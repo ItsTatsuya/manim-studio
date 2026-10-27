@@ -11,6 +11,7 @@ import os
 import uvicorn
 from events import BUS
 from studio import app, shutdown_render, configure_update_install, update_install_failed
+import studio
 from runtime import DATA_ROOT, PACKAGE_ROOT, STANDALONE
 from webview_runtime import browser_mode, ensure_evergreen
 
@@ -55,6 +56,10 @@ def main():
     parser.add_argument("--port", type=int, default=0 if STANDALONE else 8765)
     parser.add_argument("--no-open", action="store_true")
     args = parser.parse_args()
+    # Only the app itself checks for agent CLI updates on its own (not tests).
+    studio.AGENT_UPDATES.automatic = (
+        os.environ.get("MANIM_STUDIO_AGENT_UPDATES", "1") != "0"
+    )
     with socket.socket() as sock:
         try:
             sock.bind(("127.0.0.1", args.port))

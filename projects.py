@@ -20,6 +20,7 @@ PROJECT_FILE = "project.json"
 SCRIPT_FILE = "script.py"
 ASSETS = "assets"
 NARRATION_FILE = "narration.txt"
+STORYBOARD_FILE = "storyboard.md"
 MAX_PACKAGE_BYTES = 512 * 1024**2
 MAX_PACKAGE_FILES = 2000
 MAX_SOURCE = 500_000
@@ -99,6 +100,12 @@ def clean_narration(value) -> dict:
     return result
 
 
+def _style_id(value) -> bool:
+    return isinstance(value, str) and bool(
+        re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", value)
+    )
+
+
 def _read_metadata(folder: Path) -> dict | None:
     try:
         data = json.loads((folder / PROJECT_FILE).read_text(encoding="utf-8"))
@@ -125,6 +132,12 @@ def _read_metadata(folder: Path) -> dict | None:
         "updated": data.get("updated") if isinstance(data.get("updated"), str) else "",
         "narration": narration,
         "folder": folder.name,
+        # The project's own watermark settings, or None to inherit them.
+        "watermark": data["watermark"]
+        if isinstance(data.get("watermark"), dict)
+        else None,
+        # House style id (styles.py); absent means the default style.
+        **({"style": data["style"]} if _style_id(data.get("style")) else {}),
     }
 
 
@@ -211,16 +224,25 @@ def read(root: Path, project_id: str, workspace: str | None = None) -> dict:
     return {**metadata, "source": source}
 
 
-def _save(path: Path, metadata: dict):
+def _save_metadata(path: Path, metadata: dict):
+    """Write project.json only, leaving narration.txt untouched."""
     stored = {key: metadata[key] for key in ("id", "name", "created", "updated")}
+    if _style_id(metadata.get("style")):
+        stored["style"] = metadata["style"]
     stored["narration"] = {
         key: value for key, value in metadata["narration"].items() if key != "text"
     }
-    _write_atomic(path / NARRATION_FILE, metadata["narration"]["text"])
+    if metadata.get("watermark") is not None:
+        stored["watermark"] = metadata["watermark"]
     _write_atomic(path / PROJECT_FILE, json.dumps(stored, indent=2))
 
 
-def create(root: Path, name: str, source: str = "", narration=None) -> dict:
+def _save(path: Path, metadata: dict):
+    _write_atomic(path / NARRATION_FILE, metadata["narration"]["text"])
+    _save_metadata(path, metadata)
+
+
+def create(root: Path, name: str, source: str = "", narration=None, style=None) -> dict:
     name = (name or "").strip()[:100] or "Untitled project"
     if len(source) > MAX_SOURCE:
         raise ProjectError("Scripts must be smaller than 500 KB.")
@@ -248,6 +270,8 @@ def create(root: Path, name: str, source: str = "", narration=None) -> dict:
             "narration": clean_narration(narration),
             "folder": path.name,
         }
+        if _style_id(style):
+            metadata["style"] = style
         _write_atomic(path / SCRIPT_FILE, source)
         _save(path, metadata)
     return {**metadata, "source": source}
@@ -261,11 +285,18 @@ def update(
     source=None,
     narration=None,
     workspace=None,
+    style=None,
 ):
+    """``style`` is a style id, or "" to follow the default (or parent) style."""
     if workspace is not None:
         path = workspace_folder(root, project_id, workspace)
         video = update(
-            path.parent, workspace, name=name, source=source, narration=narration
+            path.parent,
+            workspace,
+            name=name,
+            source=source,
+            narration=narration,
+            style=style,
         )
         return {
             **video,
@@ -280,13 +311,46 @@ def update(
             metadata["name"] = name.strip()[:100] or metadata["name"]
         if narration is not None:
             metadata["narration"] = clean_narration(narration)
+        if style is not None:
+            if style and not _style_id(style):
+                raise ProjectError("Choose a style from the Styles list.")
+            metadata.pop("style", None)
+            if style:
+                metadata["style"] = style
         if source is not None:
             if len(source) > MAX_SOURCE:
                 raise ProjectError("Scripts must be smaller than 500 KB.")
             _write_atomic(path / SCRIPT_FILE, source)
         metadata["updated"] = _now()
-        _save(path, metadata)
+        # Leave narration.txt alone unless it changed (a rename or style change
+        # must not look like a narration edit to a running video workflow).
+        (_save if narration is not None else _save_metadata)(path, metadata)
     return metadata
+
+
+def watermark_settings(root: Path, project_id: str, workspace: str | None = None):
+    """(own, parent) watermark settings; a video workspace inherits its project's."""
+    with LOCK:
+        parent = _read_metadata(folder(root, project_id))
+        if workspace is None:
+            return parent["watermark"], None
+        own = _read_metadata(workspace_folder(root, project_id, workspace))
+        return own["watermark"], parent["watermark"]
+
+
+def set_watermark(root: Path, project_id: str, workspace: str | None, value):
+    """Store a project's (or video's) watermark override; None inherits again."""
+    with LOCK:
+        path = workspace_folder(root, project_id, workspace)
+        metadata = _read_metadata(path)
+        if metadata is None:
+            raise KeyError(project_id)
+        metadata["watermark"] = value
+        metadata["updated"] = _now()
+        # Only metadata changes: rewriting narration.txt would race an agent
+        # editing it and look like a video edit to a running workflow.
+        _save_metadata(path, metadata)
+    return value
 
 
 def delete(root: Path, project_id: str):
@@ -634,12 +698,19 @@ def import_package(root: Path, files: list, name="Imported project") -> dict:
     with tempfile.TemporaryDirectory(prefix=".import-", dir=root) as temporary:
         staging = Path(temporary)
         project = create(
-            staging, str(manifest.get("name") or name), sources[entrypoint], settings
+            staging,
+            str(manifest.get("name") or name),
+            sources[entrypoint],
+            settings,
+            # Keep a house style id; unknown ids fall back to the default style.
+            style=manifest.get("style"),
         )
         target = staging / project["folder"]
         for path, (stream, _) in entries.items():
-            if not path.startswith("assets/") and (
-                path not in required or path == entrypoint
+            if (
+                not path.startswith("assets/")
+                and path != STORYBOARD_FILE
+                and (path not in required or path == entrypoint)
             ):
                 continue
             destination = target / path

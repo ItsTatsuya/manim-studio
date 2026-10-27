@@ -26,6 +26,9 @@ if file_picker.AVAILABLE:
     file_picker.choose = lambda kind: native_choose(kind, owner=0)
 
 agents.resolve_binary = lambda provider, configured="": "fixture-cli"
+# Agent CLI updates never reach the network or change an install here.
+studio.AGENT_UPDATES.automatic = False
+studio.AGENT_UPDATES.fetch_latest = lambda provider: "1.2.3"
 agents.launch_command = lambda binary: [
     sys.executable,
     str(ROOT / "tests/fake_agent_cli.py"),

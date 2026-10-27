@@ -9,6 +9,7 @@ Provider sessions are resumed on later turns, so the agent keeps context.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import tomllib
 import uuid
 
 from events import publish
@@ -30,6 +32,8 @@ from processes import (
     tree_active,
 )
 import projects
+import styles
+import storyboard
 
 PROVIDERS = {
     "codex": {
@@ -122,6 +126,8 @@ DEFAULT_SETTINGS = {
     # video fails ("fix" with the agent and re-queue, "skip" it, or "pause").
     "queue_start": "auto",
     "queue_on_error": "fix",
+    # Keep the installed CLIs current (see agent_updates.py).
+    "auto_update_agents": True,
 }
 QUEUE_START_MODES = ("auto", "manual")
 QUEUE_ERROR_MODES = ("fix", "skip", "pause")
@@ -130,6 +136,8 @@ MAX_PROMPT = 40_000
 MAX_DETAIL = 6_000
 MAX_ITEMS = 3_000
 MAX_STDERR = 20_000
+# How long a new turn waits for its provider's CLI update to finish.
+UPDATE_WAIT = 30
 
 
 ERROR_CODES = [
@@ -250,6 +258,10 @@ class AgentError(Exception):
     """A user-facing agent problem."""
 
 
+class AgentUpdating(AgentError):
+    """The provider's CLI is being updated; the turn can be retried shortly."""
+
+
 def _now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -307,6 +319,8 @@ def clean_settings(value) -> dict:
         result["queue_start"] = value["queue_start"]
     if value.get("queue_on_error") in QUEUE_ERROR_MODES:
         result["queue_on_error"] = value["queue_on_error"]
+    if isinstance(value.get("auto_update_agents"), bool):
+        result["auto_update_agents"] = value["auto_update_agents"]
     return result
 
 
@@ -371,6 +385,186 @@ def _run(command: list[str], timeout=PROBE_TIMEOUT) -> subprocess.CompletedProce
 def _version(output: str) -> str | None:
     match = re.search(r"\d+\.\d+\.\d+(?:[-+.][0-9A-Za-z.]+)?", output)
     return match[0] if match else None
+
+
+# ---------------------------------------------------------------- lean sessions
+#
+# Studio sessions only need file and shell tools. Everything else a CLI loads by
+# default (the user's MCP servers, plugins, skills, hooks, memory files, web and
+# sub-agent tools) is resent with every model request and counts against the
+# user's plan. CLI flags change between releases, so each option is used only
+# when the installed binary advertises (or accepts) it; an unknown flag must never
+# break a run. Results are cached per binary file version.
+
+CLAUDE_TOOLS = (
+    "Read",
+    "Write",
+    "Edit",
+    "MultiEdit",
+    "Glob",
+    "Grep",
+    "Bash",
+    "PowerShell",
+)
+CLAUDE_ENV = {
+    # Personal CLAUDE.md files and auto-memory are not about Studio projects.
+    "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",
+    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+}
+# Codex features that only add tools or context an animation agent never uses.
+CODEX_DISABLED_FEATURES = (
+    "apps",
+    "plugins",
+    "remote_plugin",
+    "recommended_plugins",
+    "multi_agent",
+    "multi_agent_v2",
+    "image_generation",
+    "browser_use",
+    "browser_use_external",
+    "computer_use",
+    "in_app_browser",
+    "tool_suggest",
+    "skill_mcp_dependency_install",
+    "goals",
+    "memories",
+    "sleep_tool",
+    "web_search_request",
+    "web_search_cached",
+)
+CODEX_OVERRIDES = ('web_search="disabled"', "project_doc_max_bytes=0")
+_CAPABILITIES: dict[tuple, object] = {}
+_CAPABILITY_LOCK = threading.Lock()
+
+
+def _binary_stamp(binary: str) -> tuple:
+    try:
+        stat = Path(binary).stat()
+        return (str(binary), stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        return (str(binary), None, None)
+
+
+def forget_capabilities():
+    """Re-detect CLI flags on the next turn, e.g. after a CLI update."""
+    with _CAPABILITY_LOCK:
+        _CAPABILITIES.clear()
+
+
+def _cached(key: tuple, compute):
+    with _CAPABILITY_LOCK:
+        if key in _CAPABILITIES:
+            return _CAPABILITIES[key]
+    value = compute()
+    if value is not None:  # A failed probe is retried on the next turn.
+        with _CAPABILITY_LOCK:
+            _CAPABILITIES[key] = value
+    return value
+
+
+def _accepts(binary: str, *args: str) -> str | None:
+    """Output of a local, offline CLI command, or None when it fails."""
+    try:
+        result = _run([binary, *args])
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode:
+        return None
+    return (result.stdout or "") + (result.stderr or "")
+
+
+def cli_flags(binary: str, *subcommand: str) -> frozenset[str]:
+    """Long options listed by `<binary> [subcommand] --help`."""
+
+    def compute():
+        text = _accepts(binary, *subcommand, "--help")
+        if text is None:
+            return None
+        return frozenset(re.findall(r"(?<![\w-])--[a-z][a-z0-9-]*", text))
+
+    return _cached(("flags", _binary_stamp(binary), subcommand), compute) or frozenset()
+
+
+def _codex_features(binary: str) -> frozenset[str]:
+    def compute():
+        text = _accepts(binary, "features", "list")
+        if text is None:
+            return None
+        names = set()
+        for line in text.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and "removed" not in line:
+                names.add(parts[0])
+        return frozenset(names)
+
+    return _cached(("features", _binary_stamp(binary)), compute) or frozenset()
+
+
+def _codex_mcp_servers() -> list[str]:
+    """MCP servers in the user's Codex config, so a session can switch them off."""
+    home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    try:
+        with (home / "config.toml").open("rb") as handle:
+            servers = tomllib.load(handle).get("mcp_servers") or {}
+    except (OSError, ValueError):
+        return []
+    if not isinstance(servers, dict):
+        return []
+    return sorted(
+        name
+        for name, config in servers.items()
+        if isinstance(config, dict) and re.fullmatch(r"[A-Za-z0-9_-]+", name)
+    )
+
+
+def codex_overrides(binary: str) -> list[str]:
+    """`-c` overrides that keep a Codex session lean, checked against the binary.
+
+    Codex rejects a known key with the wrong type, so the set is first loaded by
+    an offline command; anything this version refuses is left out.
+    """
+    features = _codex_features(binary)
+    wanted = list(CODEX_OVERRIDES)
+    wanted += [
+        f"features.{name}=false" for name in CODEX_DISABLED_FEATURES if name in features
+    ]
+    wanted += [f"mcp_servers.{name}.enabled=false" for name in _codex_mcp_servers()]
+
+    def loads(overrides) -> bool:
+        args = [part for value in overrides for part in ("-c", value)]
+        return _accepts(binary, *args, "features", "list") is not None
+
+    def compute():
+        if not features:
+            return None  # This Codex can't verify settings offline; send none.
+        if loads(wanted):
+            return tuple(wanted)
+        return tuple(value for value in wanted if loads([value]))
+
+    return list(_cached(("codex", _binary_stamp(binary), tuple(wanted)), compute) or ())
+
+
+def claude_options(binary: str, prompt_dir: Path) -> list[str]:
+    """Flags that keep a Claude Code session to Studio's own tools and context."""
+    flags = cli_flags(binary)
+    options = []
+    if {"--strict-mcp-config", "--mcp-config"} <= flags:
+        config = prompt_dir / "mcp.json"
+        config.write_text('{"mcpServers": {}}', encoding="utf-8")
+        options += ["--strict-mcp-config", "--mcp-config", str(config)]
+    if "--setting-sources" in flags:
+        # User settings may carry sign-in helpers or provider variables; project
+        # and local settings would only come from folders above the project.
+        options += ["--setting-sources", "user"]
+    if "--settings" in flags:
+        settings = prompt_dir / "settings.json"
+        settings.write_text('{"disableAllHooks": true}', encoding="utf-8")
+        options += ["--settings", str(settings)]
+    if "--disable-slash-commands" in flags:
+        options.append("--disable-slash-commands")
+    if "--tools" in flags:
+        options += ["--tools", ",".join(CLAUDE_TOOLS)]
+    return options
 
 
 def probe(provider: str, settings: dict) -> dict:
@@ -528,58 +722,59 @@ def instructions(project_dir: Path, *, python: str, check: str, latex: bool) -> 
         else "MathTypst/Typst (LaTeX is not installed, so never use Tex or MathTex)"
     )
     return f"""You are the animation agent inside Manim Studio, a desktop app that turns
-Manim Community Edition scripts into narrated explainer videos. You work in one
-Studio project folder, which is your current working directory:
+Manim Community Edition scripts into narrated explainer videos. Your working
+directory is one Studio project folder:
 {project_dir}
 
 Project files
-- script.py: the Manim scene Studio renders. Keep one main Scene subclass.
-- narration.txt: the voice-over. Studio speaks it with a local neural voice and
-  mixes it into the rendered video.
-- assets/: uploaded reference documents, images (PNG/JPG), SVG files and sounds.
-  Read attached reference files before writing the scene or narration. Reference
-  visual and audio assets with relative paths such as "assets/diagram.svg".
-- project.json: Studio metadata. Never edit it. Ignore hidden folders.
+- script.py: the scene Studio renders. Keep one main Scene subclass.
+- narration.txt: the voice-over, spoken by a local neural voice and mixed into the video.
+- assets/: user references, images (PNG/JPG), SVGs and sounds. Read attached
+  references before writing. Use relative paths such as "assets/diagram.svg".
+- project.json: Studio metadata; never edit it. Ignore hidden folders.
 
 Manim rules
-- Manim Community Edition 0.21, Cairo renderer, Python 3.12: `from manim import *`.
-  Never use manimlib/ManimGL or OpenGL-only features.
+- Manim CE 0.21, Cairo renderer, Python 3.12, `from manim import *`. Never use
+  manimlib/ManimGL or OpenGL-only features.
 - Equations: {equations}. Use Text or MarkupText for prose.
-- Available libraries are the Python standard library, manim and its
-  dependencies (numpy, scipy, Pillow, networkx). Never install packages,
-  download files or use the network.
-- The frame is about 14.2 x 8 units. Keep everything on screen and readable:
-  arrange, next_to and buff to avoid overlaps; scale long text to fit; fade out
-  old content before introducing new sections; use a consistent color palette.
-- Give each idea time on screen with run_time and self.wait() so the video can
-  carry the narration. End the scene with a short self.wait().
+- Only the standard library, manim and its dependencies (numpy, scipy, Pillow,
+  networkx). Never install packages, download files or use the network.
+- The frame is about 14.2 x 8 units. Keep everything on screen and readable: use
+  arrange, next_to and buff to avoid overlaps, scale long text to fit, fade out old
+  content before new sections, keep one consistent color palette.
+- Give each idea time with run_time and self.wait() so the video carries the
+  narration. End with a short self.wait().
 
-Narration format (narration.txt)
-- One paragraph per spoken line, separated by blank lines. Lines starting with
-  # are notes and are not spoken.
-- Start a paragraph with a timestamp such as [0:05] to pin when it starts.
-  Match timestamps to the animation's timing (the sum of run_time and wait
-  values before that moment). Without a timestamp a line follows the previous one.
-- Write for the ear so the voice sounds natural, not robotic: short sentences,
-  everyday words, contractions, and commas where a speaker would pause. Spell
-  out math and symbols in words ("x squared", "the integral from zero to one",
-  "approximately"), and avoid markdown, emoji, abbreviations, URLs, brackets
-  and parenthetical asides. Vary sentence length and ask the occasional
-  rhetorical question.
-- A typical pace is 2.3 words per second; make the animation long enough for
+Narration (narration.txt)
+- One paragraph per spoken line, separated by blank lines. Lines starting with #
+  are notes, not spoken.
+- A paragraph may start with a timestamp such as [0:05] to pin its start; match
+  it to the animation (sum of run_time and wait before that moment). Otherwise a
+  line follows the previous one.
+- Write for the ear: short sentences, everyday words, contractions, commas where a
+  speaker pauses, varied sentence length, the occasional rhetorical question.
+  Spell out math and symbols ("x squared", "the integral from zero to one").
+  No markdown, emoji, abbreviations, URLs, brackets or parenthetical asides.
+- Speech runs about 2.3 words per second; make the animation long enough for
   every line.
 
 Assets
-- Create diagrams, icons and illustrations as clean, hand-written SVG files in
-  assets/, or raster images by writing a short Python helper that uses Pillow or
-  numpy, running it with "{python}", then deleting the helper.
+- Write diagrams, icons and illustrations as clean SVG files in assets/, or make
+  raster images with a short Pillow/numpy helper run with "{python}", then delete
+  the helper.
 - Use ImageMobject("assets/name.png"), SVGMobject("assets/name.svg") and
   self.add_sound("assets/name.wav").
 
+Working efficiently
+- Read only the files the task needs. The user may edit files between messages,
+  but within one task you know a file after writing or editing it, so don't read
+  it again. Prefer small edits to whole-file rewrites.
+- Rely on your Manim knowledge; open library source only when an API is unclear.
+
 Checking your work
-- After editing, run this check from the project folder and fix every problem
-  it reports before finishing (it executes the scene without writing video):
-  {check}
+- When your edits are done, run this check from the project folder (it executes
+  the scene without writing video), fix what it reports, and re-run it only after
+  a fix: {check}
 - Do not render videos yourself; Studio renders automatically when you finish.
 
 Finish with a brief summary of what you created or changed, as a few short
@@ -943,24 +1138,70 @@ class Turn:
             self.error_info["reset"] = self.limit
 
 
-TRANSCRIPT_LIMIT = 24_000
+TRANSCRIPT_LIMIT = 12_000
+TRANSCRIPT_MESSAGE_LIMIT = 2_000
+
+
+def token_usage(usage) -> dict | None:
+    """Input (cached included), cached and output tokens from either CLI's usage."""
+    if not isinstance(usage, dict):
+        return None
+    if isinstance(usage.get("usage"), dict):  # Claude's result event
+        usage = usage["usage"]
+
+    def count(*keys):
+        return sum(
+            value
+            for value in (usage.get(key) for key in keys)
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        )
+
+    cached = count("cache_read_input_tokens", "cached_input_tokens")
+    tokens = {
+        # Codex counts cached input inside input_tokens; Claude reports it apart.
+        "input": count(
+            "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"
+        ),
+        "cached": cached,
+        "output": count("output_tokens"),
+    }
+    return tokens if tokens["input"] or tokens["output"] else None
+
+
+def _shorten(text: str, limit=TRANSCRIPT_MESSAGE_LIMIT) -> str:
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    half = limit // 2
+    return text[:half].rstrip() + "\n…\n" + text[-half:].lstrip()
 
 
 def transcript(items: list[dict]) -> str:
-    """A readable replay of a chat, newest content kept when it is long."""
-    lines = []
+    """A compact replay of a chat: each request, the files the agent changed and
+    its final reply. Progress notes and tool output are left out because the
+    project folder already holds the result; the newest turns win when long."""
+    turns: dict[str, dict] = {}
     for item in items:
+        turn = turns.setdefault(
+            str(item.get("turn")), {"user": [], "files": [], "reply": ""}
+        )
         kind = item.get("kind")
-        if kind == "user" and item.get("text"):
-            lines.append(f"User: {item['text'].strip()}")
-        elif kind == "assistant" and item.get("text", "").strip():
-            lines.append(f"Assistant: {item['text'].strip()}")
+        if kind == "user" and str(item.get("text") or "").strip():
+            turn["user"].append(item["text"])
+        elif kind == "assistant" and str(item.get("text") or "").strip():
+            turn["reply"] = item["text"]
         elif kind == "file_change":
-            paths = ", ".join(
-                change.get("path", "") for change in item.get("files", [])
-            )
-            if paths:
-                lines.append(f"(Assistant changed: {paths})")
+            for change in item.get("files", []):
+                path = change.get("path", "")
+                if path and path not in turn["files"]:
+                    turn["files"].append(path)
+    lines = []
+    for turn in turns.values():
+        lines += [f"User: {_shorten(text)}" for text in turn["user"]]
+        if turn["files"]:
+            lines.append(f"(Assistant changed: {', '.join(turn['files'])})")
+        if turn["reply"]:
+            lines.append(f"Assistant: {_shorten(turn['reply'])}")
     text = "\n\n".join(lines)
     if len(text) > TRANSCRIPT_LIMIT:
         text = "…(earlier messages omitted)\n\n" + text[-TRANSCRIPT_LIMIT:]
@@ -989,6 +1230,7 @@ def _thread_summary(thread: dict) -> dict:
         "status": last["status"] if last else "idle",
         "locked": bool(thread.get("session")),
         "forked_from": thread.get("forked_from"),
+        "mode": thread.get("mode", "build"),
     }
 
 
@@ -1008,6 +1250,8 @@ class AgentManager:
         self.probe_thread: threading.Thread | None = None
         self.settings = clean_settings(self._read(self.settings_path))
         self.on_turn_finished = None
+        # Providers whose CLI is being updated; guarded by ``lock``.
+        self.updating: set[str] = set()
 
     # ---- storage
     @property
@@ -1379,6 +1623,7 @@ class AgentManager:
             )
             for turn in turns:
                 turn.pop("usage", None)
+                turn.pop("tokens", None)
             now = _now()
             thread = {
                 "id": uuid.uuid4().hex,
@@ -1400,6 +1645,7 @@ class AgentManager:
                 },
                 "fork_context": transcript(items),
                 "workspace": source.get("workspace"),
+                "mode": source.get("mode", "build"),
             }
             self.threads[thread["id"]] = thread
         self.save(thread)
@@ -1477,12 +1723,23 @@ class AgentManager:
         model=None,
         effort=None,
         context="",
+        update_wait: float = UPDATE_WAIT,
+        mode="build",
     ) -> dict:
         text = (text or "").strip()
         if not text:
             raise AgentError("Write a message for the agent.")
+        if mode not in storyboard.MODES:
+            raise AgentError("Choose Plan or Build.")
+        if mode == "plan":
+            context = (
+                f"{storyboard.PLAN_REMINDER}\n\n{context}"
+                if context
+                else storyboard.PLAN_REMINDER
+            )
         if len(text) + len(context) > MAX_PROMPT:
             raise AgentError("Shorten the message and try again.")
+        self._wait_for_update(project_id, thread_id, update_wait)
         with self.lock:
             thread = self.get(project_id, thread_id)
             project_dir = projects.workspace_folder(
@@ -1502,6 +1759,10 @@ class AgentManager:
                 thread["effort"] = self._choose(
                     thread["provider"], thread["model"], effort
                 )[2]
+            if thread["provider"] in self.updating:
+                raise AgentUpdating(
+                    f"{PROVIDERS[thread['provider']]['name']} is updating. Try again in a minute."
+                )
             status = self.statuses.get(thread["provider"])
             config = self.settings["providers"][thread["provider"]]
             if not config["enabled"]:
@@ -1531,7 +1792,9 @@ class AgentManager:
                 "finished": None,
                 "changed": [],
                 "error": None,
+                "mode": mode,
             }
+            thread["mode"] = mode
             thread["turns"].append(turn_record)
             if thread["title"] == "New chat":
                 thread["title"] = re.sub(r"\s+", " ", text)[:60]
@@ -1555,6 +1818,16 @@ class AgentManager:
             self.emit_turn(thread, turn_record)
             raise AgentError("The agent could not start. Try again.")
         return dict(turn_record)
+
+    def _wait_for_update(self, project_id: str, thread_id: str, timeout: float):
+        """Hold a new turn briefly while its provider's CLI is being updated."""
+        deadline = time.monotonic() + timeout
+        while True:
+            with self.lock:
+                provider = self.get(project_id, thread_id)["provider"]
+                if provider not in self.updating or time.monotonic() >= deadline:
+                    return
+            time.sleep(0.2)
 
     def interrupt(self, project_id: str, thread_id: str, wait=False):
         with self.lock:
@@ -1606,6 +1879,14 @@ class AgentManager:
             check=self.check_command(),
             latex=bool(self.latex()),
         )
+        mode = turn.record.get("mode", "build")
+        if mode == "plan":
+            system = storyboard.instructions(turn.project_dir)
+        try:
+            # House style: refresh studio_style.py and brief the agent on it.
+            system += "\n\n" + styles.prepare(self.data_root, turn.project_dir)
+        except OSError:
+            logging.exception("Unable to prepare the project style")
         if thread["provider"] == "codex":
             # `exec resume` accepts fewer flags, so policy goes through -c overrides.
             options = ["--json", "--skip-git-repo-check"]
@@ -1619,6 +1900,8 @@ class AgentManager:
                     'approval_policy="never"',
                 ]
             )
+            for value in codex_overrides(binary):
+                options += ["-c", value]
             if thread["model"]:
                 options += ["-m", thread["model"]]
             if thread["effort"]:
@@ -1635,12 +1918,19 @@ class AgentManager:
                     "-",
                 ]
             )
-            # Codex has no system-prompt file flag; brief it once per session.
+            # Codex has no system-prompt file flag; brief it once per session,
+            # and again whenever the instructions change: a switch between Plan
+            # and Build, or a different house style for this project.
+            briefing = (
+                f"{mode}:{hashlib.sha256(system.encode('utf-8')).hexdigest()[:16]}"
+            )
             preamble = (
                 ""
-                if resume
+                if resume and thread.get("briefed") == briefing
                 else f"<studio_instructions>\n{system}\n</studio_instructions>\n\n"
             )
+            with self.lock:  # The thread may be saved from another request.
+                thread["briefed"] = briefing
             return command, preamble
         system_file = prompt_dir / "system.md"
         system_file.write_text(system, encoding="utf-8")
@@ -1655,6 +1945,7 @@ class AgentManager:
             "bypassPermissions" if full_access else "acceptEdits",
             "--append-system-prompt-file",
             str(system_file),
+            *claude_options(binary, prompt_dir),
         ]
         if not full_access:
             command += [
@@ -1695,6 +1986,9 @@ class AgentManager:
     def _run_turn(self, turn: Turn, binary: str, text: str, context: str):
         thread, record = turn.thread, turn.record
         before = self._snapshot_files(turn.project_dir)
+        planning = record.get("mode") == "plan"
+        board = storyboard.stamp(turn.project_dir)
+        guarded = storyboard.guard(turn.project_dir) if planning else {}
         stderr_tail: list[str] = []
         prompt_dir = Path(tempfile.mkdtemp(prefix="turn-", dir=self._scratch()))
         process = None
@@ -1704,6 +1998,8 @@ class AgentManager:
                 preamble + (f"{context.strip()}\n\n" if context.strip() else "") + text
             )
             env = dict(os.environ, PYTHONIOENCODING="utf-8", NO_COLOR="1")
+            if thread["provider"] == "claude":
+                env.update(CLAUDE_ENV)
             with self.lock:
                 if turn.cancelled:
                     raise InterruptedError
@@ -1821,12 +2117,23 @@ class AgentManager:
             if has_status:
                 fields["status"] = "completed" if status == "completed" else "failed"
             turn.upsert(key, **fields)
+        restored = storyboard.restore(turn.project_dir, guarded)
+        if restored:
+            turn.upsert(
+                f"notice:plan:{record['id']}",
+                kind="notice",
+                text="Plan mode only writes storyboard.md, so Studio restored "
+                + ", ".join(restored)
+                + ".",
+            )
         after = self._snapshot_files(turn.project_dir)
         changed = sorted(
             name
             for name in set(before) | set(after)
             if before.get(name) != after.get(name)
         )
+        if storyboard.stamp(turn.project_dir) != board:
+            changed.append(storyboard.FILE)
         if projects.NARRATION_FILE in changed:
             self._enable_narration(thread["project"], thread.get("workspace"))
         with self.lock:
@@ -1837,6 +2144,7 @@ class AgentManager:
                 error=turn.error,
                 error_code=(turn.error_info or {}).get("code"),
                 usage=turn.usage,
+                tokens=token_usage(turn.usage),
             )
             thread["updated"] = _now()
             self.running.pop(thread["id"], None)

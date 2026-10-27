@@ -3,7 +3,7 @@
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import agents
 import projects
@@ -120,6 +120,29 @@ class VideoRecoveryTests(unittest.TestCase):
         self.assertIn("Line 1", self.manager.send.call_args.kwargs["context"])
         self.finish_turn(job)
         self.assertEqual(self.submit.call_count, 1)
+
+    def test_repair_waits_for_a_cli_update_instead_of_failing(self):
+        updating = [True]
+
+        def send(*args, **kwargs):
+            self.assertEqual(kwargs["update_wait"], 0)
+            if updating[0]:
+                raise agents.AgentUpdating("Codex is updating.")
+            return {"id": "turn-1"}
+
+        self.manager.send = Mock(side_effect=send)
+        with patch("video_workflow.threading.Timer") as timer:
+            job = self.start()
+            self.failure(job)
+            state = self.flow.jobs[job["id"]]
+            self.assertEqual(state["status"], "repairing")
+            self.assertEqual(state["attempt"], 0)
+            self.assertIn("update", state["stage"])
+            callback, args = timer.call_args.args[1:]
+            updating[0] = False
+            callback(*args)
+        self.assertEqual(state["attempt"], 1)
+        self.assertIn("turn-1", state["_turns"])
 
     def test_repeated_errors_have_a_finite_repair_budget(self):
         job = self.start()

@@ -227,6 +227,13 @@ function WorkingIndicator({
   );
 }
 
+function formatTokens(count: number) {
+  if (count < 1000) return String(count);
+  if (count < 1_000_000)
+    return `${(count / 1000).toFixed(count < 10_000 ? 1 : 0)}k`;
+  return `${(count / 1_000_000).toFixed(1)}M`;
+}
+
 function TurnFooter({
   turn,
   project,
@@ -267,6 +274,14 @@ function TurnFooter({
   };
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-muted-foreground text-xs">
+      {turn.mode === "plan" && (
+        <>
+          <span className="rounded-md bg-primary/10 px-1.5 py-0.5 font-medium text-2xs text-primary">
+            Plan
+          </span>
+          <span className="text-muted-foreground/50">·</span>
+        </>
+      )}
       <Tooltip
         content={`${modelName(providers, turn.provider, turn.model)} · reasoning effort: ${effort.label}`}
       >
@@ -279,6 +294,18 @@ function TurnFooter({
         {turn.status === "interrupted" ? "Stopped after" : "Worked for"}{" "}
         {formatDuration(seconds)}
       </span>
+      {turn.tokens && (
+        <>
+          <span className="text-muted-foreground/50">·</span>
+          <Tooltip
+            content={`${turn.tokens.input.toLocaleString()} input tokens (${turn.tokens.cached.toLocaleString()} cached) · ${turn.tokens.output.toLocaleString()} output tokens`}
+          >
+            <span>
+              {formatTokens(turn.tokens.input + turn.tokens.output)} tokens
+            </span>
+          </Tooltip>
+        </>
+      )}
       {turn.changed.length > 0 && (
         <span className="text-muted-foreground/50">·</span>
       )}
@@ -292,7 +319,9 @@ function TurnFooter({
                 ? "script"
                 : file === "narration.txt"
                   ? "narration"
-                  : "assets",
+                  : file === "storyboard.md"
+                    ? "storyboard"
+                    : "assets",
             )
           }
           className="rounded-md border bg-card px-1.5 py-0.5 font-mono text-2xs text-foreground/80 hover:bg-accent"

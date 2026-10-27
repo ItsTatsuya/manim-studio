@@ -3,6 +3,7 @@ import { create } from "zustand";
 import {
   api,
   type AgentSnapshot,
+  type AgentUpdateState,
   type Health,
   type NarrationStatus,
   type ProjectSummary,
@@ -31,6 +32,7 @@ interface StudioState {
   threads: Record<string, ThreadSummary[]>;
   details: Record<string, Thread>;
   agents: AgentSnapshot | null;
+  agentUpdates: AgentUpdateState | null;
   renders: Render[];
   videos: VideoWorkflow[];
   queue: QueueState | null;
@@ -68,6 +70,7 @@ type StudioEvent =
       settings: AgentSnapshot["settings"];
       probing: boolean;
     }
+  | { type: "agent.updates"; updates: AgentUpdateState }
   | { type: "render"; render: Render }
   | { type: "video"; video: VideoWorkflow }
   | { type: "queue"; queue: QueueState }
@@ -137,6 +140,7 @@ export const useStudio = create<StudioState>()((set, get) => ({
   threads: {},
   details: {},
   agents: null,
+  agentUpdates: null,
   renders: [],
   videos: [],
   queue: null,
@@ -330,6 +334,9 @@ export const useStudio = create<StudioState>()((set, get) => ({
             probing: event.probing,
           },
         });
+        break;
+      case "agent.updates":
+        set({ agentUpdates: event.updates });
         break;
       case "render":
         get().upsertRender(event.render);

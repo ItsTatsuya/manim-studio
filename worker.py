@@ -15,6 +15,8 @@ if os.environ.pop("MANIM_STUDIO_WORKER_GATE", None) == "1":
 
 custom_fps = os.environ.pop("MANIM_STUDIO_CUSTOM_FPS", None)
 narration_spec = os.environ.pop("MANIM_STUDIO_NARRATION", None)
+# The user's watermark is added last (see watermark.py); helpers never see it.
+watermark_spec = os.environ.pop("MANIM_STUDIO_WATERMARK", None)
 # Studio asks long scenes to be rendered by helper processes (see parallel.py).
 # A helper is this same script started with a JSON description of its role.
 parallel_setting = os.environ.pop("MANIM_STUDIO_PARALLEL", None)
@@ -35,6 +37,10 @@ if parallel_setting is not None or helper is not None:
 
 from runtime import DATA_ROOT
 import parallel
+
+if watermark_spec is not None:
+    # Imported before the project folder joins sys.path, like Studio's modules.
+    import watermark
 
 sys.path.insert(0, str(DATA_ROOT))
 # Scripts can import helper modules kept beside them in their project folder.
@@ -274,3 +280,10 @@ else:
     except narration.NarrationError as error:
         print(f"STUDIO_NARRATION_ERROR|{error}", flush=True)
         raise SystemExit(3)
+
+if watermark_spec is not None and helper is None:
+    try:
+        watermark.finish_render(watermark_spec, report=stage)
+    except watermark.WatermarkError as error:
+        print(f"STUDIO_WATERMARK_ERROR|{error}", flush=True)
+        raise SystemExit(4)
