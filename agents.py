@@ -31,6 +31,7 @@ from processes import (
     stop_process,
     tree_active,
 )
+import narration
 import projects
 import styles
 import storyboard
@@ -742,21 +743,30 @@ Manim rules
 - The frame is about 14.2 x 8 units. Keep everything on screen and readable: use
   arrange, next_to and buff to avoid overlaps, scale long text to fit, fade out old
   content before new sections, keep one consistent color palette.
-- Give each idea time with run_time and self.wait() so the video carries the
-  narration. End with a short self.wait().
+- Time the animation from the narration with narrate() (below), so the video
+  waits for the voice instead of the voice being squeezed into fixed slots. End
+  with a short self.wait().
 
 Narration (narration.txt)
-- One paragraph per spoken line, separated by blank lines. Lines starting with #
-  are notes, not spoken.
-- A paragraph may start with a timestamp such as [0:05] to pin its start; match
-  it to the animation (sum of run_time and wait before that moment). Otherwise a
-  line follows the previous one.
-- Write for the ear: short sentences, everyday words, contractions, commas where a
-  speaker pauses, varied sentence length, the occasional rhetorical question.
-  Spell out math and symbols ("x squared", "the integral from zero to one").
-  No markdown, emoji, abbreviations, URLs, brackets or parenthetical asides.
-- Speech runs about 2.3 words per second; make the animation long enough for
-  every line.
+- A few flowing paragraphs, one per idea or step of the explanation, separated by
+  blank lines. Lines starting with # are notes, not spoken. Each paragraph is
+  spoken in one go, so two to four connected sentences sound far more natural
+  than many one-line fragments.
+- studio_narration.py beside script.py (Studio writes it; never edit it) times
+  the scene from the voice. Add `from studio_narration import narrate` and wrap
+  the animations for paragraph N in `with narrate(self, N) as line:`. The voice
+  starts when the block starts and the block lasts until the paragraph has been
+  spoken, plus a breath, so never pad with self.wait() for speech. Size
+  run_time from line.duration (seconds) or line.remaining, e.g.
+  self.play(Create(graph), run_time=line.remaining * 0.6). Studio measures the
+  real voice before rendering; the check uses an estimate.
+- Use every paragraph once, in order, and no [0:05] timestamps: narrate()
+  places each line. Animations between blocks are fine; they play in silence.
+- Write for the ear: natural sentences of varied length, everyday words,
+  contractions, commas only where a speaker would pause, the occasional
+  rhetorical question. Spell out math and symbols ("x squared", "the integral
+  from zero to one"). No markdown, emoji, abbreviations, URLs, brackets,
+  dashes or parenthetical asides.
 
 Assets
 - Write diagrams, icons and illustrations as clean SVG files in assets/, or make
@@ -1887,6 +1897,10 @@ class AgentManager:
             system += "\n\n" + styles.prepare(self.data_root, turn.project_dir)
         except OSError:
             logging.exception("Unable to prepare the project style")
+        try:
+            narration.write_module(turn.project_dir)
+        except OSError:
+            logging.exception("Unable to write the narration timing module")
         if thread["provider"] == "codex":
             # `exec resume` accepts fewer flags, so policy goes through -c overrides.
             options = ["--json", "--skip-git-repo-check"]

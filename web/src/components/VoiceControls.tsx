@@ -16,7 +16,7 @@ export const DEFAULT_VOICE: NarrationSettings = {
   text: "",
   voice: "af_heart",
   speed: 1,
-  quality: "standard",
+  quality: "high",
 };
 
 export function VoiceControls({
@@ -104,14 +104,14 @@ export function VoiceControls({
             onChange={(quality) => onChange({ quality })}
             options={[
               {
-                value: "standard",
-                label: "Standard",
-                description: "Smaller download",
-              },
-              {
                 value: "high",
                 label: "High quality",
-                description: "Full precision model",
+                description: "Most natural voice (recommended)",
+              },
+              {
+                value: "standard",
+                label: "Standard",
+                description: "Smaller download, slightly flatter voice",
               },
             ]}
           />

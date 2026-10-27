@@ -162,17 +162,29 @@ Packages can contain up to 2000 files and 512 MB of unpacked content.
 The **Narration** tab adds a spoken voice-over to the finished video. Speech is
 generated on your computer with the [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)
 voice model, which runs on the CPU without a GPU. Speed depends on your computer.
-The first use downloads the model once (about 120 MB for Standard quality,
-350 MB for High); after that narration works offline.
+The first use downloads the model once (about 350 MB for High quality, the
+default, or 120 MB for Standard); after that narration works offline.
 
-Write one paragraph per spoken line. Start a paragraph with a time such as
-`[0:05]` to begin speaking at that moment; otherwise it follows the previous
-line. Lines starting with `#` are notes. Narration is mixed with any sound your
-scene already adds. If the narration is longer than the animation, the last
+Write a few flowing paragraphs, one per idea. Paragraphs that follow each other
+are spoken in one go, so they keep a natural rhythm. Start a paragraph with a time
+such as `[0:05]` to begin speaking at that moment; otherwise it follows the
+previous line. Lines starting with `#` are notes. Narration is mixed with any sound
+your scene already adds. If the narration is longer than the animation, the last
 frame holds; add `self.wait()` at the end of the scene to plan for it.
 
-For a more natural delivery, write short spoken sentences with punctuation and
-spell equations out in words. Studio normalizes notation, adds sentence pauses,
+To make the animation wait for the voice instead, import Studio's helper and wrap
+the animations for each paragraph. The block lasts as long as that paragraph takes
+to speak, measured from the real voice when you render:
+
+```python
+from studio_narration import narrate
+
+with narrate(self, 1) as line:  # the first paragraph of narration.txt
+    self.play(Create(graph), run_time=line.duration / 2)
+```
+
+The chat agent writes scenes this way. For a more natural delivery, write
+connected sentences with punctuation and spell equations out in words. Studio normalizes notation, adds sentence pauses,
 softens abrupt audio boundaries and levels loudness. Try different voices and
 speeds with **Preview voice**; High quality uses the full-precision model. Naturalness
 still depends on the selected voice and wording.

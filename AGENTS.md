@@ -81,8 +81,19 @@ starter scripts and manual rendering launchers have been retired.
   render at once, so narration problems still fail fast. Finished
   lines (`.studio/render-cache/lines`) and the silent animation (`render-cache/videos`,
   keyed by script, scene, quality and project files) are checkpointed so a retry
-  resumes instead of starting over. Paragraphs are chunked below Kokoro's 510-phoneme
-  limit; never request `continuous` synthesis because the bundled models lack durations.
+  resumes instead of starting over. Consecutive unpinned paragraphs are spoken as one
+  passage (up to `MERGE_CHARS`) so they keep their intonation; kokoro-onnx itself splits
+  at its 510-phoneme limit, so Studio adds no chunking of its own. Never request
+  `continuous` synthesis because the bundled models lack durations. New projects ask
+  for the High model; `usable_quality` falls back to whichever model is downloaded.
+- Scripts time the animation from the voice with the generated `studio_narration.py`
+  (`with narrate(self, N) as line:`; written beside `script.py` before renders and
+  agent turns). For such scripts the worker synthesizes every line on its own first,
+  shares the measured lengths through `MANIM_STUDIO_NARRATION_TIMING`, and each render
+  process (helpers included) records where each block starts into its own file in
+  `MANIM_STUDIO_NARRATION_CUES`; the voice is then placed at those cues. Their
+  animation cache key includes the narration and keeps the cues beside the video.
+  Checks estimate line lengths and fail when a paragraph has no `narrate()` block.
 - Record Python dependencies in pyproject.toml and uv.lock. Rebuild the editor
   with npm run build:editor after changing UI assets.
 - Run the development and verification commands below before handing off changes.

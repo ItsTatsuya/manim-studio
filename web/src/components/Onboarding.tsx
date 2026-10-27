@@ -417,7 +417,7 @@ function SetupProvider({
 
 function VoiceStep() {
   const status = useStudio((state) => state.narration);
-  const [quality, setQuality] = useState<"standard" | "high">("standard");
+  const [quality, setQuality] = useState<"standard" | "high">("high");
   const [busy, setBusy] = useState(false);
   const download = status?.download;
   const downloading = download?.status === "downloading";
@@ -465,8 +465,12 @@ function VoiceStep() {
       <div className="grid gap-3 sm:grid-cols-2">
         {(
           [
-            ["standard", "Standard", "Good quality, smaller download"],
-            ["high", "High quality", "Richer voice, larger download"],
+            ["high", "High quality", "Most natural voice (recommended)"],
+            [
+              "standard",
+              "Standard",
+              "Smaller download, slightly flatter voice",
+            ],
           ] as const
         ).map(([id, label, detail]) => (
           <button

@@ -345,19 +345,7 @@ class NarrationTests(unittest.TestCase):
         with self.assertRaises(narration.NarrationError):
             narration.parse_timeline("\n\n".join(["word"] * 401))
 
-    def test_long_paragraphs_are_chunked_at_sentences(self):
-        sentence = "The derivative measures how fast a function changes. "
-        chunks = narration.split_text(sentence * 40)
-        self.assertGreater(len(chunks), 1)
-        self.assertTrue(all(len(chunk) <= narration.CHUNK_CHARS for chunk in chunks))
-        self.assertTrue(all(chunk.endswith(".") for chunk in chunks))
-        self.assertEqual(" ".join(chunks).split(), (sentence * 40).split())
-        # Text with no punctuation or spaces still splits instead of failing.
-        giant = narration.split_text("a" * 1000)
-        self.assertTrue(all(len(chunk) <= narration.CHUNK_CHARS for chunk in giant))
-        self.assertEqual("".join(giant), "a" * 1000)
-
-    def test_long_paragraph_works_without_duration_output(self):
+    def test_long_paragraph_is_spoken_in_one_pass(self):
         class Plain:
             """Like the bundled Kokoro models: `continuous=True` is unsupported."""
 
@@ -380,8 +368,109 @@ class NarrationTests(unittest.TestCase):
             speed=1.0,
             engine=engine,
         )
-        self.assertGreater(len(engine.calls), 1)
+        # kokoro-onnx splits at its own phoneme limit; Studio adds no extra breaks.
+        self.assertEqual(engine.calls, [paragraph.strip()])
         self.assertGreater(track.size, 0)
+
+    def test_following_lines_share_one_passage(self):
+        engine = FakeEngine()
+        segments = narration.parse_timeline(
+            "First idea here.\n\nIt continues\n\n[0:09] A new section.\n\nAnd more."
+        )
+        track, warnings = narration.synthesize(
+            segments, voice="af_heart", speed=1.0, engine=engine, report=lambda m: None
+        )
+        self.assertEqual(warnings, [])
+        self.assertEqual(
+            [text for text, _ in engine.calls],
+            ["First idea here. It continues.", "A new section. And more."],
+        )
+        rate = narration.SAMPLE_RATE
+        # The pinned passage still starts at its timestamp.
+        self.assertLess(abs(track[int(8.5 * rate)]), 1e-4)
+        self.assertGreater(abs(track[int(9.3 * rate)]), 0)
+        # A timed script needs every line on its own to know its length.
+        groups, _ = narration.voice_lines(
+            segments, voice="af_heart", speed=1.0, engine=FakeEngine(), merge=False
+        )
+        self.assertEqual([group["numbers"] for group in groups], [[1], [2], [3], [4]])
+        self.assertEqual(groups[1]["source"], "It continues")
+
+    def test_narrate_cues_place_lines(self):
+        segments = narration.parse_timeline("one two\n\nthree\n\nfour")
+        groups, warnings = narration.voice_lines(
+            segments, voice="af_heart", speed=1.0, engine=FakeEngine(), merge=False
+        )
+        track, warnings = narration.arrange(groups, warnings, cues={1: 0.5, 2: 4.0})
+        rate = narration.SAMPLE_RATE
+        self.assertEqual(warnings, [])
+        self.assertLess(abs(track[int(0.3 * rate)]), 1e-4)
+        self.assertGreater(abs(track[int(0.7 * rate)]), 0)
+        self.assertLess(abs(track[int(3.5 * rate)]), 1e-4)
+        self.assertGreater(abs(track[int(4.2 * rate)]), 0)
+        # Line 3 has no cue, so it follows line 2 after the usual gap.
+        self.assertGreater(abs(track[int((4.5 + narration.GAP + 0.2) * rate)]), 0)
+        _, warnings = narration.arrange(groups, [], cues={1: 0.0, 2: 0.2})
+        self.assertIn("narrate(self, 2)", warnings[0])
+
+    def test_timing_module_follows_the_voice(self):
+        import subprocess
+        import sys
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            narration.write_module(root)
+            text = "# note\nFirst line\ncontinues.\n\n[0:05] Pinned  here.\n[7s]\nLast."
+            (root / "narration.txt").write_text(text, encoding="utf-8")
+            self.assertTrue(
+                narration.uses_timing("from studio_narration import narrate\n")
+            )
+            self.assertFalse(narration.uses_timing("# studio_narration later\n"))
+            probe = (
+                "import json, studio_narration as m\n"
+                "class R: time = 2.0\n"
+                "class S:\n"
+                "    renderer = R()\n"
+                "    waited = []\n"
+                "    def wait(self, t): self.waited.append(t); R.time += t\n"
+                "s = S()\n"
+                "with m.narrate(s, 2) as line:\n"
+                "    R.time += 0.5\n"
+                "    left = line.remaining\n"
+                "print(json.dumps([m.lines(), m.duration(2), left, s.waited]))\n"
+            )
+            cues = root / "cues"
+            cues.mkdir()
+            env = {k: v for k, v in os.environ.items() if "NARRATION" not in k}
+
+            def run(**extra):
+                result = subprocess.run(
+                    [sys.executable, "-c", probe],
+                    cwd=root,
+                    env={**env, "MANIM_STUDIO_NARRATION_CUES": str(cues), **extra},
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                return json.loads(result.stdout)
+
+            spoken, length, left, waited = run()
+            # The helper reads narration.txt exactly as Studio parses it.
+            self.assertEqual(
+                spoken, [item["text"] for item in narration.parse_timeline(text)]
+            )
+            self.assertEqual(length, 0.8)  # Two words at the estimated rate.
+            self.assertAlmostEqual(left, 0.3)
+            # The block holds until the line ends, plus a breath.
+            self.assertAlmostEqual(waited[0], 0.3 + 0.4)
+            self.assertEqual(narration.read_cues(cues), {2: 2.0})
+            # A render passes the measured voice, which wins over the estimate.
+            timing = root / "timing.json"
+            timing.write_text(
+                json.dumps({"lines": [{"text": "A", "seconds": 1.5}] * 3}), "utf-8"
+            )
+            spoken, length, _, _ = run(MANIM_STUDIO_NARRATION_TIMING=str(timing))
+            self.assertEqual((spoken, length), (["A", "A", "A"], 1.5))
 
     def test_unspeakable_text_is_skipped_with_a_warning(self):
         class Silent:
@@ -417,9 +506,19 @@ class NarrationTests(unittest.TestCase):
                     engine=Counting(),
                     cache_dir=folder,
                 )
-            self.assertEqual(Counting.calls, 2)
-            # A changed line is the only one generated again.
-            changed = narration.parse_timeline("One line.\n\nSecond line, edited.")
+            # Both lines are spoken as one passage, once.
+            self.assertEqual(Counting.calls, 1)
+            # A pinned line is its own passage, so editing it leaves the first cached.
+            segments = narration.parse_timeline("One line.\n\n[0:04] Second line.")
+            narration.synthesize(
+                segments,
+                voice="af_heart",
+                speed=1.0,
+                engine=Counting(),
+                cache_dir=folder,
+            )
+            self.assertEqual(Counting.calls, 3)
+            changed = narration.parse_timeline("One line.\n\n[0:04] Second, edited.")
             narration.synthesize(
                 changed,
                 voice="af_heart",
@@ -427,7 +526,7 @@ class NarrationTests(unittest.TestCase):
                 engine=Counting(),
                 cache_dir=folder,
             )
-            self.assertEqual(Counting.calls, 3)
+            self.assertEqual(Counting.calls, 4)
 
     def test_video_checkpoint_round_trip(self):
         import tempfile
@@ -1066,6 +1165,57 @@ class ProjectApiTests(unittest.TestCase):
         manifest = json.loads((path.parent / "render.json").read_text())
         self.assertTrue(manifest["narrated"])
         self.assertNotIn("_narration", manifest)
+
+    @unittest.skipUnless(
+        os.environ.get("MANIM_STUDIO_TEST_KOKORO"),
+        "Set MANIM_STUDIO_TEST_KOKORO to a folder with the Kokoro model files",
+    )
+    def test_narrate_times_the_animation_from_the_voice(self):
+        project = self.call("/api/projects", {"name": "Timed narration"})
+        text = "A circle appears.\n\nNow it turns into a square, slowly and smoothly."
+        source = (
+            "from manim import *\nfrom studio_narration import narrate\n"
+            "class MainScene(Scene):\n    def construct(self):\n"
+            "        shape = Circle()\n"
+            "        self.wait(1)\n"
+            "        with narrate(self, 1) as line:\n"
+            "            self.play(Create(shape), run_time=line.duration / 2)\n"
+            "        with narrate(self, 2):\n"
+            "            self.play(Transform(shape, Square()))\n"
+        )
+        request = {
+            "source": source,
+            "scene": "MainScene",
+            "project": project["id"],
+            "width": 128,
+            "height": 72,
+            "fps": 10,
+            "narration": {"enabled": True, "text": text, "voice": "af_heart"},
+        }
+        lengths = []
+        for _ in range(2):  # The second render reuses the cached animation.
+            result = self.wait(self.call("/api/render", request)["id"])
+            self.assertEqual(result["status"], "completed", result.get("log"))
+            path = studio.output_directory(result) / "video.mp4"
+            with av.open(str(path)) as video:
+                frames = [
+                    frame.to_ndarray().mean(axis=0) for frame in video.decode(audio=0)
+                ]
+                seconds = float(video.duration) / av.time_base
+            audio = np.concatenate(frames)
+            rate = len(audio) / seconds
+            # The voice waits for the one-second intro, as narrate() asked.
+            onset = np.flatnonzero(np.abs(audio) > 0.01)[0] / rate
+            self.assertAlmostEqual(onset, 1.0, delta=0.15)
+            self.assertFalse(
+                any("still speaking" in w for w in result.get("warnings", []))
+            )
+            # The scene ends a breath after the voice: nothing squeezed or padded.
+            last = np.flatnonzero(np.abs(audio) > 0.01)[-1] / rate
+            self.assertGreater(seconds - last, 0.1)
+            self.assertLess(seconds - last, 0.9)
+            lengths.append(seconds)
+        self.assertAlmostEqual(lengths[0], lengths[1], delta=0.05)
 
 
 if __name__ == "__main__":

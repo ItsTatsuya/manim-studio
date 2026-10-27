@@ -35,7 +35,7 @@ DEFAULT_NARRATION = {
     "text": "",
     "voice": "af_heart",
     "speed": 1.0,
-    "quality": "standard",
+    "quality": "high",
 }
 
 
@@ -195,7 +195,7 @@ def create_video(root: Path, project_id: str, name: str) -> dict:
     videos = parent / "videos"
     if videos.is_symlink() or not _contained(videos, parent):
         raise ProjectError("This project's videos folder cannot be used.")
-    video = create(videos, name, narration={"enabled": True, "quality": "standard"})
+    video = create(videos, name, narration={"enabled": True, "quality": "high"})
     return {**video, "id": project_id, "workspace": video["id"], "folder": parent.name}
 
 

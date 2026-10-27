@@ -111,6 +111,12 @@ def main(argv: list[str]) -> int:
         if not (folder / asset).is_file():
             problems.append(f"Missing asset: {asset}")
     duration = None
+    timed = narration.uses_timing(result["source"])
+    cues = tempfile.TemporaryDirectory(prefix="studio-cues-")
+    if timed:
+        # narrate() records where each line starts, as it does during a render.
+        os.environ["MANIM_STUDIO_NARRATION_CUES"] = cues.name
+        os.environ.pop("MANIM_STUDIO_NARRATION_TIMING", None)
     if not problems:
         sys.path.insert(0, str(folder))
         os.chdir(folder)
@@ -134,7 +140,27 @@ def main(argv: list[str]) -> int:
         text = (folder / "narration.txt").read_text(encoding="utf-8")
     except OSError:
         text = ""
-    if text.strip():
+    if text.strip() and timed:
+        try:
+            count = len(narration.parse_timeline(text))
+        except narration.NarrationError as error:
+            problems.append(f"narration.txt: {error}")
+        else:
+            if duration is not None:
+                started = narration.read_cues(cues.name)
+                missing = [str(n) for n in range(1, count + 1) if n not in started]
+                if missing:
+                    problems.append(
+                        "Narration paragraph(s) "
+                        + ", ".join(missing)
+                        + " have no narrate() block. Wrap the animations for each"
+                        " paragraph in `with narrate(self, N) as line:`."
+                    )
+                order = sorted(started, key=started.get)
+                if order != sorted(order):
+                    notes.append("narrate() blocks run out of paragraph order.")
+            notes.append(f"Narration has {count} paragraph(s) timed with narrate().")
+    elif text.strip():
         try:
             spoken = narration_end(text)
         except narration.NarrationError as error:
@@ -152,6 +178,7 @@ def main(argv: list[str]) -> int:
         print(f"NOTE: {note}")
     for problem in problems:
         print(f"FAIL: {problem}")
+    cues.cleanup()
     if not problems:
         print("OK: the project is ready to render.")
     return 1 if problems else 0

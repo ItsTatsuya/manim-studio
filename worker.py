@@ -219,10 +219,10 @@ else:
         else:
             show(render=message)
 
-    def prepare_voice():
+    def prepare_voice(timed=False):
         try:
             return narration.prepare_track(
-                spec, report=lambda message: show(voice=message)
+                spec, report=lambda message: show(voice=message), timed=timed
             )
         except narration.NarrationError:
             raise
@@ -246,18 +246,26 @@ else:
         if "error" in voice:
             raise voice["error"]
 
+    # A script built with narrate() waits for each spoken line, so its voice is
+    # generated first and every render process reads the measured lengths.
+    timed = narration.uses_timing(script_path.read_text(encoding="utf-8"))
     try:
-        # The voice is generated while the animation renders. Finished lines are
-        # checkpointed, so a retry only generates what changed.
-        speaker = threading.Thread(target=narrate, name="narration", daemon=True)
-        speaker.start()
+        if timed:
+            voice["track"] = prepare_voice(timed=True)
+            narration.share_timing(spec, voice["track"])
+        else:
+            # The voice is generated while the animation renders. Finished lines
+            # are checkpointed, so a retry only generates what changed.
+            speaker = threading.Thread(target=narrate, name="narration", daemon=True)
+            speaker.start()
         try:
             if not narration.restore_video(spec, report=stage):
                 run_animation(abort=voice_failed, report=render_report)
                 narration.checkpoint_video(spec)
             # Narration may still be running: show its progress again.
             show(render=None, quiet=False)
-            speaker.join()
+            if not timed:
+                speaker.join()
         except (KeyboardInterrupt, SystemExit):
             # Either the voice failed (and woke us) or the render itself did.
             voice_failed()

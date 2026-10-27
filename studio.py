@@ -138,7 +138,7 @@ class NarrationSettings(BaseModel):
     text: str = Field(default="", max_length=100_000)
     voice: str = Field(default="af_heart", max_length=40)
     speed: float = Field(default=1.0, ge=0.5, le=2.0, allow_inf_nan=False)
-    quality: str = "standard"
+    quality: str = "high"
 
 
 class RenderRequest(Script):
@@ -754,6 +754,13 @@ def video_cache_key(job: dict, source: str, working: Path) -> str:
         job.get("_requested_rate"),
         job.get("project"),
     ]
+    spoken = job.get("_narration")
+    if spoken and narration.uses_timing(source):
+        # narrate() blocks last as long as their lines, so the voice shapes frames.
+        parts.append(
+            [narration.CACHE_VERSION]
+            + [spoken.get(key) for key in ("text", "voice", "speed", "quality")]
+        )
     files = []
     if job.get("project"):
         # Assets and helper modules beside the script affect the render too.
@@ -824,6 +831,10 @@ def render_worker(job_id: str, source: str):
                 styles.write_module(ROOT, working)
             except OSError:
                 logging.exception("Unable to write the project style module")
+            try:
+                narration.write_module(working)
+            except OSError:
+                logging.exception("Unable to write the narration timing module")
         config = ROOT / "manim.cfg"
         render_options = (
             ["--config_file", str(config)]
@@ -1327,12 +1338,14 @@ def start_render(body: RenderRequest):
         except narration.NarrationError as error:
             raise HTTPException(422, str(error)) from error
         if segments:
-            if not narration.installed(ROOT, body.narration.quality):
+            quality = narration.usable_quality(ROOT, body.narration.quality)
+            if not narration.installed(ROOT, quality):
                 raise HTTPException(
                     422,
                     "Download the narration voice in the Narration tab, or turn narration off.",
                 )
             narration_job = body.narration.model_dump(exclude={"enabled"})
+            narration_job["quality"] = quality
     watermark_job = render_watermark(body)
     with LOCK:
         if UPDATE_INSTALLING:
@@ -1703,7 +1716,7 @@ async def project_from_pdf(request: Request, project: str | None = None):
             else projects.create(
                 project_root(),
                 Path(filename).stem,
-                narration={"enabled": True, "quality": "standard"},
+                narration={"enabled": True, "quality": "high"},
             )
         )
         directory = projects.assets_dir(
@@ -2114,7 +2127,7 @@ def list_fonts(project: str | None = None, workspace: str | None = None):
 
 
 class NarrationDownload(BaseModel):
-    quality: str = "standard"
+    quality: str = "high"
 
 
 def narration_status():
@@ -2158,6 +2171,7 @@ def preview_narration(body: NarrationSettings):
         narration.required_files(body.quality)
     except narration.NarrationError as error:
         raise HTTPException(422, str(error)) from error
+    body.quality = narration.usable_quality(ROOT, body.quality)
     if not narration.installed(ROOT, body.quality):
         raise HTTPException(422, "Download the narration voice first.")
     folder = RENDERS / f"voice-{uuid.uuid4().hex}"
@@ -2271,6 +2285,10 @@ def prepare_video(project: dict, options: dict, automatic: bool):
             narration.parse_timeline(settings["text"])
         except narration.NarrationError as error:
             raise VideoProblem(str(error)) from error
+        settings = {
+            **settings,
+            "quality": narration.usable_quality(ROOT, settings["quality"]),
+        }
         if not narration.installed(ROOT, settings["quality"]):
             if not automatic:
                 raise VideoProblem(
