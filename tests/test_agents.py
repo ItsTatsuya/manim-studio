@@ -40,7 +40,14 @@ class FakeCliCase(unittest.TestCase):
                 "publish",
                 lambda kind, payload: self.events.append((kind, payload)),
             ),
-            patch.dict(os.environ, {"FAKE_AGENT_LOG": str(self.log)}),
+            patch.dict(
+                os.environ,
+                {
+                    "FAKE_AGENT_LOG": str(self.log),
+                    "CODEX_HOME": str(self.root / "codex-home"),
+                },
+            ),
+            patch.dict(agents._CAPABILITIES, clear=True),
         ]
         for item in patches:
             item.start()
@@ -505,6 +512,114 @@ class TurnTests(FakeCliCase):
             argv[argv.index("--resume") + 1], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
         )
 
+    def test_claude_sessions_load_only_studio_tools_and_context(self):
+        for access in ("full", "edits"):
+            with patch.dict(self.manager.settings, {"access": access}):
+                thread = self.start("claude")
+            self.assertIsNone(thread["turns"][-1]["tokens"])  # Fake has no usage.
+            call = self.invocations()[-1]
+            argv = call["argv"]
+            self.assertEqual(
+                argv[argv.index("--tools") + 1],
+                "Read,Write,Edit,MultiEdit,Glob,Grep,Bash,PowerShell",
+            )
+            self.assertIn("--strict-mcp-config", argv)
+            self.assertIn("--disable-slash-commands", argv)
+            self.assertEqual(argv[argv.index("--setting-sources") + 1], "user")
+            self.assertEqual(
+                json.loads(call["files"]["--mcp-config"]), {"mcpServers": {}}
+            )
+            self.assertEqual(
+                json.loads(call["files"]["--settings"]), {"disableAllHooks": True}
+            )
+            self.assertEqual(
+                call["env"],
+                {
+                    "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",
+                    "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+                },
+            )
+            # Access modes keep their permission semantics.
+            self.assertEqual(
+                argv[argv.index("--permission-mode") + 1],
+                "bypassPermissions" if access == "full" else "acceptEdits",
+            )
+            self.assertEqual("--allowedTools" in argv, access == "edits")
+
+    def test_codex_sessions_switch_off_unused_features_and_mcp_servers(self):
+        home = self.root / "codex-home"
+        home.mkdir()
+        (home / "config.toml").write_text(
+            '[mcp_servers.docs]\ncommand = "docs"\n'
+            '[mcp_servers.broken]\ncommand = "x"\n'
+            '[mcp_servers."odd.name"]\ncommand = "y"\n',
+            encoding="utf-8",
+        )
+        thread = self.start("codex")
+        argv = self.invocations()[0]["argv"]
+        overrides = [argv[i + 1] for i, part in enumerate(argv) if part == "-c"]
+        for value in (
+            'web_search="disabled"',
+            "project_doc_max_bytes=0",
+            "features.apps=false",
+            "features.multi_agent=false",
+            "mcp_servers.docs.enabled=false",
+        ):
+            self.assertIn(value, overrides)
+        # Removed features, rejected values and unsafe names are left out.
+        self.assertFalse(
+            any(
+                "web_search_request" in value or "broken" in value or "odd" in value
+                for value in overrides
+            )
+        )
+        self.assertNotIn("features.shell_tool=false", overrides)
+        self.assertEqual(
+            thread["turns"][-1]["tokens"], {"input": 10, "cached": 0, "output": 5}
+        )
+        # Resumed turns get the same overrides.
+        self.manager.send(self.project["id"], thread["id"], "again")
+        self.wait_idle(thread["id"])
+        resumed = self.invocations()[1]["argv"]
+        self.assertEqual(resumed[:2], ["exec", "resume"])
+        self.assertIn("features.apps=false", resumed)
+
+    def test_older_clis_get_no_unadvertised_options(self):
+        with patch.dict(os.environ, {"FAKE_AGENT_LEGACY": "1"}):
+            self.start("claude")
+            self.start("codex")
+        claude, codex = (call["argv"] for call in self.invocations())
+        for flag in ("--tools", "--strict-mcp-config", "--settings"):
+            self.assertNotIn(flag, claude)
+        self.assertIn("--append-system-prompt-file", claude)
+        self.assertFalse(
+            any("features." in part or "web_search" in part for part in codex)
+        )
+
+    def test_token_usage_is_normalised_for_both_clis(self):
+        self.assertEqual(
+            agents.token_usage(
+                {
+                    "usage": {
+                        "input_tokens": 12,
+                        "cache_creation_input_tokens": 300,
+                        "cache_read_input_tokens": 9000,
+                        "output_tokens": 450,
+                    },
+                    "total_cost_usd": 0.1,
+                }
+            ),
+            {"input": 9312, "cached": 9000, "output": 450},
+        )
+        self.assertEqual(
+            agents.token_usage(
+                {"input_tokens": 5000, "cached_input_tokens": 4000, "output_tokens": 7}
+            ),
+            {"input": 5000, "cached": 4000, "output": 7},
+        )
+        self.assertIsNone(agents.token_usage(None))
+        self.assertIsNone(agents.token_usage({"usage": {}}))
+
     def test_failures_are_reported_in_the_timeline(self):
         thread = self.start("codex", text="FAIL please")
         self.assertEqual(thread["status"], "failed")
@@ -573,6 +688,36 @@ class TurnTests(FakeCliCase):
         )
         with self.assertRaises(agents.AgentError):
             self.manager.fork(pid, thread["id"], turn_id="missing")
+
+    def test_fork_transcript_keeps_requests_changes_and_final_replies(self):
+        items = [
+            {"turn": "a", "kind": "user", "text": "Make an intro"},
+            {"turn": "a", "kind": "assistant", "text": "Let me look at the files."},
+            {"turn": "a", "kind": "command", "detail": "x" * 5000},
+            {
+                "turn": "a",
+                "kind": "file_change",
+                "files": [{"path": "script.py"}, {"path": "narration.txt"}],
+            },
+            {"turn": "a", "kind": "file_change", "files": [{"path": "script.py"}]},
+            {"turn": "a", "kind": "assistant", "text": "Created the intro."},
+            {"turn": "b", "kind": "user", "text": "y" * 9000},
+        ]
+        text = agents.transcript(items)
+        self.assertIn("User: Make an intro", text)
+        self.assertIn("(Assistant changed: script.py, narration.txt)", text)
+        self.assertIn("Assistant: Created the intro.", text)
+        self.assertNotIn("Let me look", text)
+        self.assertNotIn("xxxx", text)
+        self.assertLess(len(text), 2600)  # Long messages keep their start and end.
+        long = [
+            {"turn": str(i), "kind": "user", "text": f"request {i} " + "z" * 1500}
+            for i in range(30)
+        ]
+        text = agents.transcript(long)
+        self.assertLess(len(text), agents.TRANSCRIPT_LIMIT + 300)
+        self.assertIn("request 29", text)
+        self.assertNotIn("request 0 ", text)
 
     def test_fork_can_stop_at_an_earlier_turn_and_switch_agent(self):
         thread = self.start("codex")

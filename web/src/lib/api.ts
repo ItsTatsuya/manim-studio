@@ -343,6 +343,8 @@ export interface Turn {
   changed: string[];
   error: string | null;
   error_code?: string | null;
+  /** Input (cached included), cached and output tokens the turn used. */
+  tokens?: { input: number; cached: number; output: number } | null;
 }
 
 export interface Thread extends ThreadSummary {
