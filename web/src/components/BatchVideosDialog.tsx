@@ -280,9 +280,9 @@ export function BatchVideosDialog({
           <Field label="House style">
             <Select
               aria-label="House style"
-              className="w-full"
+              className="w-full text-foreground"
               value={style}
-              disabled={busy || !styles}
+              disabled={busy}
               onChange={setStyle}
               options={styleOptions(
                 styles,

@@ -49,9 +49,9 @@ export function ProjectStylePicker({ projectId }: { projectId: string }) {
         <Select
           aria-label="House style"
           size="sm"
-          className="min-w-0 flex-1"
+          className="min-w-0 flex-1 text-foreground"
           value={value}
-          disabled={!project || !library || busy}
+          disabled={!project || busy}
           onChange={(style) => void choose(style)}
           options={styleOptions(
             library,

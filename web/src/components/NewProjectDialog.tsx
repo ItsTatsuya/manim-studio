@@ -85,9 +85,9 @@ export function NewProjectDialog({
             <Field label="House style" className="mt-3">
               <Select
                 aria-label="House style"
-                className="w-full"
+                className="w-full text-foreground"
                 value={style}
-                disabled={!styles}
+                disabled={busy}
                 onChange={setStyle}
                 options={styleOptions(styles, "Default")}
               />
