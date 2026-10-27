@@ -66,7 +66,9 @@ starter scripts and manual rendering launchers have been retired.
   only when its text changes so render cache keys stay stable, and adds a short style
   guide to the agent instructions. The module's layout helpers (`fit`, `swap`,
   `new_slide`, `content_box`) keep slides centred and transitions free of overlap;
-  `agent_check.py` fails on overlapping text, text off the frame and crossfade ghosting.
+  `agent_check.py` fails on overlapping text, text off the frame and crossfade ghosting,
+  and saves `.check/preview.png` (the last frame of each narration block, up to 15) so
+  agents judge the layout without rendering video themselves.
 - Built-in styles use only the OFL fonts in `fonts/` (pinned google/fonts files,
   checksums and licences in `fonts/SOURCES.json`; `packaging/build.py` ships the
   folder). The default style is `clean`; keep built-in ids stable since projects

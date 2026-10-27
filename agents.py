@@ -430,8 +430,6 @@ CODEX_DISABLED_FEATURES = (
     "goals",
     "memories",
     "sleep_tool",
-    "web_search_request",
-    "web_search_cached",
 )
 CODEX_OVERRIDES = ('web_search="disabled"', "project_doc_max_bytes=0")
 _CAPABILITIES: dict[tuple, object] = {}
@@ -494,7 +492,9 @@ def _codex_features(binary: str) -> frozenset[str]:
         names = set()
         for line in text.splitlines():
             parts = line.split()
-            if len(parts) >= 2 and "removed" not in line:
+            if len(parts) >= 2 and not {"removed", "deprecated"}.intersection(
+                parts[1:]
+            ):
                 names.add(parts[0])
         return frozenset(names)
 
@@ -783,13 +783,19 @@ Working efficiently
 - Read only the files the task needs. The user may edit files between messages,
   but within one task you know a file after writing or editing it, so don't read
   it again. Prefer small edits to whole-file rewrites.
+- Write and edit files with your file tools, never shell heredocs or redirection.
+  Put multi-line Python in a .py file instead of python -c: multi-line shell
+  commands fail on Windows.
 - Rely on your Manim knowledge; open library source only when an API is unclear.
 
 Checking your work
 - When your edits are done, run this check from the project folder (it executes
   the scene without writing video), fix what it reports, and re-run it only after
   a fix: {check}
-- Do not render videos yourself; Studio renders automatically when you finish.
+- The check saves .check/preview.png, one image with the frame at the end of
+  each narration paragraph. View it once after the check to judge the layout.
+- Never run manim, render video or extract frames yourself; Studio renders
+  automatically when you finish.
 
 Finish with a brief summary of what you created or changed, as a few short
 bullet points. Do not paste the whole script into your reply."""

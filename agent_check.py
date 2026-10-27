@@ -1,7 +1,8 @@
 """Check a Studio project the way a render would, without writing video.
 
 Agents run this from a project folder after editing. It reports syntax and
-runtime errors, missing assets, and whether the narration fits the animation.
+runtime errors, missing assets, and whether the narration fits the animation,
+and saves a contact sheet of the scene so agents need not render to see it.
 Usage: python agent_check.py [script.py] [SceneName]
 """
 
@@ -29,6 +30,12 @@ import styles  # noqa: E402
 styles.configure_fonts(DATA_ROOT)
 
 WORDS_PER_SECOND = 2.5
+# One image the agent can look at instead of rendering and grabbing frames.
+# Hidden, so render cache keys, exports and asset lists never include it.
+PREVIEW = Path(".check") / "preview.png"
+PREVIEW_FRAMES = 15
+PREVIEW_COLUMNS = 3
+THUMBNAIL = (400, 225)
 
 
 def referenced_assets(tree: ast.AST) -> list[str]:
@@ -195,14 +202,89 @@ def watch_layout(script: Path, problems: list[str]):
     Scene.play = play
 
 
+def _cues() -> list[str]:
+    """Paragraphs whose narrate() block has started, in order."""
+    return list(getattr(sys.modules.get("studio_narration"), "_cues", {}))
+
+
+def snapshot(scene, frames: list, label: str):
+    from PIL import Image
+
+    scene.renderer.update_frame(scene, ignore_skipping=True)
+    image = Image.fromarray(scene.renderer.get_frame()).convert("RGB")
+    image.thumbnail(THUMBNAIL)
+    frames.append((scene.renderer.time, label, image))
+
+
+def watch_frames(frames: list):
+    """Keep the frame a viewer sees as each narrate() block ends.
+
+    A block ends where the next one starts, so the frame is taken just before
+    the first animation after a new cue. Scripts without narrate() get the
+    frame before each slide change (text fading out) instead.
+    """
+    from manim import FadeOut, Scene
+
+    original_play = Scene.play
+    seen = {"cues": 0}
+
+    def play(self, *args, **kwargs):
+        cues = _cues()
+        if len(cues) > seen["cues"]:
+            if seen["cues"]:
+                snapshot(self, frames, f"#{cues[seen['cues'] - 1]}")
+            seen["cues"] = len(cues)
+        elif not cues and _texts(
+            arg.mobject for arg in args if isinstance(arg, FadeOut)
+        ):
+            snapshot(self, frames, "")
+        return original_play(self, *args, **kwargs)
+
+    Scene.play = play
+
+
+def write_preview(frames: list, path: Path) -> int:
+    """Lay the frames out in one labelled image; returns how many it shows."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    if len(frames) > PREVIEW_FRAMES:
+        step = (len(frames) - 1) / (PREVIEW_FRAMES - 1)
+        frames = [frames[round(index * step)] for index in range(PREVIEW_FRAMES)]
+    width, height = THUMBNAIL
+    rows = -(-len(frames) // PREVIEW_COLUMNS)
+    columns = min(len(frames), PREVIEW_COLUMNS)
+    sheet = Image.new("RGB", (columns * (width + 4) - 4, rows * (height + 4) - 4))
+    sheet.paste((128, 128, 128), (0, 0, *sheet.size))
+    draw = ImageDraw.Draw(sheet)
+    font = ImageFont.load_default(size=15)
+    for index, (time, label, image) in enumerate(frames):
+        x = index % PREVIEW_COLUMNS * (width + 4)
+        y = index // PREVIEW_COLUMNS * (height + 4)
+        sheet.paste(image, (x, y))
+        # Bottom-left, where slides keep a margin; titles sit at the top.
+        caption = f"{label} {int(time) // 60}:{int(time) % 60:02d}".strip()
+        corner = (x + 6, y + image.height - 22)
+        box = draw.textbbox(corner, caption, font=font)
+        draw.rectangle((box[0] - 4, box[1] - 2, box[2] + 4, box[3] + 2), fill="black")
+        draw.text(corner, caption, fill="white", font=font)
+    path.parent.mkdir(exist_ok=True)
+    sheet.save(path)
+    return len(frames)
+
+
 def run_scene(
-    script: Path, scene_name: str, problems: list[str] | None = None
+    script: Path,
+    scene_name: str,
+    problems: list[str] | None = None,
+    frames: list | None = None,
 ) -> float:
     """Execute construct() with Manim's dry run and return the scene length."""
     from manim import config, tempconfig
 
     if problems is not None:
         watch_layout(script, problems)
+    if frames is not None:
+        watch_frames(frames)
     with tempfile.TemporaryDirectory(prefix="studio-check-") as media:
         options = {
             "dry_run": True,
@@ -221,13 +303,18 @@ def run_scene(
             spec.loader.exec_module(module)
             scene = getattr(module, scene_name)()
             scene.render()
+            if frames is not None:
+                cues = _cues()
+                snapshot(scene, frames, f"#{cues[-1]}" if cues else "")
             return float(scene.renderer.time)
 
 
 def main(argv: list[str]) -> int:
     folder = Path.cwd()
     script = folder / (argv[0] if argv else "script.py")
-    problems, notes = [], []
+    problems, notes, frames = [], [], []
+    # A stale sheet would show an older version of the scene.
+    (folder / PREVIEW).unlink(missing_ok=True)
     try:
         source = script.read_text(encoding="utf-8")
     except OSError as error:
@@ -271,7 +358,7 @@ def main(argv: list[str]) -> int:
         sys.path.insert(0, str(folder))
         os.chdir(folder)
         try:
-            duration = run_scene(script, scene_name, problems)
+            duration = run_scene(script, scene_name, problems, frames)
         except (
             BaseException
         ) as error:  # Report any scene failure, including SystemExit.
@@ -324,6 +411,20 @@ def main(argv: list[str]) -> int:
             notes.append(f"Narration takes about {spoken:.0f}s to speak.")
     if duration is not None:
         notes.insert(0, f"Scene {scene_name} runs {duration:.1f}s.")
+    if duration is not None and frames:
+        try:
+            shown = write_preview(frames, folder / PREVIEW)
+        except Exception as error:  # The preview is a convenience, never a failure.
+            notes.append(f"No preview image: {error}")
+        else:
+            moments = "narration paragraph" if timed else "slide"
+            more = f" ({shown} of {len(frames)})" if shown < len(frames) else ""
+            label = "#paragraph and time" if timed else "time"
+            notes.append(
+                f"Preview: {PREVIEW.as_posix()} shows the frame at the end of each "
+                f"{moments}{more}, labelled with its {label}. View it to check the "
+                "layout."
+            )
     for note in notes:
         print(f"NOTE: {note}")
     for problem in problems:

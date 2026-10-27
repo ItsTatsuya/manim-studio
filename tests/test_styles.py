@@ -13,8 +13,10 @@ from unittest.mock import patch
 from zipfile import ZipFile
 
 from fastapi import HTTPException
+from PIL import Image
 
 import agents
+import narration
 import projects
 import studio
 import styles
@@ -317,6 +319,45 @@ class ProjectStyleTests(StyleCase):
         self.assertEqual(
             tidy_result.returncode, 0, tidy_result.stdout + tidy_result.stderr
         )
+
+    def test_agent_check_saves_a_preview_per_narration_paragraph(self):
+        source = (
+            "from manim import *\nfrom studio_style import *\n"
+            "from studio_narration import narrate\n\n\n"
+            "class Lesson(Scene):\n"
+            "    def construct(self):\n"
+            "        apply(self)\n"
+            "        for number in (1, 2, 3):\n"
+            "            with narrate(self, number):\n"
+            "                new_slide(self, f'Slide {number}')\n"
+        )
+        home = self.root / "projects"
+        project = projects.create(home, "Preview", source)
+        folder = projects.folder(home, project["id"])
+        (folder / "narration.txt").write_text(
+            "First idea here.\n\nSecond idea here.\n\nThird idea here.\n",
+            encoding="utf-8",
+        )
+        styles.write_module(self.root, folder)
+        narration.write_module(folder)
+        preview = folder / ".check" / "preview.png"
+        preview.parent.mkdir()
+        preview.write_bytes(b"stale")
+        result = subprocess.run(
+            [sys.executable, str(Path(studio.APP_ROOT) / "agent_check.py")],
+            cwd=folder,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=180,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Preview: .check/preview.png", result.stdout)
+        with Image.open(preview) as image:
+            # Three paragraphs give three frames in one row of the sheet.
+            self.assertEqual(image.size, (3 * 400 + 2 * 4, 225))
+        # Hidden, so the preview never shows up as a project asset.
+        self.assertEqual(projects.list_assets(folder / projects.ASSETS), [])
 
     @unittest.skipUnless(
         os.name == "nt" and Path(r"C:\Windows\Fonts\arial.ttf").is_file(),

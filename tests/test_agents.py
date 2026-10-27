@@ -80,6 +80,21 @@ class FakeCliCase(unittest.TestCase):
 
 
 class ProviderProbeTests(FakeCliCase):
+    def test_codex_features_exclude_deprecated_and_removed_options(self):
+        with patch.object(
+            agents,
+            "_accepts",
+            return_value=(
+                "apps stable true\n"
+                "browser_use under development false\n"
+                "plugins deprecated false\n"
+                "memories removed false\n"
+            ),
+        ):
+            self.assertEqual(
+                agents._codex_features("fake"), frozenset({"apps", "browser_use"})
+            )
+
     def test_install_and_login_launch_only_known_commands(self):
         if os.name != "nt":
             self.skipTest("Windows interactive CLI setup")
@@ -452,6 +467,9 @@ class TurnTests(FakeCliCase):
         )
         self.assertIn("<studio_instructions>", first["prompt"])
         self.assertIn("agent_check.py", first["prompt"])
+        # The check's preview replaces renders and frame grabs by the agent.
+        self.assertIn(".check/preview.png", first["prompt"])
+        self.assertIn("Never run manim", first["prompt"])
         self.assertIn("never use Tex or MathTex", first["prompt"])
         self.assertTrue(first["prompt"].endswith("Make an intro"))
         changed = [
@@ -566,10 +584,13 @@ class TurnTests(FakeCliCase):
             "mcp_servers.docs.enabled=false",
         ):
             self.assertIn(value, overrides)
-        # Removed features, rejected values and unsafe names are left out.
+        # Deprecated features, rejected values and unsafe names are left out.
         self.assertFalse(
             any(
-                "web_search_request" in value or "broken" in value or "odd" in value
+                "web_search_request" in value
+                or "web_search_cached" in value
+                or "broken" in value
+                or "odd" in value
                 for value in overrides
             )
         )
@@ -583,6 +604,7 @@ class TurnTests(FakeCliCase):
         resumed = self.invocations()[1]["argv"]
         self.assertEqual(resumed[:2], ["exec", "resume"])
         self.assertIn("features.apps=false", resumed)
+        self.assertFalse(any("features.web_search" in part for part in resumed))
 
     def test_older_clis_get_no_unadvertised_options(self):
         with patch.dict(os.environ, {"FAKE_AGENT_LEGACY": "1"}):

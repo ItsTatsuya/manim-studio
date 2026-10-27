@@ -149,7 +149,8 @@ elif argv[-2:] == ["features", "list"] and not LEGACY:
     print("apps                stable   true")
     print("multi_agent         stable   true")
     print("shell_tool          stable   true")
-    print("web_search_request  removed  false")
+    print("web_search_request  deprecated  false")
+    print("web_search_cached   deprecated  false")
 elif argv == ["login", "status"]:
     if os.environ.get("FAKE_AGENT_AUTH") == "none":
         print("Not logged in")
