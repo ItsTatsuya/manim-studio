@@ -411,8 +411,10 @@ class VideoWorkflows:
                     else:
                         self._advance(owned)
                 return
+            # Plan turns only write a storyboard for review; never render them.
             if (
                 turn["status"] != "completed"
+                or turn.get("mode") == "plan"
                 or not self.manager().settings["auto_render"]
             ):
                 return

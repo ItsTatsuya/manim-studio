@@ -3,7 +3,9 @@ import {
   ArrowUpIcon,
   ClapperboardIcon,
   FileTextIcon,
+  HammerIcon,
   ImageIcon,
+  NotebookPenIcon,
   MicIcon,
   PaperclipIcon,
   ShapesIcon,
@@ -15,7 +17,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { api, type Thread } from "~/lib/api";
+import { api, type ChatMode, type Thread } from "~/lib/api";
 import { useFileDrop } from "~/lib/useFileDrop";
 import { QUICK_ACTIONS } from "~/lib/prompts";
 import { latestRender } from "~/lib/render";
@@ -73,6 +75,12 @@ export function Composer({
   const pendingUploads = useRef(0);
   const draftThread = useRef<Thread | null>(null);
   const [sending, setSending] = useState(false);
+  // Plan writes a storyboard for review; Build writes the video files.
+  const [mode, setMode] = useState<ChatMode>(thread?.mode ?? "build");
+  // Follow the chat when a message is sent from elsewhere, e.g. Storyboard.
+  useEffect(() => {
+    if (thread?.mode) setMode(thread.mode);
+  }, [thread?.mode]);
   const [choice, setChoice] = useState<ModelChoice>(() =>
     thread
       ? {
@@ -200,6 +208,7 @@ export function Composer({
       const turn = await api.sendTurn(projectId, target.id, {
         text: message,
         context: overrideContext ?? contextText,
+        mode,
       });
       useStudio.getState().handleEvent({
         type: "thread.turn",
@@ -401,9 +410,13 @@ export function Composer({
           value={text}
           rows={thread ? 1 : 3}
           placeholder={
-            thread
-              ? "Ask for changes…"
-              : "Describe your video, e.g. “Explain how a Fourier series builds a square wave, 45 seconds, with narration”"
+            mode === "plan"
+              ? thread
+                ? "Ask for changes to the storyboard…"
+                : "Describe the lesson to plan, e.g. “Video 1.01: what solving two linear equations means, about 6 minutes”"
+              : thread
+                ? "Ask for changes…"
+                : "Describe your video, e.g. “Explain how a Fourier series builds a square wave, 45 seconds, with narration”"
           }
           onChange={(event) => updateText(event.target.value)}
           onKeyDown={(event) => {
@@ -423,6 +436,36 @@ export function Composer({
             value={choice}
             onChange={(next) => void changeChoice(next)}
             lockedProvider={thread?.locked ? thread.provider : undefined}
+          />
+          <Select
+            aria-label="Chat mode"
+            size="xs"
+            variant="ghost"
+            value={mode}
+            onChange={setMode}
+            options={[
+              {
+                value: "build",
+                label: (
+                  <span className="flex items-center gap-1">
+                    <HammerIcon className="size-3" />
+                    Build
+                  </span>
+                ),
+                description: "Write the scene and narration, then render",
+              },
+              {
+                value: "plan",
+                label: (
+                  <span className="flex items-center gap-1">
+                    <NotebookPenIcon className="size-3" />
+                    Plan
+                  </span>
+                ),
+                description:
+                  "Write a lesson storyboard to review before any video",
+              },
+            ]}
           />
           <Select
             aria-label="Agent access"

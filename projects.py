@@ -20,6 +20,7 @@ PROJECT_FILE = "project.json"
 SCRIPT_FILE = "script.py"
 ASSETS = "assets"
 NARRATION_FILE = "narration.txt"
+STORYBOARD_FILE = "storyboard.md"
 MAX_PACKAGE_BYTES = 512 * 1024**2
 MAX_PACKAGE_FILES = 2000
 MAX_SOURCE = 500_000
@@ -697,8 +698,10 @@ def import_package(root: Path, files: list, name="Imported project") -> dict:
         )
         target = staging / project["folder"]
         for path, (stream, _) in entries.items():
-            if not path.startswith("assets/") and (
-                path not in required or path == entrypoint
+            if (
+                not path.startswith("assets/")
+                and path != STORYBOARD_FILE
+                and (path not in required or path == entrypoint)
             ):
                 continue
             destination = target / path

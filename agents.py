@@ -32,6 +32,7 @@ from processes import (
 )
 import projects
 import styles
+import storyboard
 
 PROVIDERS = {
     "codex": {
@@ -1228,6 +1229,7 @@ def _thread_summary(thread: dict) -> dict:
         "status": last["status"] if last else "idle",
         "locked": bool(thread.get("session")),
         "forked_from": thread.get("forked_from"),
+        "mode": thread.get("mode", "build"),
     }
 
 
@@ -1720,10 +1722,19 @@ class AgentManager:
         effort=None,
         context="",
         update_wait: float = UPDATE_WAIT,
+        mode="build",
     ) -> dict:
         text = (text or "").strip()
         if not text:
             raise AgentError("Write a message for the agent.")
+        if mode not in storyboard.MODES:
+            raise AgentError("Choose Plan or Build.")
+        if mode == "plan":
+            context = (
+                f"{storyboard.PLAN_REMINDER}\n\n{context}"
+                if context
+                else storyboard.PLAN_REMINDER
+            )
         if len(text) + len(context) > MAX_PROMPT:
             raise AgentError("Shorten the message and try again.")
         self._wait_for_update(project_id, thread_id, update_wait)
@@ -1779,7 +1790,9 @@ class AgentManager:
                 "finished": None,
                 "changed": [],
                 "error": None,
+                "mode": mode,
             }
+            thread["mode"] = mode
             thread["turns"].append(turn_record)
             if thread["title"] == "New chat":
                 thread["title"] = re.sub(r"\s+", " ", text)[:60]
@@ -1864,6 +1877,9 @@ class AgentManager:
             check=self.check_command(),
             latex=bool(self.latex()),
         )
+        mode = turn.record.get("mode", "build")
+        if mode == "plan":
+            system = storyboard.instructions(turn.project_dir)
         try:
             # House style: refresh studio_style.py and brief the agent on it.
             system += "\n\n" + styles.prepare(self.data_root, turn.project_dir)
@@ -1900,12 +1916,14 @@ class AgentManager:
                     "-",
                 ]
             )
-            # Codex has no system-prompt file flag; brief it once per session.
+            # Codex has no system-prompt file flag; brief it once per session,
+            # and again whenever the chat switches between Plan and Build.
             preamble = (
                 ""
-                if resume
+                if resume and thread.get("briefed", "build") == mode
                 else f"<studio_instructions>\n{system}\n</studio_instructions>\n\n"
             )
+            thread["briefed"] = mode
             return command, preamble
         system_file = prompt_dir / "system.md"
         system_file.write_text(system, encoding="utf-8")
@@ -1961,6 +1979,9 @@ class AgentManager:
     def _run_turn(self, turn: Turn, binary: str, text: str, context: str):
         thread, record = turn.thread, turn.record
         before = self._snapshot_files(turn.project_dir)
+        planning = record.get("mode") == "plan"
+        board = storyboard.stamp(turn.project_dir)
+        guarded = storyboard.guard(turn.project_dir) if planning else {}
         stderr_tail: list[str] = []
         prompt_dir = Path(tempfile.mkdtemp(prefix="turn-", dir=self._scratch()))
         process = None
@@ -2089,12 +2110,23 @@ class AgentManager:
             if has_status:
                 fields["status"] = "completed" if status == "completed" else "failed"
             turn.upsert(key, **fields)
+        restored = storyboard.restore(turn.project_dir, guarded)
+        if restored:
+            turn.upsert(
+                f"notice:plan:{record['id']}",
+                kind="notice",
+                text="Plan mode only writes storyboard.md, so Studio restored "
+                + ", ".join(restored)
+                + ".",
+            )
         after = self._snapshot_files(turn.project_dir)
         changed = sorted(
             name
             for name in set(before) | set(after)
             if before.get(name) != after.get(name)
         )
+        if storyboard.stamp(turn.project_dir) != board:
+            changed.append(storyboard.FILE)
         if projects.NARRATION_FILE in changed:
             self._enable_narration(thread["project"], thread.get("workspace"))
         with self.lock:

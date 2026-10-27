@@ -28,6 +28,7 @@ import {
 } from "./ui/dialog";
 import { Input, Spinner } from "./ui/input";
 import { Select } from "./ui/select";
+import { Switch } from "./ui/switch";
 import { Field } from "./ui/field";
 import { cn } from "~/lib/utils";
 
@@ -60,6 +61,8 @@ export function BatchVideosDialog({
   const [inputError, setInputError] = useState("");
   const [style, setStyle] = useState("");
   const styles = useStyleLibrary();
+  // Plan first: each chat writes a storyboard for review instead of a video.
+  const [planFirst, setPlanFirst] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const projects = useStudio((state) => state.projects);
   const folderSupport = useStudio(
@@ -131,9 +134,12 @@ export function BatchVideosDialog({
           details: { ...state.details, [thread.id]: thread },
         }));
         const turn = await api.sendTurn(projectId, thread.id, {
-          text: "Create the video from the supplied script. Read assets/video-script.txt (the extracted PDF text) and consult assets/video-script.pdf for layout if needed. Follow its scenes, timing and narration. Write script.py and narration.txt, and check the scene before finishing. Keep the supplied narration faithful to the script.",
+          text: planFirst
+            ? "Plan this video from the supplied script. Read assets/video-script.txt (the extracted PDF text) and consult assets/video-script.pdf for layout if needed. Write the lesson storyboard in storyboard.md, keeping the script's content, examples and order."
+            : "Create the video from the supplied script. Read assets/video-script.txt (the extracted PDF text) and consult assets/video-script.pdf for layout if needed. Follow its scenes, timing and narration. Write script.py and narration.txt, and check the scene before finishing. Keep the supplied narration faithful to the script.",
           context:
             'Reference files for this video:\n"assets/video-script.txt"\n"assets/video-script.pdf"',
+          mode: planFirst ? "plan" : "build",
         });
         useStudio.getState().handleEvent({
           type: "thread.turn",
@@ -141,7 +147,10 @@ export function BatchVideosDialog({
           thread: thread.id,
           turn,
         });
-        update(item.file, { started: true, status: "Chat started" });
+        update(item.file, {
+          started: true,
+          status: planFirst ? "Storyboard started" : "Chat started",
+        });
       } catch (error) {
         update(item.file, {
           status: "Needs attention",
@@ -392,10 +401,23 @@ export function BatchVideosDialog({
             <span className="text-sm font-medium">Coding assistant</span>
             <ModelPicker value={choice} onChange={setChoice} disabled={busy} />
           </div>
+          <div className="flex items-center justify-between gap-3 px-1">
+            <span className="text-sm font-medium">
+              Plan first, review before generating
+            </span>
+            <Switch
+              aria-label="Plan first, review before generating"
+              checked={planFirst}
+              disabled={busy}
+              onCheckedChange={setPlanFirst}
+            />
+          </div>
           <p className="text-xs text-muted-foreground">
-            {autoRender
-              ? "Finished code is added to the render queue automatically. Videos render one at a time."
-              : "Automatic rendering is off. Open each video and click Render to add it to the queue."}
+            {planFirst
+              ? "Each chat writes a lesson storyboard. Nothing renders until you approve it in the Storyboard tab."
+              : autoRender
+                ? "Finished code is added to the render queue automatically. Videos render one at a time."
+                : "Automatic rendering is off. Open each video and click Render to add it to the queue."}
           </p>
           {!readiness.ready && (
             <p className="text-xs text-muted-foreground">
@@ -426,7 +448,9 @@ export function BatchVideosDialog({
             {busy
               ? "Starting videos…"
               : pending.length
-                ? `Create and start ${pending.length} video${pending.length === 1 ? "" : "s"}`
+                ? planFirst
+                  ? `Plan ${pending.length} video${pending.length === 1 ? "" : "s"}`
+                  : `Create and start ${pending.length} video${pending.length === 1 ? "" : "s"}`
                 : "Create videos"}
           </Button>
         </DialogFooter>

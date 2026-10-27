@@ -236,6 +236,7 @@ def main():
         "usage.py",
         "video_workflow.py",
         "watermark.py",
+        "storyboard.py",
         "update_handoff.py",
         "webview_runtime.py",
         "manim.cfg",

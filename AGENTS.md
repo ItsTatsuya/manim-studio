@@ -29,6 +29,11 @@ starter scripts and manual rendering launchers have been retired.
   validates and queues each video once. Script/runtime failures return diagnostics to
   the same scoped chat, then retry with the original output settings, up to three
   repairs. Cancellation, provider errors and newer user edits must stop recovery.
+- Plan mode (`storyboard.py`, per-turn `mode`) writes only `storyboard.md` in the
+  project or video workspace: Studio restores any plan-turn change to `script.py` or
+  `narration.txt`, and `video_workflow.py` never validates or queues a plan turn.
+  Approval is the hidden `.storyboard.json` hash of the approved text, so any edit
+  returns it to draft; approving starts a Build turn that reads the file by path.
 - The render queue is server-owned in `studio.py` (one render at a time, up to 20
   waiting, ordered by `_seq`). Agent settings `queue_start` (`auto`/`manual`) and
   `queue_on_error` (`fix`/`skip`/`pause`) drive it; `QUEUE_PAUSED` is `None` to

@@ -64,6 +64,7 @@ import projects
 import watermark
 import scenes
 import styles
+import storyboard
 from scenes import format_source
 from video_workflow import VideoProblem, VideoWorkflows
 
@@ -2223,6 +2224,7 @@ class TurnRequest(BaseModel):
     context: str = Field(default="", max_length=agents.MAX_PROMPT)
     model: str | None = Field(default=None, max_length=100)
     effort: str | None = Field(default=None, max_length=20)
+    mode: str = Field(default="build", pattern="^(build|plan)$")
 
 
 class VideoRequest(RenderRequest):
@@ -2517,6 +2519,7 @@ def start_turn(project_id: str, thread_id: str, body: TurnRequest):
             model=body.model,
             effort=body.effort,
             context=body.context,
+            mode=body.mode,
         )
     )
 
@@ -2524,6 +2527,68 @@ def start_turn(project_id: str, thread_id: str, body: TurnRequest):
 @app.post("/api/projects/{project_id}/threads/{thread_id}/interrupt")
 def interrupt_turn(project_id: str, thread_id: str):
     return agent_call(lambda: AGENTS.interrupt(project_id, thread_id))
+
+
+class StoryboardUpdate(BaseModel):
+    text: str = Field(max_length=storyboard.MAX_TEXT)
+
+
+class StoryboardApproval(BaseModel):
+    thread: str | None = Field(default=None, max_length=32)
+
+
+def storyboard_folder(project_id: str, workspace: str | None) -> Path:
+    return project_call(
+        lambda: projects.workspace_folder(project_root(), project_id, workspace)
+    )
+
+
+def storyboard_call(project_id: str, workspace: str | None, action):
+    if AGENTS.busy_workspace(project_id, workspace):
+        raise HTTPException(
+            409, "Wait for the agent to finish before changing the storyboard."
+        )
+    try:
+        result = action(storyboard_folder(project_id, workspace))
+    except storyboard.StoryboardError as error:
+        raise HTTPException(422, str(error)) from error
+    publish(
+        "project.changed",
+        {"project": project_id, "files": [storyboard.FILE], "workspace": workspace},
+    )
+    return result
+
+
+@app.get("/api/projects/{project_id}/storyboard")
+def read_storyboard(project_id: str, workspace: str | None = None):
+    return storyboard.read(storyboard_folder(project_id, workspace))
+
+
+@app.post("/api/projects/{project_id}/storyboard")
+def save_storyboard(
+    project_id: str, body: StoryboardUpdate, workspace: str | None = None
+):
+    return storyboard_call(
+        project_id, workspace, lambda folder: storyboard.save(folder, body.text)
+    )
+
+
+@app.post("/api/projects/{project_id}/storyboard/approve")
+def approve_storyboard(
+    project_id: str, body: StoryboardApproval, workspace: str | None = None
+):
+    """Approve the storyboard and, with a chat, start building the video from it."""
+    if body.thread:
+        thread = agent_call(lambda: AGENTS.get(project_id, body.thread))
+        if thread.get("workspace") != workspace:
+            raise HTTPException(422, "Choose the chat for this video.")
+    result = storyboard_call(project_id, workspace, storyboard.approve)
+    turn = (
+        start_turn(project_id, body.thread, TurnRequest(text=storyboard.BUILD_PROMPT))
+        if body.thread
+        else None
+    )
+    return {"storyboard": result, "turn": turn}
 
 
 app.mount("/static", StaticFiles(directory=WEB, check_dir=False), name="static")

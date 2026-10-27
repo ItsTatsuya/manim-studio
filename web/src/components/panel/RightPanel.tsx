@@ -3,6 +3,7 @@ import {
   FileTextIcon,
   ImageIcon,
   MicIcon,
+  NotebookPenIcon,
   PlayCircleIcon,
 } from "lucide-react";
 import type * as React from "react";
@@ -13,25 +14,30 @@ import { NarrationPanel } from "./NarrationPanel";
 import { OutputPanel } from "./OutputPanel";
 import { PreviewPanel } from "./PreviewPanel";
 import { ScriptPanel } from "./ScriptPanel";
+import { StoryboardPanel } from "./StoryboardPanel";
 import { Button } from "../ui/button";
 
-export type PanelTab = "preview" | "script" | "narration" | "assets" | "output";
+export type PanelTab =
+  "preview" | "script" | "narration" | "storyboard" | "assets" | "output";
 
 const TABS: { id: PanelTab; label: string; icon: React.ReactNode }[] = [
   { id: "preview", label: "Preview", icon: <PlayCircleIcon /> },
   { id: "script", label: "Script", icon: <CodeIcon /> },
   { id: "narration", label: "Narration", icon: <MicIcon /> },
+  { id: "storyboard", label: "Storyboard", icon: <NotebookPenIcon /> },
   { id: "assets", label: "Assets", icon: <ImageIcon /> },
   { id: "output", label: "Log", icon: <FileTextIcon /> },
 ];
 
 export function RightPanel({
   projectId,
+  threadId,
   tab,
   onTabChange,
   onRender,
 }: {
   projectId: string;
+  threadId?: string;
   tab: PanelTab;
   onTabChange: (tab: PanelTab) => void;
   onRender: () => void;
@@ -134,6 +140,9 @@ export function RightPanel({
             onRender={onRender}
             onShowTab={onTabChange}
           />
+        )}
+        {tab === "storyboard" && (
+          <StoryboardPanel projectId={projectId} threadId={threadId} />
         )}
         {tab === "script" && <ScriptPanel projectId={projectId} />}
         {tab === "narration" && <NarrationPanel />}

@@ -291,6 +291,7 @@ export function ProjectView() {
               <RightPanel
                 key={workspaceId ?? "project"}
                 projectId={projectId}
+                threadId={threadId}
                 tab={layout.tab}
                 onTabChange={(tab) => setLayout({ tab })}
                 onRender={() => void render()}

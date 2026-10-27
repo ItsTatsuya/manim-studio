@@ -339,6 +339,17 @@ export interface ThreadSummary {
   status: ThreadStatus;
   locked: boolean;
   forked_from?: { thread: string; title: string; turn: string } | null;
+  /** The mode of the chat's latest message: Plan writes only storyboard.md. */
+  mode?: ChatMode;
+}
+
+export type ChatMode = "build" | "plan";
+
+export interface Storyboard {
+  text: string;
+  status: "none" | "draft" | "approved";
+  approved: string | null;
+  updated: string | null;
 }
 
 export interface ThreadItem {
@@ -382,6 +393,7 @@ export interface Turn {
   error_code?: string | null;
   /** Input (cached included), cached and output tokens the turn used. */
   tokens?: { input: number; cached: number; output: number } | null;
+  mode?: ChatMode;
 }
 
 export interface Thread extends ThreadSummary {
@@ -652,7 +664,13 @@ export const api = {
   sendTurn: (
     projectId: string,
     threadId: string,
-    body: { text: string; context?: string; model?: string; effort?: string },
+    body: {
+      text: string;
+      context?: string;
+      model?: string;
+      effort?: string;
+      mode?: ChatMode;
+    },
   ) =>
     request<Turn>(`/api/projects/${projectId}/threads/${threadId}/turns`, {
       body,
@@ -681,6 +699,29 @@ export const api = {
     if (project && workspace) query.set("workspace", workspace);
     return request<FontList>(`/api/fonts?${query}`);
   },
+
+  storyboard: (projectId: string, workspace?: string | null) =>
+    request<Storyboard>(
+      workspacePath(`/api/projects/${projectId}/storyboard`, workspace),
+    ),
+  saveStoryboard: (
+    projectId: string,
+    text: string,
+    workspace?: string | null,
+  ) =>
+    request<Storyboard>(
+      workspacePath(`/api/projects/${projectId}/storyboard`, workspace),
+      { body: { text } },
+    ),
+  approveStoryboard: (
+    projectId: string,
+    thread: string | null,
+    workspace?: string | null,
+  ) =>
+    request<{ storyboard: Storyboard; turn: Turn | null }>(
+      workspacePath(`/api/projects/${projectId}/storyboard/approve`, workspace),
+      { body: { thread } },
+    ),
 
   updates: () => request<UpdateState>("/api/updates"),
   checkUpdates: () =>
