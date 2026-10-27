@@ -50,8 +50,48 @@ def log(prompt=""):
             )
 
 
+STORYBOARD = """# Engineering Mathematics · Linear systems
+## Video 1.01 — Two Equations, Two Lines
+What does solving a pair of equations mean?
+**Builds on:** plotting straight lines · **Length:** ~1:00
+
+### By the end of this video you can
+1. Explain a solution as the point where two lines meet
+
+### 1. Where the lines cross
+> **Scene 1** · ~0:30 · **On screen:** axes, a blue and an orange line meeting at (2, 1) · **Say:** a solution satisfies both equations
+
+**Example 1.01.1 — One crossing point**
+*Problem:* Solve `x + y = 3` and `x - y = 1`.
+**Answer:** `x = 2, y = 1`
+
+> **Key idea:** one crossing point means one solution — **`solution = intersection`**
+
+### Practice problems
+- **P1.** Solve `x + 2y = 4` and `x - y = 1`.
+
+### Scene plan
+| Scene | Section | ~Time | On screen | Key spoken points |
+|---|---|---|---|---|
+| 1 | Where the lines cross | 0:30 | Two lines meet | A solution is shared |
+"""
+
+
 def write_project():
     repairing = "Studio automatic video repair" in prompt
+    if prompt.startswith("Plan mode:") or "\n\nPlan mode:" in prompt:
+        # Plan turns write the storyboard; MISBEHAVE also edits the video
+        # files so tests can check that Studio restores them.
+        revision = "\n> **Revised:** " + prompt.rsplit("\n", 1)[-1][:80] + "\n"
+        existing = Path("storyboard.md")
+        Path("storyboard.md").write_text(
+            (existing.read_text(encoding="utf-8") + revision)
+            if existing.is_file()
+            else STORYBOARD,
+            encoding="utf-8",
+        )
+        if "MISBEHAVE" not in prompt:
+            return
     if not repairing and "BROKEN_SYNTAX" in prompt:
         Path("script.py").write_text(
             "from manim import *\nclass Intro(Scene)\n    pass\n", encoding="utf-8"

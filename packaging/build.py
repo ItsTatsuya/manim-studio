@@ -233,6 +233,7 @@ def main():
         "updates.py",
         "usage.py",
         "video_workflow.py",
+        "storyboard.py",
         "update_handoff.py",
         "webview_runtime.py",
         "manim.cfg",
