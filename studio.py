@@ -61,9 +61,12 @@ from events import BUS, publish
 import narration
 import usage
 import projects
+import watermark
 import scenes
 from scenes import format_source
 from video_workflow import VideoProblem, VideoWorkflows
+
+WatermarkSettings = watermark.Settings
 
 ROOT = DATA_ROOT
 WEB = APP_ROOT / "studio_ui"
@@ -94,7 +97,9 @@ QUEUE_SEQ = itertools.count(1)
 PROCESS: subprocess.Popen | None = None
 WORKER: threading.Thread | None = None
 ANSI = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
-STUDIO_MARKER = re.compile(r"^STUDIO_(?:STAGE|WARNING|NARRATION_ERROR)\|")
+STUDIO_MARKER = re.compile(
+    r"^STUDIO_(?:STAGE|WARNING|NARRATION_ERROR|WATERMARK_ERROR)\|"
+)
 UPDATES = UpdateManager(
     APP_VERSION,
     "portable" if PORTABLE else "installed" if STANDALONE else "source",
@@ -141,6 +146,8 @@ class RenderRequest(Script):
     scene: str = Field(min_length=1, max_length=200)
     project: str | None = Field(default=None, max_length=32)
     narration: NarrationSettings | None = None
+    # Explicit watermark; when omitted the project's (or global) settings apply.
+    watermark: WatermarkSettings | None = None
     quality: str = "preview"
     name: str = Field(default="Untitled animation", max_length=100)
     width: int | None = Field(default=None, strict=True, gt=0, le=MAX_CAIRO_DIMENSION)
@@ -852,6 +859,7 @@ def render_worker(job_id: str, source: str):
         )
         env.pop("MANIM_STUDIO_CUSTOM_FPS", None)
         env.pop("MANIM_STUDIO_NARRATION", None)
+        env.pop("MANIM_STUDIO_WATERMARK", None)
         env.pop("MANIM_STUDIO_PARALLEL", None)
         env.pop("MANIM_STUDIO_HELPER", None)
         # Long scenes are split across helper processes (parallel.py); setting
@@ -883,6 +891,16 @@ def render_worker(job_id: str, source: str):
                 encoding="utf-8",
             )
             env["MANIM_STUDIO_NARRATION"] = str(spec)
+        if job.get("_watermark"):
+            # Applied after narration, so the cached animation stays unmarked.
+            spec = directory / "watermark.json"
+            spec.write_text(
+                json.dumps(
+                    {**job["_watermark"], "media_dir": str(directory / "media")}
+                ),
+                encoding="utf-8",
+            )
+            env["MANIM_STUDIO_WATERMARK"] = str(spec)
         with LOCK:
             if job.get("_cancel"):
                 job.update(status="cancelled", stage="Render cancelled")
@@ -941,6 +959,8 @@ def render_worker(job_id: str, source: str):
                         )
                     elif clean.startswith("STUDIO_NARRATION_ERROR|"):
                         job["_narration_error"] = clean.split("|", 1)[1][:1000]
+                    elif clean.startswith("STUDIO_WATERMARK_ERROR|"):
+                        job["_watermark_error"] = clean.split("|", 1)[1][:1000]
                     elif match:
                         job["stage"] = f"Animation {int(match[1]) + 1} · {match[2]}%"
                     elif "Combining" in clean or "Writing" in clean:
@@ -953,6 +973,8 @@ def render_worker(job_id: str, source: str):
                 return
         if result and job.get("_narration_error"):
             raise RuntimeError(job["_narration_error"])
+        if result and job.get("_watermark_error"):
+            raise RuntimeError(job["_watermark_error"])
         if result:
             job["repairable"] = True
             raise RuntimeError(
@@ -1235,6 +1257,25 @@ def start_next_render():
     publish_queue()
 
 
+def render_watermark(body: RenderRequest) -> dict | None:
+    """Snapshot the watermark a render will use when it is requested."""
+    if body.watermark is not None:
+        settings = body.watermark.model_dump()
+    elif body.project is not None:
+        own, parent = project_call(
+            lambda: projects.watermark_settings(
+                project_root(), body.project, body.workspace
+            )
+        )
+        settings, _ = watermark.effective(ROOT, own, parent)
+    else:
+        settings = watermark.load_default(ROOT)
+    try:
+        return watermark.render_spec(ROOT, settings)
+    except watermark.WatermarkError as error:
+        raise HTTPException(422, str(error)) from error
+
+
 @app.post("/api/render", status_code=202)
 def start_render(body: RenderRequest):
     global ACTIVE, WORKER
@@ -1278,6 +1319,7 @@ def start_render(body: RenderRequest):
                     "Download the narration voice in the Narration tab, or turn narration off.",
                 )
             narration_job = body.narration.model_dump(exclude={"enabled"})
+    watermark_job = render_watermark(body)
     with LOCK:
         if UPDATE_INSTALLING:
             raise HTTPException(
@@ -1320,6 +1362,8 @@ def start_render(body: RenderRequest):
                 job["workspace"] = body.workspace
         if narration_job is not None:
             job.update(narrated=True, _narration=narration_job)
+        if watermark_job is not None:
+            job.update(watermarked=True, _watermark=watermark_job)
         if body.width is not None or body.fps is not None:
             preset_width, preset_height = QUALITY_DIMENSIONS[body.quality]
             job.update(
@@ -1837,6 +1881,125 @@ def delete_project_asset(project_id: str, path: str, workspace: str | None = Non
     return {"ok": True}
 
 
+# ------------------------------------------------------------------ watermark
+
+
+class WatermarkUpdate(BaseModel):
+    # None removes the override, so the project (or the default) applies again.
+    settings: WatermarkSettings | None = None
+
+
+class WatermarkAsset(BaseModel):
+    path: str = Field(min_length=1, max_length=1000)
+
+
+def require_logo(settings: WatermarkSettings | None):
+    if settings is not None and settings.type == "image":
+        if not watermark.logo_path(ROOT, settings.logo).is_file():
+            raise HTTPException(
+                422, "The watermark logo is missing. Upload or choose it again."
+            )
+
+
+def store_watermark_logo(data: bytes, filename: str) -> dict:
+    try:
+        return watermark.store_logo(ROOT, data, filename)
+    except watermark.WatermarkError as error:
+        raise HTTPException(422, str(error)) from error
+    except OSError as error:
+        raise HTTPException(
+            507, "Couldn’t save the logo. Check free disk space, then retry."
+        ) from error
+
+
+@app.get("/api/watermark")
+def watermark_default():
+    return {"settings": watermark.load_default(ROOT)}
+
+
+@app.post("/api/watermark")
+def save_watermark_default(body: WatermarkSettings):
+    require_logo(body)
+    try:
+        return {"settings": watermark.save_default(ROOT, body.model_dump())}
+    except OSError as error:
+        raise HTTPException(
+            507, "Couldn’t save the watermark. Check folder permissions, then retry."
+        ) from error
+
+
+@app.post("/api/watermark/logos")
+async def upload_watermark_logo(request: Request):
+    filename = unquote(request.headers.get("X-Filename", "")).strip()
+    if Path(filename).suffix.lower() not in watermark.LOGO_SUFFIXES:
+        raise HTTPException(422, "Choose a PNG, JPG, WebP, GIF, BMP or SVG logo.")
+    data = bytearray()
+    async for chunk in request.stream():
+        data.extend(chunk)
+        if len(data) > watermark.MAX_LOGO_BYTES:
+            raise HTTPException(413, "Logos must be smaller than 10 MB.")
+    return await run_in_threadpool(store_watermark_logo, bytes(data), filename)
+
+
+@app.get("/api/watermark/logos/{logo}")
+def read_watermark_logo(logo: str):
+    try:
+        path = watermark.logo_path(ROOT, logo)
+    except KeyError as error:
+        raise HTTPException(404, "Logo not found.") from error
+    if not path.is_file():
+        raise HTTPException(404, "Logo not found.")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.get("/api/projects/{project_id}/watermark")
+def project_watermark(project_id: str, workspace: str | None = None):
+    own, parent = project_call(
+        lambda: projects.watermark_settings(project_root(), project_id, workspace)
+    )
+    settings, source = watermark.effective(ROOT, own, parent)
+    inherited, inherited_from = watermark.effective(ROOT, None, parent)
+    return {
+        "own": watermark.clean(own),
+        "settings": settings,
+        "source": source,
+        "inherited": inherited,
+        "inherited_from": inherited_from,
+    }
+
+
+@app.post("/api/projects/{project_id}/watermark")
+def save_project_watermark(
+    project_id: str, body: WatermarkUpdate, workspace: str | None = None
+):
+    require_logo(body.settings)
+    project_call(
+        lambda: projects.set_watermark(
+            project_root(),
+            project_id,
+            workspace,
+            body.settings.model_dump() if body.settings is not None else None,
+        )
+    )
+    return project_watermark(project_id, workspace)
+
+
+@app.post("/api/projects/{project_id}/watermark/logo")
+def watermark_logo_from_asset(
+    project_id: str, body: WatermarkAsset, workspace: str | None = None
+):
+    file = project_asset(project_id, body.path, workspace)
+    if file.suffix.lower() not in watermark.LOGO_SUFFIXES:
+        raise HTTPException(422, "Choose a PNG, JPG, WebP, GIF, BMP or SVG logo.")
+    try:
+        if file.stat().st_size > watermark.MAX_LOGO_BYTES:
+            raise HTTPException(413, "Logos must be smaller than 10 MB.")
+        data = file.read_bytes()
+    except OSError as error:
+        raise HTTPException(404, "Asset not found.") from error
+    return store_watermark_logo(data, file.name)
+
+
 class NarrationDownload(BaseModel):
     quality: str = "standard"
 
@@ -2006,7 +2169,7 @@ def prepare_video(project: dict, options: dict, automatic: bool):
     return {
         **{
             key: options[key]
-            for key in ("quality", "width", "height", "fps")
+            for key in ("quality", "width", "height", "fps", "watermark")
             if options.get(key) is not None
         },
         "source": analysis["source"],
@@ -2078,7 +2241,7 @@ def start_video(project_id: str, body: VideoRequest):
             diagnostics=diagnostics,
             options={
                 **body.model_dump(
-                    include={"scene", "quality", "width", "height", "fps"},
+                    include={"scene", "quality", "width", "height", "fps", "watermark"},
                     exclude_none=True,
                 ),
                 "narration": body.narration is None or body.narration.enabled,

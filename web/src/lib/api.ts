@@ -44,7 +44,7 @@ async function errorMessage(response: Response) {
     : "Studio couldn't complete that action. Please try again.";
 }
 
-async function request<T>(
+export async function request<T>(
   path: string,
   options: {
     method?: string;
