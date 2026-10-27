@@ -309,12 +309,25 @@ class AgentStyleTests(StyleCase):
                 "effort": "",
             },
             project_dir=folder,
+            record={"mode": "build"},
         )
         prompt_dir = self.root / "prompt"
         prompt_dir.mkdir()
         _, preamble = manager.build_command(turn, "codex", prompt_dir)
         self.assertIn('House style "Dark explainer"', preamble)
         self.assertTrue((folder / styles.MODULE_FILE).is_file())
+
+        # A resumed Codex session is re-briefed only when its instructions change.
+        turn.thread["session"] = {"provider": "codex", "id": "session-1"}
+        _, preamble = manager.build_command(turn, "codex", prompt_dir)
+        self.assertEqual(preamble, "")
+        projects.update(self.root / "projects", project["id"], style="high-contrast")
+        _, preamble = manager.build_command(turn, "codex", prompt_dir)
+        self.assertIn('House style "High contrast"', preamble)
+        turn.record["mode"] = "plan"
+        _, preamble = manager.build_command(turn, "codex", prompt_dir)
+        self.assertIn("PLAN MODE", preamble)
+        self.assertIn('House style "High contrast"', preamble)
 
 
 if __name__ == "__main__":

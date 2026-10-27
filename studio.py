@@ -766,7 +766,14 @@ def video_cache_key(job: dict, source: str, working: Path) -> str:
                     if name != "__pycache__" and not name.startswith(".")
                 )
                 for name in sorted(names):
-                    if name in {"script.py", "narration.txt", "project.json"}:
+                    # The storyboard is a plan for review; it never changes frames.
+                    if name in {
+                        "script.py",
+                        "narration.txt",
+                        "project.json",
+                        storyboard.FILE,
+                        storyboard.STATE,
+                    }:
                         continue
                     path = Path(current) / name
                     info = path.stat()
@@ -2037,9 +2044,9 @@ class StyleDefault(BaseModel):
 
 
 def style_call(action):
+    # styles.py serializes its own library writes; the render LOCK is not needed.
     try:
-        with LOCK:
-            return action()
+        return action()
     except KeyError as error:
         raise HTTPException(404, "This style no longer exists.") from error
     except styles.StyleError as error:

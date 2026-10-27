@@ -215,7 +215,13 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(resolved(), (default, "default"))
         self.assertEqual(resolved(video["workspace"]), (default, "default"))
         parent = watermark.Settings(type="text", text="course").model_dump()
+        spoken = root / project["folder"] / projects.NARRATION_FILE
+        spoken.write_text("Hello.", encoding="utf-8")
+        before = spoken.stat().st_mtime_ns
         projects.set_watermark(root, project["id"], None, parent)
+        # Only project.json changes, so a running video sees no file edit.
+        self.assertEqual(spoken.stat().st_mtime_ns, before)
+        self.assertEqual(spoken.read_text(encoding="utf-8"), "Hello.")
         self.assertEqual(resolved(), (parent, "own"))
         self.assertEqual(resolved(video["workspace"]), (parent, "project"))
         hidden = watermark.Settings(type="none").model_dump()

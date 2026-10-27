@@ -224,7 +224,8 @@ def read(root: Path, project_id: str, workspace: str | None = None) -> dict:
     return {**metadata, "source": source}
 
 
-def _save(path: Path, metadata: dict):
+def _save_metadata(path: Path, metadata: dict):
+    """Write project.json only, leaving narration.txt untouched."""
     stored = {key: metadata[key] for key in ("id", "name", "created", "updated")}
     if _style_id(metadata.get("style")):
         stored["style"] = metadata["style"]
@@ -233,8 +234,12 @@ def _save(path: Path, metadata: dict):
     }
     if metadata.get("watermark") is not None:
         stored["watermark"] = metadata["watermark"]
-    _write_atomic(path / NARRATION_FILE, metadata["narration"]["text"])
     _write_atomic(path / PROJECT_FILE, json.dumps(stored, indent=2))
+
+
+def _save(path: Path, metadata: dict):
+    _write_atomic(path / NARRATION_FILE, metadata["narration"]["text"])
+    _save_metadata(path, metadata)
 
 
 def create(root: Path, name: str, source: str = "", narration=None, style=None) -> dict:
@@ -317,7 +322,9 @@ def update(
                 raise ProjectError("Scripts must be smaller than 500 KB.")
             _write_atomic(path / SCRIPT_FILE, source)
         metadata["updated"] = _now()
-        _save(path, metadata)
+        # Leave narration.txt alone unless it changed (a rename or style change
+        # must not look like a narration edit to a running video workflow).
+        (_save if narration is not None else _save_metadata)(path, metadata)
     return metadata
 
 
@@ -340,7 +347,9 @@ def set_watermark(root: Path, project_id: str, workspace: str | None, value):
             raise KeyError(project_id)
         metadata["watermark"] = value
         metadata["updated"] = _now()
-        _save(path, metadata)
+        # Only metadata changes: rewriting narration.txt would race an agent
+        # editing it and look like a video edit to a running workflow.
+        _save_metadata(path, metadata)
     return value
 
 

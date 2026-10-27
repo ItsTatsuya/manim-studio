@@ -9,6 +9,7 @@ Provider sessions are resumed on later turns, so the agent keeps context.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import logging
 import os
@@ -1644,6 +1645,7 @@ class AgentManager:
                 },
                 "fork_context": transcript(items),
                 "workspace": source.get("workspace"),
+                "mode": source.get("mode", "build"),
             }
             self.threads[thread["id"]] = thread
         self.save(thread)
@@ -1917,13 +1919,18 @@ class AgentManager:
                 ]
             )
             # Codex has no system-prompt file flag; brief it once per session,
-            # and again whenever the chat switches between Plan and Build.
+            # and again whenever the instructions change: a switch between Plan
+            # and Build, or a different house style for this project.
+            briefing = (
+                f"{mode}:{hashlib.sha256(system.encode('utf-8')).hexdigest()[:16]}"
+            )
             preamble = (
                 ""
-                if resume and thread.get("briefed", "build") == mode
+                if resume and thread.get("briefed") == briefing
                 else f"<studio_instructions>\n{system}\n</studio_instructions>\n\n"
             )
-            thread["briefed"] = mode
+            with self.lock:  # The thread may be saved from another request.
+                thread["briefed"] = briefing
             return command, preamble
         system_file = prompt_dir / "system.md"
         system_file.write_text(system, encoding="utf-8")
