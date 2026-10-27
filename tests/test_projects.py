@@ -23,6 +23,7 @@ from starlette.requests import ClientDisconnect
 
 import av
 import numpy as np
+from scipy.signal import butter, sosfiltfilt
 import uvicorn
 
 import narration
@@ -605,6 +606,57 @@ class NarrationTests(unittest.TestCase):
         # 10 dB apart before mastering; 2:1 leveling roughly halves the gap.
         self.assertLess(20 * np.log10(second / first), 7)
         self.assertEqual(narration.master(np.zeros(0, np.float32)).size, 0)
+
+    def test_mastering_softens_sibilants_and_hiss(self):
+        rate = narration.SAMPLE_RATE
+        times = np.arange(rate) / rate
+        noise = np.random.default_rng(1).standard_normal(rate)
+        # The consonant detail between 2 and 8 kHz that makes a voice clear.
+        presence = sosfiltfilt(
+            butter(4, [2000, 8000], "bandpass", fs=rate, output="sos"), noise
+        )
+        vowel = 0.5 * np.sin(2 * np.pi * 220 * times) + 0.03 * presence
+        hiss = 0.04 * sosfiltfilt(
+            butter(4, 10000, "highpass", fs=rate, output="sos"),
+            np.random.default_rng(2).standard_normal(rate),
+        )
+        sibilant = sosfiltfilt(
+            butter(4, 5000, "highpass", fs=rate, output="sos"), noise
+        )
+        sibilant *= 0.5 / np.sqrt(np.mean(sibilant**2)) * (times < 0.25)
+        track = np.concatenate([vowel + hiss, sibilant + hiss]).astype(np.float32)
+
+        def ratio(audio, low, high, part):
+            piece = audio[part * rate : (part + 1) * rate]
+            spectrum = np.abs(np.fft.rfft(piece)) ** 2
+            band = spectrum[int(low) : int(high)].sum()
+            return 10 * np.log10(band / spectrum[150:300].sum())
+
+        dry = narration.master(track, room=0)
+        plain = track.astype(np.float64)
+        # The vowel keeps its clarity; only the hiss at the very top drops.
+        self.assertAlmostEqual(
+            ratio(dry, 2000, 8000, 0), ratio(plain, 2000, 8000, 0), delta=1.5
+        )
+        self.assertLess(ratio(dry, 10500, 12000, 0), ratio(plain, 10500, 12000, 0) - 3)
+        # A sibilant louder than the vowel ends up below it.
+        loud_s = 10 * np.log10(np.mean(dry[rate : rate + rate // 4] ** 2))
+        vowel_level = 10 * np.log10(np.mean(dry[rate // 4 : 3 * rate // 4] ** 2))
+        self.assertLess(loud_s, vowel_level - 3)
+
+    def test_limiter_turns_peaks_down_without_clipping(self):
+        rate = narration.SAMPLE_RATE
+        times = np.arange(rate) / rate
+        level = np.where((times > 0.3) & (times < 0.7), 1.6, 0.5)
+        result = narration._limit(level * np.sin(2 * np.pi * 220 * times))
+        self.assertLessEqual(float(np.max(np.abs(result))), narration.CEILING + 1e-6)
+        loud = result[int(0.4 * rate) : int(0.6 * rate)]
+        spectrum = np.abs(np.fft.rfft(loud * np.hanning(loud.size))) ** 2
+        frequencies = np.fft.rfftfreq(loud.size, 1 / rate)
+        tone = spectrum[(frequencies > 200) & (frequencies < 240)].sum()
+        harmonics = spectrum[frequencies > 1000].sum()
+        # Clipping the loud part would add harmonics only ~25 dB under the tone.
+        self.assertLess(10 * np.log10(harmonics / tone), -60)
 
     def test_mux_copies_video_and_mixes_existing_audio(self):
         with tempfile.TemporaryDirectory() as folder:

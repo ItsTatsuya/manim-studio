@@ -49,8 +49,16 @@ FADE = 0.008
 # noticeably softer than the music and speech around it.
 TARGET_LUFS = -16.0
 CEILING = 10 ** (-1.5 / 20)  # Sample-peak ceiling, about -1.5 dBFS.
+LIMIT_WINDOW = 0.008  # Seconds the limiter takes to ease into and out of a peak.
 # How much of the synthetic room response is mixed under the dry voice.
 ROOM_MIX = 0.07
+# De-essing: the band above SIBILANCE_SPLIT Hz is held near SIBILANCE_LEVEL dB
+# under the loud speech, turned down by at most SIBILANCE_DEPTH dB, then the
+# top end rolls off from TOP_ROLLOFF Hz.
+SIBILANCE_SPLIT = 4500
+SIBILANCE_LEVEL = -18.0
+SIBILANCE_DEPTH = -10.0
+TOP_ROLLOFF = 11000
 LANGUAGES = {
     "a": ("en-us", "American English"),
     "b": ("en-gb", "British English"),
@@ -598,9 +606,46 @@ def loudness(samples, rate=SAMPLE_RATE):
     return -0.691 + 10 * math.log10(float(kept.mean()))
 
 
+def _soften(voice):
+    """Tame the model's harsh sibilants and the hiss above them.
+
+    Kokoro voices "s" and "sh" about as loud as the vowels around them and
+    leaves a flat noise floor above 8 kHz; mastered to broadcast loudness the
+    two sound fuzzy. The upper band is turned down only where it rises well
+    above the loud speech, so vowels keep their clarity, then the hiss at the
+    very top rolls off gently. Both
+    filters run forwards and backwards, so the bands recombine exactly.
+    """
+    import numpy as np
+    from scipy.signal import butter, fftconvolve, sosfiltfilt
+
+    def mean(values, seconds):
+        window = max(1, int(seconds * SAMPLE_RATE))
+        smooth = np.ones(window) / window
+        return np.maximum(fftconvolve(values, smooth, mode="same"), 0.0)
+
+    body = sosfiltfilt(
+        butter(4, SIBILANCE_SPLIT, "lowpass", fs=SAMPLE_RATE, output="sos"), voice
+    )
+    upper = voice - body
+    level = np.sqrt(mean(voice**2, 0.05))
+    speech = float(np.percentile(level[level > 0.05 * level.max()], 90))
+    sibilance = np.sqrt(mean(upper**2, 0.005)) + 1e-12
+    gain = np.clip(
+        (10 ** (SIBILANCE_LEVEL / 20) * speech / sibilance) ** 0.75,
+        10 ** (SIBILANCE_DEPTH / 20),
+        1.0,
+    )
+    voice = body + upper * mean(gain, 0.004)
+    return sosfiltfilt(
+        butter(1, TOP_ROLLOFF, "lowpass", fs=SAMPLE_RATE, output="sos"), voice
+    )
+
+
 def master(track, room=ROOM_MIX):
-    """Finish the dry model output like a voice-over: remove rumble, level
-    loud and soft sentences, add a touch of room and normalize loudness."""
+    """Finish the dry model output like a voice-over: remove rumble, soften
+    sibilants and hiss, level loud and soft sentences, add a touch of room and
+    normalize loudness."""
     import numpy as np
     from scipy.signal import butter, fftconvolve, sosfilt
 
@@ -610,6 +655,7 @@ def master(track, room=ROOM_MIX):
         butter(2, 70, "highpass", fs=SAMPLE_RATE, output="sos"),
         track.astype(np.float64),
     )
+    voice = _soften(voice)
     window = int(0.05 * SAMPLE_RATE)
     smooth = np.ones(window) / window
     envelope = np.sqrt(fftconvolve(voice**2, smooth, mode="same") + 1e-12)
@@ -627,22 +673,27 @@ def master(track, room=ROOM_MIX):
 
 
 def _limit(voice):
-    """Soft-limit to CEILING, judged on 4x oversampled audio so the peaks a
-    player reconstructs between samples stay below it too."""
+    """Keep peaks under CEILING by turning the gain down, never by clipping.
+
+    Each sample's peak is judged on 4x oversampled audio so the peaks a player
+    reconstructs between samples count too. The gain a peak needs is held for
+    LIMIT_WINDOW on both sides and then averaged over LIMIT_WINDOW, so it eases
+    down before the peak and back up after it; the hold guarantees the eased
+    gain still covers the peak. Clipping the waveform instead sounds fuzzy.
+    """
     import numpy as np
+    from scipy.ndimage import minimum_filter1d, uniform_filter1d
     from scipy.signal import resample_poly
 
-    knee = 0.8 * CEILING
-    for _ in range(4):
-        wide = resample_poly(voice, 4, 1)
-        if float(np.max(np.abs(wide))) <= CEILING:
+    window = max(1, int(LIMIT_WINDOW * SAMPLE_RATE))
+    for _ in range(3):
+        wide = np.abs(resample_poly(voice, 4, 1))[: voice.size * 4]
+        peaks = wide.reshape(-1, 4).max(axis=1)
+        if float(peaks.max()) <= CEILING:
             break
-        level = np.abs(wide)
-        over = level > knee
-        wide[over] = np.sign(wide[over]) * (
-            knee + (CEILING - knee) * np.tanh((level[over] - knee) / (CEILING - knee))
-        )
-        voice = resample_poly(wide, 1, 4)[: voice.size]
+        need = np.minimum(1.0, CEILING / np.maximum(peaks, 1e-12))
+        held = minimum_filter1d(need, 2 * window + 1, mode="nearest")
+        voice = voice * uniform_filter1d(held, window, mode="nearest")
     peak = float(np.max(np.abs(resample_poly(voice, 4, 1))))
     return voice * (CEILING / peak) if peak > CEILING else voice
 
