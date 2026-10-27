@@ -634,6 +634,7 @@ class AgentUpdater:
                     updating.discard(provider)
             self._save()
             self.emit()
+        agents.forget_capabilities()  # The new version may accept other flags.
         try:
             manager.refresh()  # Re-probe so version, status and models refresh.
         except Exception:

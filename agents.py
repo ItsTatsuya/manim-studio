@@ -256,6 +256,10 @@ class AgentError(Exception):
     """A user-facing agent problem."""
 
 
+class AgentUpdating(AgentError):
+    """The provider's CLI is being updated; the turn can be retried shortly."""
+
+
 def _now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -437,6 +441,12 @@ def _binary_stamp(binary: str) -> tuple:
         return (str(binary), stat.st_mtime_ns, stat.st_size)
     except OSError:
         return (str(binary), None, None)
+
+
+def forget_capabilities():
+    """Re-detect CLI flags on the next turn, e.g. after a CLI update."""
+    with _CAPABILITY_LOCK:
+        _CAPABILITIES.clear()
 
 
 def _cached(key: tuple, compute):
@@ -1709,13 +1719,14 @@ class AgentManager:
         model=None,
         effort=None,
         context="",
+        update_wait: float = UPDATE_WAIT,
     ) -> dict:
         text = (text or "").strip()
         if not text:
             raise AgentError("Write a message for the agent.")
         if len(text) + len(context) > MAX_PROMPT:
             raise AgentError("Shorten the message and try again.")
-        self._wait_for_update(project_id, thread_id)
+        self._wait_for_update(project_id, thread_id, update_wait)
         with self.lock:
             thread = self.get(project_id, thread_id)
             project_dir = projects.workspace_folder(
@@ -1736,7 +1747,7 @@ class AgentManager:
                     thread["provider"], thread["model"], effort
                 )[2]
             if thread["provider"] in self.updating:
-                raise AgentError(
+                raise AgentUpdating(
                     f"{PROVIDERS[thread['provider']]['name']} is updating. Try again in a minute."
                 )
             status = self.statuses.get(thread["provider"])
@@ -1793,9 +1804,9 @@ class AgentManager:
             raise AgentError("The agent could not start. Try again.")
         return dict(turn_record)
 
-    def _wait_for_update(self, project_id: str, thread_id: str):
+    def _wait_for_update(self, project_id: str, thread_id: str, timeout: float):
         """Hold a new turn briefly while its provider's CLI is being updated."""
-        deadline = time.monotonic() + UPDATE_WAIT
+        deadline = time.monotonic() + timeout
         while True:
             with self.lock:
                 provider = self.get(project_id, thread_id)["provider"]

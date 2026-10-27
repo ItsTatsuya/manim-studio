@@ -57,6 +57,17 @@ starter scripts and manual rendering launchers have been retired.
   Studio writes `studio_style.py` beside `script.py` before renders and agent turns,
   only when its text changes so render cache keys stay stable, and adds a short style
   guide to the agent instructions.
+- Watermarks (`watermark.py`): a global default in `.studio/watermark.json`, logos
+  rasterised into `.studio/watermark/logos/`, per-project/video overrides in metadata.
+  The worker overlays the final movie with PyAV (the bundled ffmpeg is audio-only)
+  after narration and the render-cache checkpoint, so the animation cache survives.
+- Agent CLI updates (`agent_updates.py`) check the npm registry at most daily and run
+  only while no turn uses that provider; new turns wait and repairs retry. Only npm and
+  native installs are updated; custom binaries are reported as managed externally.
+  `MANIM_STUDIO_AGENT_UPDATES=0` disables the background check.
+- Keep agent sessions lean: Claude runs with Studio's own tool list, no user MCP servers,
+  hooks, slash commands or CLAUDE.md; Codex gets feature/MCP `-c` overrides. Flags are
+  feature-detected per CLI binary, so unknown flags never break a run.
 - Narration (`narration.py`) uses Kokoro-82M through `kokoro-onnx` and ONNX Runtime
   on the CPU; do not add PyTorch. Model files download on demand into
   `DATA_ROOT/.studio/models/kokoro` from pinned release URLs with SHA256 checks.

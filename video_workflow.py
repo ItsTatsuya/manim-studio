@@ -15,6 +15,9 @@ import projects
 
 TERMINAL = {"completed", "failed", "cancelled"}
 MAX_REPAIRS = 3
+# A repair that meets a CLI update retries every UPDATE_RETRY seconds.
+UPDATE_RETRY = 15
+UPDATE_RETRY_LIMIT = 15 * 60
 DIAGNOSTIC_LIMIT = 4000
 
 _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -342,10 +345,35 @@ class VideoWorkflows:
                 "<video_error>\n"
                 + compact_diagnostics(diagnostics)
                 + "\n</video_error>",
+                update_wait=0,  # Never hold the workflow lock while a CLI updates.
             )
             job["_turns"].add(turn["id"])
+        except agents.AgentUpdating:
+            # The CLI is updating: retry this attempt once the update is done.
+            waited = job.get("_update_wait", 0) + UPDATE_RETRY
+            if waited > UPDATE_RETRY_LIMIT:
+                self._fail(job, "The agent update took too long. Try the repair again.")
+                return
+            job["_update_wait"] = waited
+            self._update(
+                job,
+                attempt=job["attempt"] - 1,
+                stage="Waiting for the agent update to finish…",
+            )
+            timer = threading.Timer(
+                UPDATE_RETRY, self._retry_repair, (job["id"], diagnostics)
+            )
+            timer.daemon = True
+            timer.start()
         except (agents.AgentError, VideoProblem, KeyError, OSError) as error:
             self._fail(job, str(error))
+
+    def _retry_repair(self, job_id, diagnostics):
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if self.closed or job is None or job["status"] != "repairing":
+                return
+            self._repair(job, diagnostics)
 
     def agent_finished(self, thread, turn):
         with self.lock:
