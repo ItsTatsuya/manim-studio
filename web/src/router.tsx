@@ -84,6 +84,14 @@ const settingsChildren = [
   }),
   createRoute({
     getParentRoute: () => settingsRoute,
+    path: "styles",
+    component: lazyRouteComponent(
+      () => import("~/components/settings/StylesSettings"),
+      "StylesSettings",
+    ),
+  }),
+  createRoute({
+    getParentRoute: () => settingsRoute,
     path: "about",
     component: lazyRouteComponent(
       () => import("~/components/settings/AboutSettings"),

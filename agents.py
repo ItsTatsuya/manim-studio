@@ -30,6 +30,7 @@ from processes import (
     tree_active,
 )
 import projects
+import styles
 
 PROVIDERS = {
     "codex": {
@@ -1606,6 +1607,11 @@ class AgentManager:
             check=self.check_command(),
             latex=bool(self.latex()),
         )
+        try:
+            # House style: refresh studio_style.py and brief the agent on it.
+            system += "\n\n" + styles.prepare(self.data_root, turn.project_dir)
+        except OSError:
+            logging.exception("Unable to prepare the project style")
         if thread["provider"] == "codex":
             # `exec resume` accepts fewer flags, so policy goes through -c overrides.
             options = ["--json", "--skip-git-repo-check"]

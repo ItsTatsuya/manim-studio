@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { api } from "~/lib/api";
+import { styleOptions, useStyleLibrary } from "~/lib/styles";
 import { useStudio } from "~/state/studio";
 import {
   ModelPicker,
@@ -57,6 +58,8 @@ export function BatchVideosDialog({
   const [existingFolder, setExistingFolder] = useState("");
   const [sharedFolder, setSharedFolder] = useState<string | null>(null);
   const [inputError, setInputError] = useState("");
+  const [style, setStyle] = useState("");
+  const styles = useStyleLibrary();
   const fileInput = useRef<HTMLInputElement>(null);
   const projects = useStudio((state) => state.projects);
   const folderSupport = useStudio(
@@ -80,7 +83,11 @@ export function BatchVideosDialog({
     let parent = destination === "existing" ? existingFolder : sharedFolder;
     if (destination === "same" && !parent) {
       try {
-        const project = await api.createProject(folderName.trim());
+        const project = await api.createProject(
+          folderName.trim(),
+          "",
+          style || undefined,
+        );
         parent = project.id;
         setSharedFolder(parent);
         await useStudio.getState().loadProjects();
@@ -104,6 +111,9 @@ export function BatchVideosDialog({
           );
           projectId = project.id;
           workspace = project.workspace;
+          // Videos in a new shared folder follow its style; others choose it here.
+          if (style && (destination !== "same" || !workspace))
+            await api.updateProject(projectId, { style }, workspace);
           update(item.file, { project: projectId, workspace });
           await useStudio.getState().loadProjects();
         }
@@ -148,7 +158,10 @@ export function BatchVideosDialog({
         if (!busy) onOpenChange(value);
       }}
     >
-      <DialogPopup className="max-w-[36rem]" showClose={!busy}>
+      <DialogPopup
+        className="max-h-[calc(100dvh-2rem)] max-w-[36rem]"
+        showClose={!busy}
+      >
         <DialogHeader className="px-6 pt-6 pb-5">
           <DialogTitle>Videos from PDFs</DialogTitle>
           <DialogDescription>
@@ -255,6 +268,20 @@ export function BatchVideosDialog({
               )}
             </div>
           </fieldset>
+          <Field label="House style">
+            <Select
+              aria-label="House style"
+              className="w-full"
+              value={style}
+              disabled={busy || !styles}
+              onChange={setStyle}
+              options={styleOptions(
+                styles,
+                destination === "existing" ? "Project style" : "Default",
+                destination !== "existing",
+              )}
+            />
+          </Field>
           <div className="space-y-2">
             <Button
               variant="outline"

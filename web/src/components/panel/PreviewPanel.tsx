@@ -28,6 +28,7 @@ import { Select } from "../ui/select";
 import { toast } from "../ui/toast";
 import type { PanelTab } from "./RightPanel";
 import { OutputSettings } from "./OutputSettings";
+import { ProjectStylePicker } from "../styles/ProjectStylePicker";
 import {
   RepairVideoButton,
   useVideoWorkflow,
@@ -200,6 +201,9 @@ export function PreviewPanel({
       </div>
 
       <div className="sticky bottom-0 mt-auto border-t bg-card/60 p-3 backdrop-blur supports-[backdrop-filter]:bg-card/40">
+        <div className="mb-3">
+          <ProjectStylePicker projectId={projectId} />
+        </div>
         <div
           className={`grid ${multipleScenes ? "grid-cols-[1fr_1fr_auto]" : "grid-cols-[1fr_auto]"} items-end gap-3`}
         >

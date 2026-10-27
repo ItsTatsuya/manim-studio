@@ -228,6 +228,7 @@ def main():
         "events.py",
         "processes.py",
         "scenes.py",
+        "styles.py",
         "narration.py",
         "file_picker.py",
         "updates.py",
