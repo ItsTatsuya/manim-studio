@@ -16,6 +16,7 @@ import { Badge, Input, Spinner, Textarea } from "../ui/input";
 import { Select } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { toast } from "../ui/toast";
+import { AgentUpdatesSection, ProviderUpdateStatus } from "./AgentUpdates";
 import { SettingsRow, SettingsSection } from "./SettingsLayout";
 
 export function ProvidersSettings() {
@@ -69,6 +70,7 @@ export function ProvidersSettings() {
               />
             ))}
           </div>
+          <AgentUpdatesSection />
           <SettingsSection title="Defaults">
             <SettingsRow
               title="Default provider"
@@ -214,6 +216,7 @@ function ProviderCard({
           {provider.auth.account ? ` · ${provider.auth.account}` : ""}
         </p>
       )}
+      {provider.installed && <ProviderUpdateStatus provider={provider.id} />}
       {!provider.installed && (
         <div className="mt-3 rounded-lg bg-code p-3">
           <p className="mb-2 text-xs text-muted-foreground">

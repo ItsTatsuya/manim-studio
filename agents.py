@@ -122,6 +122,8 @@ DEFAULT_SETTINGS = {
     # video fails ("fix" with the agent and re-queue, "skip" it, or "pause").
     "queue_start": "auto",
     "queue_on_error": "fix",
+    # Keep the installed CLIs current (see agent_updates.py).
+    "auto_update_agents": True,
 }
 QUEUE_START_MODES = ("auto", "manual")
 QUEUE_ERROR_MODES = ("fix", "skip", "pause")
@@ -130,6 +132,8 @@ MAX_PROMPT = 40_000
 MAX_DETAIL = 6_000
 MAX_ITEMS = 3_000
 MAX_STDERR = 20_000
+# How long a new turn waits for its provider's CLI update to finish.
+UPDATE_WAIT = 30
 
 
 ERROR_CODES = [
@@ -307,6 +311,8 @@ def clean_settings(value) -> dict:
         result["queue_start"] = value["queue_start"]
     if value.get("queue_on_error") in QUEUE_ERROR_MODES:
         result["queue_on_error"] = value["queue_on_error"]
+    if isinstance(value.get("auto_update_agents"), bool):
+        result["auto_update_agents"] = value["auto_update_agents"]
     return result
 
 
@@ -1008,6 +1014,8 @@ class AgentManager:
         self.probe_thread: threading.Thread | None = None
         self.settings = clean_settings(self._read(self.settings_path))
         self.on_turn_finished = None
+        # Providers whose CLI is being updated; guarded by ``lock``.
+        self.updating: set[str] = set()
 
     # ---- storage
     @property
@@ -1483,6 +1491,7 @@ class AgentManager:
             raise AgentError("Write a message for the agent.")
         if len(text) + len(context) > MAX_PROMPT:
             raise AgentError("Shorten the message and try again.")
+        self._wait_for_update(project_id, thread_id)
         with self.lock:
             thread = self.get(project_id, thread_id)
             project_dir = projects.workspace_folder(
@@ -1502,6 +1511,10 @@ class AgentManager:
                 thread["effort"] = self._choose(
                     thread["provider"], thread["model"], effort
                 )[2]
+            if thread["provider"] in self.updating:
+                raise AgentError(
+                    f"{PROVIDERS[thread['provider']]['name']} is updating. Try again in a minute."
+                )
             status = self.statuses.get(thread["provider"])
             config = self.settings["providers"][thread["provider"]]
             if not config["enabled"]:
@@ -1555,6 +1568,16 @@ class AgentManager:
             self.emit_turn(thread, turn_record)
             raise AgentError("The agent could not start. Try again.")
         return dict(turn_record)
+
+    def _wait_for_update(self, project_id: str, thread_id: str):
+        """Hold a new turn briefly while its provider's CLI is being updated."""
+        deadline = time.monotonic() + UPDATE_WAIT
+        while True:
+            with self.lock:
+                provider = self.get(project_id, thread_id)["provider"]
+                if provider not in self.updating or time.monotonic() >= deadline:
+                    return
+            time.sleep(0.2)
 
     def interrupt(self, project_id: str, thread_id: str, wait=False):
         with self.lock:

@@ -268,6 +268,41 @@ export interface AgentSettings {
   auto_render: boolean;
   queue_start: "auto" | "manual";
   queue_on_error: "fix" | "skip" | "pause";
+  /** Keep the installed agent CLIs up to date in the background. */
+  auto_update_agents: boolean;
+}
+
+export type AgentUpdateStatus =
+  | "unknown"
+  | "checking"
+  | "current"
+  | "available"
+  | "waiting"
+  | "updating"
+  | "error"
+  | "external"
+  | "disabled"
+  | "missing";
+
+export interface AgentUpdateEntry {
+  provider: ProviderId;
+  status: AgentUpdateStatus;
+  message: string;
+  installed: string | null;
+  latest: string | null;
+  available: boolean;
+  method: "npm" | "native" | "external" | "missing" | null;
+  checked: string | null;
+  updated: string | null;
+  /** The last lines the update command printed. */
+  output: string;
+}
+
+export interface AgentUpdateState {
+  auto: boolean;
+  checking: boolean;
+  last_check: string | null;
+  providers: Record<ProviderId, AgentUpdateEntry>;
 }
 
 export interface QueueState {
@@ -509,6 +544,13 @@ export const api = {
     request(`/api/agents/${provider}/login`, { method: "POST" }),
   agentInstall: (provider: ProviderId) =>
     request(`/api/agents/${provider}/install`, { method: "POST" }),
+  agentUpdates: () => request<AgentUpdateState>("/api/agents/updates"),
+  checkAgentUpdates: () =>
+    request<AgentUpdateState>("/api/agents/updates/check", { method: "POST" }),
+  updateAgent: (provider: ProviderId) =>
+    request<AgentUpdateState>(`/api/agents/${provider}/update`, {
+      method: "POST",
+    }),
 
   threads: (projectId: string) =>
     request<{ threads: ThreadSummary[] }>(`/api/projects/${projectId}/threads`),

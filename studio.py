@@ -55,6 +55,7 @@ from processes import (
     stop_process,
 )
 import agents
+import agent_updates
 import file_picker
 from events import BUS, publish
 import narration
@@ -109,6 +110,8 @@ AGENTS = agents.AgentManager(
     latex=lambda: shutil.which("latex") and shutil.which("dvisvgm"),
 )
 NARRATION = narration.ModelDownloader(DATA_ROOT)
+# desktop.py turns on the automatic check; tests and imports stay manual.
+AGENT_UPDATES = agent_updates.AgentUpdater(lambda: AGENTS, automatic=False)
 MAX_ASSET_BYTES = 2 * 1024**3
 
 
@@ -438,6 +441,8 @@ async def lifespan(app):
     VIDEOS.closed = False
     reset_queue()
     BUS.open()
+    AGENT_UPDATES.load()
+    AGENT_UPDATES.start()
     watcher_stop = threading.Event()
     watcher = threading.Thread(target=watch_renders, args=(watcher_stop,), daemon=True)
     watcher.start()
@@ -447,6 +452,7 @@ async def lifespan(app):
         watcher_stop.set()
         VIDEOS.close()
         BUS.close()
+        await asyncio.to_thread(AGENT_UPDATES.shutdown)
         await asyncio.to_thread(AGENTS.shutdown)
         await asyncio.to_thread(shutdown_render)
         await asyncio.to_thread(UPDATES.shutdown)
@@ -1926,6 +1932,7 @@ class AgentSettings(BaseModel):
     auto_render: bool | None = None
     queue_start: str | None = Field(default=None, pattern="^(auto|manual)$")
     queue_on_error: str | None = Field(default=None, pattern="^(fix|skip|pause)$")
+    auto_update_agents: bool | None = None
 
 
 class ThreadCreate(BaseModel):
@@ -2128,7 +2135,32 @@ def update_agent_settings(body: AgentSettings):
         # Switching to automatic start releases anything that was being held.
         start_next_render()
         publish_queue()
+    if body.auto_update_agents is not None:
+        AGENT_UPDATES.wake()
+        AGENT_UPDATES.emit()
     return result
+
+
+def agent_update_call(action):
+    try:
+        return action()
+    except agent_updates.AgentUpdateError as error:
+        raise HTTPException(409, str(error)) from error
+
+
+@app.get("/api/agents/updates")
+def agent_update_status():
+    return AGENT_UPDATES.snapshot()
+
+
+@app.post("/api/agents/updates/check")
+def check_agent_updates():
+    return agent_update_call(AGENT_UPDATES.check_now)
+
+
+@app.post("/api/agents/{provider}/update")
+def update_agent_cli(provider: str):
+    return agent_update_call(lambda: AGENT_UPDATES.update_now(provider))
 
 
 @app.post("/api/agents/{provider}/login")
