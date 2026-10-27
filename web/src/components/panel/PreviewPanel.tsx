@@ -28,6 +28,7 @@ import { Select } from "../ui/select";
 import { toast } from "../ui/toast";
 import type { PanelTab } from "./RightPanel";
 import { OutputSettings } from "./OutputSettings";
+import { ProjectWatermarkButton } from "../watermark/ProjectWatermark";
 import {
   RepairVideoButton,
   useVideoWorkflow,
@@ -297,15 +298,18 @@ export function PreviewPanel({
             </Button>
           </div>
         )}
-        {preset.id === "custom" && (
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            onClick={() => setCustom(true)}
-          >
-            Edit custom output
-          </Button>
-        )}
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          {preset.id === "custom" && (
+            <Button
+              size="xs"
+              variant="ghost-muted"
+              onClick={() => setCustom(true)}
+            >
+              Edit custom output
+            </Button>
+          )}
+          <ProjectWatermarkButton projectId={projectId} workspace={workspace} />
+        </div>
         <OutputSettings open={custom} onOpenChange={setCustom} value={preset} />
       </div>
     </div>

@@ -9,6 +9,7 @@ import { Button } from "../ui/button";
 import { Kbd } from "../ui/input";
 import { QUEUE_ERROR_OPTIONS, QUEUE_START_OPTIONS } from "~/lib/queue";
 import { SettingsRow, SettingsSection } from "./SettingsLayout";
+import { WatermarkSettingsSection } from "./WatermarkSettingsSection";
 
 const SHORTCUTS: { label: string; keys: string[][] }[] = [
   { label: "Send a chat message", keys: [["Enter"]] },
@@ -116,6 +117,8 @@ export function GeneralSettings() {
           />
         </SettingsRow>
       </SettingsSection>
+
+      <WatermarkSettingsSection />
 
       <SettingsSection title="Keyboard shortcuts">
         {SHORTCUTS.map((shortcut) => (

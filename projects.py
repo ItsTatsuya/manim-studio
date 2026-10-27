@@ -125,6 +125,10 @@ def _read_metadata(folder: Path) -> dict | None:
         "updated": data.get("updated") if isinstance(data.get("updated"), str) else "",
         "narration": narration,
         "folder": folder.name,
+        # The project's own watermark settings, or None to inherit them.
+        "watermark": data["watermark"]
+        if isinstance(data.get("watermark"), dict)
+        else None,
     }
 
 
@@ -216,6 +220,8 @@ def _save(path: Path, metadata: dict):
     stored["narration"] = {
         key: value for key, value in metadata["narration"].items() if key != "text"
     }
+    if metadata.get("watermark") is not None:
+        stored["watermark"] = metadata["watermark"]
     _write_atomic(path / NARRATION_FILE, metadata["narration"]["text"])
     _write_atomic(path / PROJECT_FILE, json.dumps(stored, indent=2))
 
@@ -287,6 +293,29 @@ def update(
         metadata["updated"] = _now()
         _save(path, metadata)
     return metadata
+
+
+def watermark_settings(root: Path, project_id: str, workspace: str | None = None):
+    """(own, parent) watermark settings; a video workspace inherits its project's."""
+    with LOCK:
+        parent = _read_metadata(folder(root, project_id))
+        if workspace is None:
+            return parent["watermark"], None
+        own = _read_metadata(workspace_folder(root, project_id, workspace))
+        return own["watermark"], parent["watermark"]
+
+
+def set_watermark(root: Path, project_id: str, workspace: str | None, value):
+    """Store a project's (or video's) watermark override; None inherits again."""
+    with LOCK:
+        path = workspace_folder(root, project_id, workspace)
+        metadata = _read_metadata(path)
+        if metadata is None:
+            raise KeyError(project_id)
+        metadata["watermark"] = value
+        metadata["updated"] = _now()
+        _save(path, metadata)
+    return value
 
 
 def delete(root: Path, project_id: str):
