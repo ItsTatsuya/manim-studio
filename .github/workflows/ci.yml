@@ -63,11 +63,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           $tag = "${{ github.ref_name }}"
-          $kind = if ($tag.Contains('-')) { @('--prerelease', '--latest=false') } else { @('--latest') }
-          gh release create $tag (Get-Item dist/*.zip) (Get-Item dist/*-setup.exe) @kind --title "Manim Studio $($tag.TrimStart('v'))" --generate-notes
+          $assets = @((Get-Item dist/*.zip).FullName, (Get-Item dist/*-setup.exe).FullName)
+          # The release (with its downloads) first: the manifest must never point at a missing zip.
+          if ($tag.Contains('-')) {
+            gh release create $tag @assets --prerelease --latest=false --title "Manim Studio $($tag.TrimStart('v'))" --generate-notes
+          } else {
+            gh release create $tag @assets --latest --title "Manim Studio $($tag.TrimStart('v'))" --generate-notes
+          }
+          if ($LASTEXITCODE -ne 0) { throw "creating the $tag release failed" }
           gh release view updates *> $null
           if ($LASTEXITCODE -ne 0) {
             gh release create updates --prerelease --latest=false --title "Update manifests" --notes "Signed manifests the app checks for updates. Don't download these."
+            if ($LASTEXITCODE -ne 0) { throw "creating the updates release failed" }
           }
           gh release upload updates dist/manifest-stable.json dist/manifest-stable.json.minisig --clobber
+          if ($LASTEXITCODE -ne 0) { throw "uploading the update manifest failed" }
