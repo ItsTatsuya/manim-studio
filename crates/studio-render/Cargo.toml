@@ -1,0 +1,27 @@
+[package]
+name = "studio-render"
+description = "Manim Studio engine integration: live preview, render jobs, per-scene cache (manim-rust)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+manim.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+async-channel = "2.3"
+# ONNX Runtime is loaded from onnxruntime.dll at run time (downloaded with the voice),
+# not linked in: the prebuilt static library is the DirectML build, which made every
+# launch load DirectML.dll and added ~20 MB to the program for a feature we don't use.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "load-dynamic", "api-31"] }
+flate2 = "1"
+ureq = "2"
+sha2 = "0.10"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+[lints]
+workspace = true

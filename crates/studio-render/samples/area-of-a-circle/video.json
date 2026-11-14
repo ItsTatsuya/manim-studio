@@ -1,0 +1,41 @@
+{
+  "title": "Area of a circle",
+  "grade": "Grade 8",
+  "status": "ready",
+  "storyboard": {
+    "title": "Area of a circle",
+    "grade": "Grade 8",
+    "scenes": [
+      {
+        "title": "Hook: pizza slices",
+        "say": "Today we're finding the area of a circle. Here's a pizza. Let's cut it into eight equal slices. If we double the radius, do we get twice as much pizza? It feels like we should, but let's find out.",
+        "visual": "Title card, then a circle splits into eight wedges.",
+        "seconds": 18
+      },
+      {
+        "title": "Area grows faster than radius",
+        "say": "So let's measure it: this curve shows a circle's area as its radius grows. Watch the point as the radius goes from one to two. The area doesn't just double, it becomes four times as big. Push the radius further and the area races ahead. Area grows with the square of the radius.",
+        "visual": "Plot A against r and trace a point along the curve.",
+        "seconds": 30
+      },
+      {
+        "title": "Unroll the rings",
+        "say": "But why the square? Think of the circle as lots of thin rings, like the layers of an onion. Now peel each ring off and lay it out flat. The outer rings make long strips and the inner rings make short ones. Stacked together, the strips form a triangle. Its base is the circumference, two pi r. And its height is the radius, r.",
+        "visual": "Coloured rings straighten one by one into strips. Label base 2πr and height r.",
+        "seconds": 42
+      },
+      {
+        "title": "The formula",
+        "say": "Now we can find the area of that triangle. Area is one half times base times height. The base is two pi r and the height is r. The half and the two cancel, which leaves pi r times r. That's pi r squared, the area of a circle. Pi is about three point one four, so it's a little more than three squares of side r.",
+        "visual": "Equation builds term by term, with the result boxed.",
+        "seconds": 34
+      },
+      {
+        "title": "Practice question",
+        "say": "Your turn. A circle has a radius of three centimetres. What is its area? Pause the video and work it out, then pick one of the two answers. Are you ready? Pi times three squared is nine pi, which is about twenty-eight point three square centimetres. You did it, well done!",
+        "visual": "Two answer cards. After a 5 s pause, the correct one turns green.",
+        "seconds": 32
+      }
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "createdAt": "2026-11-12T18:04:35.044Z",
+        "reason": "Claude: Inter is the bundled UI face of Frame (frame-app/assets/fonts), the baseline the user chose; desktop UI text, not branding"
+      }
+    ]
+  }
+}

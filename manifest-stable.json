@@ -1,0 +1,11 @@
+{
+  "version": "0.1.1",
+  "notes": "Local updater test",
+  "assets": {
+    "windows-x86_64": {
+      "url": "http://127.0.0.1:8765/v0.1.1/ManimStudio-0.1.1-windows-x86_64.zip",
+      "sha256": "eba534c681fe3ff8e8e37410197bdd5c2810bc1d93f061a07fa2453ec62660ba",
+      "size": 60649547
+    }
+  }
+}

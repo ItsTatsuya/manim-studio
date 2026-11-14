@@ -1,0 +1,44 @@
+[workspace]
+resolver = "3"
+members = ["crates/studio-ui", "crates/studio-render", "crates/studio-agent", "crates/studio-docs", "crates/studio-updater", "crates/studio-app", "tools/icongen", "tools/tokenbench", "tools/release-sign"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+# GPUI Community Edition, pinned. Bump deliberately (see docs/gpui.md when added).
+gpui = { package = "gpui-ce", git = "https://github.com/gpui-ce/gpui-ce", rev = "bc577476a0eb55173ef985585cfb487f75ab1cab" }
+gpui_platform = { package = "gpui_ce_platform", git = "https://github.com/gpui-ce/gpui-ce", rev = "bc577476a0eb55173ef985585cfb487f75ab1cab", features = ["font-kit", "wayland", "x11"] }
+rust-embed = { version = "8.7", features = ["include-exclude"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+directories = "6.0"
+unicode-segmentation = "1.12"
+anyhow = "1.0"
+# The engine, pinned. Bump deliberately: scene scripts and the theme format follow it.
+manim = { git = "https://github.com/ItsTatsuya/manim-rust", rev = "752eb2020600e9c67b2c8d5258731524a2bf1b80" }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+# GPUI's layout/text paths and the engine's rasterizers and script runtime are hot;
+# optimize every dependency even in dev builds so `cargo run` stays inside the frame
+# budget (workspace crates still build fast and debuggable).
+# Line numbers are enough for backtraces; full debug info made every test binary's PDB
+# 600-900 MB and the target folder grow past 60 GB.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

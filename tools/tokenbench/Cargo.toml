@@ -1,0 +1,17 @@
+[package]
+name = "tokenbench"
+description = "Rerunnable token-usage benchmark: plan + build + check + repair for fixed lessons, per prompt recipe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+studio-agent = { path = "../../crates/studio-agent" }
+studio-render = { path = "../../crates/studio-render" }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,30 @@
+{
+  "planner": { "model": "haiku" },
+  "repair_tries": 2,
+  "cases": [
+    {
+      "id": "fractions",
+      "request": "Grade 5: adding fractions with unlike denominators, using 1/3 + 1/4 as the worked example with fraction bars.",
+      "seconds": 60
+    },
+    {
+      "id": "photosynthesis",
+      "request": "Grade 7 science: what photosynthesis needs and makes, with a simple leaf diagram and the word equation.",
+      "seconds": 75
+    },
+    {
+      "id": "slope",
+      "request": "Grade 8: slope of a line as rise over run, on a coordinate grid with two points.",
+      "seconds": 60
+    }
+  ],
+  "variants": [
+    { "id": "baseline", "model": "haiku" },
+    { "id": "compact-digest", "model": "haiku", "recipe": { "digest": "compact" } },
+    { "id": "example", "model": "haiku", "recipe": { "example": true } },
+    { "id": "per-scene", "model": "haiku", "recipe": { "per-scene": true } },
+    { "id": "low-effort", "model": "haiku", "effort": "low" },
+    { "id": "sonnet", "model": "sonnet" },
+    { "id": "sonnet-low", "model": "sonnet", "effort": "low" }
+  ]
+}

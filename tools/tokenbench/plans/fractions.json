@@ -1,0 +1,36 @@
+{
+  "title": "Adding Fractions with Unlike Denominators: 1/3 + 1/4",
+  "grade": "Grade 5",
+  "scenes": [
+    {
+      "title": "Hook: Two different slices",
+      "say": "Imagine you have one third of a pizza, and your friend gives you one fourth of another pizza of the same size. How much pizza do you have altogether? Let's find out.",
+      "visual": "Two identical rectangular fraction bars appear side by side with text labels. The first bar is split into three equal parts with one part shaded in blue and labeled 1/3. The second bar is split into four equal parts with one part shaded in orange and labeled 1/4. A question mark sits between them with a plus sign.",
+      "seconds": 10
+    },
+    {
+      "title": "Why we cannot add straight across",
+      "say": "We cannot just add the top numbers and the bottom numbers. Thirds and fourths are different sized pieces, so we need a common size before we can combine them.",
+      "visual": "The equation 1 over 3 plus 1 over 4 is written in the center. A red X crosses out a line showing 2 over 7 as a wrong answer. Below it, the two bars from the hook are shown again, with the thirds and fourths pieces highlighted in different colors to emphasize they are not the same size.",
+      "seconds": 12
+    },
+    {
+      "title": "Find a common denominator",
+      "say": "The smallest number that both three and four divide into evenly is twelve. We will cut both bars so each has twelve equal pieces.",
+      "visual": "A text box reads: multiples of 3 are 3, 6, 9, 12. Multiples of 4 are 4, 8, 12. The number 12 is circled in green. Below, a fraction bar is split into 12 equal small squares.",
+      "seconds": 13
+    },
+    {
+      "title": "Rewrite both fractions",
+      "say": "One third is the same as four twelfths, because four of the twelve pieces make one third. One fourth is the same as three twelfths, because three of the twelve pieces make one fourth.",
+      "visual": "The first bar is redrawn with 12 segments, the first 4 shaded blue, labeled 1/3 equals 4/12. The second bar is redrawn with 12 segments, the first 3 shaded orange, labeled 1/4 equals 3/12. Equations appear beneath each bar showing the equivalent fractions.",
+      "seconds": 13
+    },
+    {
+      "title": "Add and check, then practice",
+      "say": "Now both pieces are twelfths, so we add the numerators and keep the denominator. Four twelfths plus three twelfths equals seven twelfths. Try this one yourself: what is one half plus one third? Pause the video and find your answer.",
+      "visual": "The two 12-segment bars are combined into one bar with 7 segments shaded, labeled 4/12 + 3/12 = 7/12. The equation 1/3 + 1/4 = 7/12 is highlighted. A practice box appears at the bottom reading: Question: 1/2 + 1/3 = ? with a countdown timer.",
+      "seconds": 12
+    }
+  ]
+}

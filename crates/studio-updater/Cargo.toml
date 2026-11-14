@@ -1,0 +1,22 @@
+[package]
+name = "studio-updater"
+description = "Manim Studio updates: signed manifest (minisign), verified download, staged swap, rollback"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ureq = "2"
+minisign-verify = "0.2"
+sha2 = "0.10"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+minisign = "0.7"
+
+[lints]
+workspace = true

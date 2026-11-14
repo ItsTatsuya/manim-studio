@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "design/house-styles/index.html"
+        ],
+        "createdAt": "2026-11-13T21:11:45.861Z",
+        "reason": "Claude: boxes inside .frame are miniature 16:9 video previews whose padding scales with the frame (cqw), so overview thumbnails are intentionally tight; page chips padding was increased instead"
+      },
+      {
+        "rule": "low-contrast",
+        "value": "*",
+        "files": [
+          "design/house-styles/index.html"
+        ],
+        "createdAt": "2026-11-13T21:12:14.778Z",
+        "reason": "Claude: flagged #9aa0a6 is the dark-theme muted token; measured in browser it only sits on dark backgrounds (~7:1). Detector resolves the translucent toolbar background as white. Style colours were checked separately with a WCAG script."
+      }
+    ]
+  }
+}

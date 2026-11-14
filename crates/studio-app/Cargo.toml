@@ -1,0 +1,48 @@
+[package]
+name = "studio-app"
+description = "Manim Studio desktop app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+build = "build.rs"
+default-run = "manim-studio"
+
+[[bin]]
+name = "manim-studio"
+path = "src/main.rs"
+
+# Console-subsystem engine worker for the render queue. In release builds the app is a
+# GUI-subsystem program, and console children it starts (ffmpeg) would each flash a
+# window; started with CREATE_NO_WINDOW, this helper gives them a hidden console.
+[[bin]]
+name = "studio-engine"
+path = "src/bin/studio-engine.rs"
+
+[dependencies]
+async-channel = "2.3"
+studio-ui = { path = "../studio-ui" }
+studio-render = { path = "../studio-render" }
+studio-agent = { path = "../studio-agent" }
+studio-docs = { path = "../studio-docs" }
+studio-updater = { path = "../studio-updater" }
+image = { version = "0.25", default-features = false }
+smallvec = "1"
+rodio = { version = "=0.20.1", default-features = false, features = ["wav"] }
+gpui.workspace = true
+gpui_platform.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+directories.workspace = true
+trash = "5"
+
+[lints]
+workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[dev-dependencies]
+anyhow.workspace = true
+# Only for `examples/make_icon.rs` (regenerates resources/icon.ico from the logo).
+resvg = { version = "0.48", default-features = false }

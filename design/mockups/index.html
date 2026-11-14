@@ -1,0 +1,812 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manim Studio Mockups</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@600;700&family=Caveat:wght@600&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   Manim Studio design tokens: mirrored 1:1 in crates/studio-ui/src/theme.rs
+   ============================================================ */
+:root {
+  --canvas: #e4e4e7;
+  --window: #ececee;
+  --sidebar: #e3e3e7;
+  --surface: #f7f7f8;
+  --surface-2: #efeff1;
+  --surface-3: #e4e4e8;
+  --raised: #ffffff;
+  --line: #0303020f;
+  --line-strong: #0303021c;
+  --fg: #232327;
+  --fg-2: #4f4f57;
+  --fg-3: #6b6b74;
+  --primary: #27272b;
+  --on-primary: #f7f7f8;
+  --signal: #c77d12;
+  --signal-soft: #c77d1218;
+  --ok: #24724c;
+  --ok-soft: #24724c18;
+  --err: #b83842;
+  --err-soft: #b8384216;
+  --ring: #77778266;
+  --shadow: 0 1px 0 #ffffffb0 inset, 0 1px 2px #0000000f, 0 0 0 1px var(--line);
+  --shadow-pop: 0 12px 32px -8px #0000002a, 0 0 0 1px var(--line-strong);
+  --stage: #dcdce0;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --canvas: #050506; --window: #111113; --sidebar: #141416; --surface: #1b1b1e;
+    --surface-2: #222226; --surface-3: #2c2c31; --raised: #29292d;
+    --line: #ffffff0b; --line-strong: #ffffff16;
+    --fg: #ededf0; --fg-2: #a5a5ad; --fg-3: #87878f;
+    --primary: #e8e8ec; --on-primary: #1a1a1d;
+    --signal: #f0b35a; --signal-soft: #f0b35a1c;
+    --ok: #83c89b; --ok-soft: #83c89b1a; --err: #ed8588; --err-soft: #ed85881a;
+    --ring: #aaaab566;
+    --shadow: 0 1px 0 #ffffff0a inset, 0 0 0 1px var(--line);
+    --shadow-pop: 0 16px 40px -8px #000000a0, 0 0 0 1px var(--line-strong);
+    --stage: #0c0c0e;
+  }
+}
+:root[data-theme="dark"] {
+  --canvas: #050506; --window: #111113; --sidebar: #141416; --surface: #1b1b1e;
+  --surface-2: #222226; --surface-3: #2c2c31; --raised: #29292d;
+  --line: #ffffff0b; --line-strong: #ffffff16;
+  --fg: #ededf0; --fg-2: #a5a5ad; --fg-3: #87878f;
+  --primary: #e8e8ec; --on-primary: #1a1a1d;
+  --signal: #f0b35a; --signal-soft: #f0b35a1c;
+  --ok: #83c89b; --ok-soft: #83c89b1a; --err: #ed8588; --err-soft: #ed85881a;
+  --ring: #aaaab566;
+  --shadow: 0 1px 0 #ffffff0a inset, 0 0 0 1px var(--line);
+  --shadow-pop: 0 16px 40px -8px #000000a0, 0 0 0 1px var(--line-strong);
+  --stage: #0c0c0e;
+}
+
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; }
+body {
+  background: var(--canvas); color: var(--fg);
+  font: 400 13px/1.45 Inter, system-ui, sans-serif;
+  font-feature-settings: "cv11", "ss01", "ss03";
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; }
+.num { font-variant-numeric: tabular-nums; }
+.svg-i { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.svg-i.sm { width: 14px; height: 14px; }
+
+/* ---------- mockup shell (not part of the app) ---------- */
+.deck { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 20px 16px 40px; }
+.deck-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: center; max-width: 1440px; width: 100%; }
+.deck-bar .t { color: var(--fg-3); margin-right: auto; font-weight: 500; letter-spacing: -.01em; }
+.deck-bar button { padding: 6px 11px; border-radius: 8px; color: var(--fg-2); }
+.deck-bar button[aria-pressed="true"] { background: var(--surface-3); color: var(--fg); }
+.frame-wrap { width: 100%; max-width: 1440px; }
+.screen { display: none; }
+.screen.on { display: block; }
+.note { max-width: 1440px; width: 100%; color: var(--fg-3); font-size: 12px; }
+
+/* ---------- window ---------- */
+.win {
+  aspect-ratio: 16 / 10; width: 100%; min-height: 640px;
+  background: var(--window); border-radius: 14px; overflow: hidden;
+  box-shadow: 0 0 0 1px var(--line-strong), 0 30px 80px -20px #0000008c;
+  display: grid; grid-template-rows: 46px 1fr; grid-template-columns: minmax(0, 1fr); position: relative;
+}
+.titlebar { display: flex; align-items: center; gap: 10px; padding: 0 10px 0 14px; }
+.lights { display: flex; gap: 8px; margin-right: 6px; }
+.lights i { width: 12px; height: 12px; border-radius: 50%; background: var(--surface-3); }
+.logo { width: 24px; height: 24px; flex: none; }
+.titlebar > * { flex-shrink: 0; }
+.studio-body { grid-template-columns: 232px minmax(0, 1fr) 372px; }
+.list-body { grid-template-columns: 232px minmax(0, 1fr); }
+.crumb { display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 9px; background: var(--surface); box-shadow: var(--shadow); min-width: 0; flex-shrink: 1; }
+.crumb span { display: block; height: 24px; line-height: 24px; padding: 0 9px; border-radius: 6px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.crumb span svg { vertical-align: -3px; margin-right: 6px; }
+.crumb span:not(.cur) { flex-shrink: 3; }
+.crumb span.cur { background: var(--surface-3); color: var(--fg); font-weight: 500; flex-shrink: 1; }
+.crumb .sep { color: var(--fg-3); flex: none; }
+.sp { flex: 1; }
+.btn { height: 30px; padding: 0 12px; border-radius: 8px; display: inline-flex; align-items: center; gap: 7px; background: var(--surface); box-shadow: var(--shadow); font-weight: 500; white-space: nowrap; }
+.btn.ghost { background: none; box-shadow: none; color: var(--fg-2); }
+.btn.ghost:hover { background: var(--surface-2); color: var(--fg); }
+.btn.primary { background: var(--primary); color: var(--on-primary); box-shadow: 0 1px 0 #ffffff30 inset; }
+.btn.icon { width: 30px; padding: 0; justify-content: center; }
+.btn.lg { height: 38px; padding: 0 16px; border-radius: 10px; font-size: 14px; }
+.kbd { font: 500 11px Inter; color: var(--fg-3); padding: 1px 5px; border-radius: 4px; box-shadow: 0 0 0 1px var(--line-strong); }
+.btn.primary .kbd { color: inherit; opacity: .55; box-shadow: 0 0 0 1px currentColor; }
+
+/* usage meter in the title bar */
+.meter { display: flex; align-items: center; gap: 8px; padding: 0 10px; height: 30px; border-radius: 8px; color: var(--fg-2); }
+.meter:hover { background: var(--surface-2); }
+.bar { width: 46px; height: 4px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
+.bar b { display: block; height: 100%; background: var(--fg-2); border-radius: 4px; }
+
+/* ---------- body layouts ---------- */
+.body { display: grid; gap: 10px; padding: 0 10px 10px; min-height: 0; }
+.panel { background: var(--surface); border-radius: 12px; box-shadow: var(--shadow); min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.panel-h { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.h-label { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-3); }
+.seg { display: flex; gap: 2px; padding: 3px; background: var(--surface-2); border-radius: 9px; box-shadow: 0 0 0 1px var(--line) inset; }
+.seg button { padding: 4px 10px; border-radius: 6px; color: var(--fg-2); display: flex; align-items: center; gap: 6px; font-weight: 500; }
+.seg button.on { background: var(--raised); color: var(--fg); box-shadow: var(--shadow); }
+
+/* sidebar */
+.side { display: flex; flex-direction: column; gap: 2px; padding: 6px 6px 8px; min-height: 0; }
+.side .h-label { padding: 12px 8px 6px; display: flex; align-items: center; }
+.row { display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 8px; border-radius: 7px; color: var(--fg-2); white-space: nowrap; overflow: hidden; }
+.row:hover { background: var(--surface-2); color: var(--fg); }
+.row.on { background: var(--surface-3); color: var(--fg); font-weight: 500; }
+.row.sub { padding-left: 30px; }
+.row .meta { margin-left: auto; color: var(--fg-3); font-size: 11px; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--fg-3); flex: none; }
+.dot.signal { background: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft); }
+.dot.ok { background: var(--ok); }
+.dot.err { background: var(--err); }
+.search { margin: 4px 2px 2px; height: 30px; border-radius: 8px; background: var(--surface); box-shadow: var(--shadow); display: flex; align-items: center; gap: 8px; padding: 0 9px; color: var(--fg-3); }
+.search .kbd { margin-left: auto; }
+
+/* stage */
+.stage { flex: 1; min-height: 0; background: var(--stage); margin: 10px; border-radius: 9px; position: relative; display: grid; place-items: center; padding: 28px 28px 56px; }
+.video { aspect-ratio: 16/9; width: 100%; max-height: 100%; border-radius: 4px; overflow: hidden; box-shadow: 0 0 0 1px var(--line); }
+.video svg { width: 100%; height: 100%; display: block; }
+.float { position: absolute; background: var(--raised); border-radius: 10px; box-shadow: var(--shadow-pop); display: flex; align-items: center; gap: 2px; padding: 4px; }
+.float .btn { box-shadow: none; background: none; height: 28px; }
+.float .btn:hover { background: var(--surface-3); }
+.transport { bottom: 12px; left: 50%; transform: translateX(-50%); }
+.transport { white-space: nowrap; }
+.transport .tc { padding: 0 10px; font-weight: 500; }
+.tools { left: 12px; top: 50%; transform: translateY(-50%); flex-direction: column; }
+
+/* scene strip */
+.strip { display: flex; gap: 8px; padding: 0 10px 10px; overflow: hidden; }
+.scene { flex: 1 1 0; min-width: 0; border-radius: 9px; padding: 6px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line) inset; display: flex; flex-direction: column; gap: 6px; }
+.scene.on { background: var(--surface-3); box-shadow: 0 0 0 1.5px var(--fg-3) inset; }
+.scene .thumb { aspect-ratio: 16/9; border-radius: 5px; overflow: hidden; }
+.scene .thumb svg { width: 100%; height: 100%; display: block; }
+.scene .cap { display: flex; gap: 6px; align-items: center; font-size: 12px; padding: 0 2px 2px; }
+.scene .cap b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scene .cap .num { margin-left: auto; color: var(--fg-3); font-size: 11px; }
+.scene.add { flex: 0 0 64px; display: grid; place-items: center; color: var(--fg-3); background: none; box-shadow: 0 0 0 1px var(--line-strong) inset; }
+
+/* assistant */
+.chat { flex: 1; overflow: hidden; padding: 14px 14px 0; display: flex; flex-direction: column; gap: 12px; }
+.msg-u { align-self: flex-end; max-width: 88%; background: var(--surface-3); padding: 9px 12px; border-radius: 12px 12px 4px 12px; }
+.msg-a { color: var(--fg); }
+.msg-a p + p { margin-top: 6px; }
+.act { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line) inset; color: var(--fg-2); font-size: 12px; }
+.act .meta { margin-left: auto; color: var(--fg-3); }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 6px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line) inset; color: var(--fg-2); font-size: 12px; white-space: nowrap; }
+.chip.signal { color: var(--signal); background: var(--signal-soft); box-shadow: none; }
+.chip.ok { color: var(--ok); background: var(--ok-soft); box-shadow: none; }
+.chip.err { color: var(--err); background: var(--err-soft); box-shadow: none; }
+.composer { margin: 12px; border-radius: 12px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line-strong) inset; padding: 10px 10px 8px 12px; display: flex; flex-direction: column; gap: 10px; }
+.composer .ph { color: var(--fg-3); min-height: 38px; }
+.composer .ctl { display: flex; align-items: center; gap: 4px; }
+.composer .ctl .btn { height: 26px; padding: 0 8px; font-size: 12px; }
+.send { width: 28px; height: 28px; border-radius: 8px; background: var(--primary); color: var(--on-primary); display: grid; place-items: center; }
+
+/* progress */
+.prog { height: 3px; background: var(--surface-3); border-radius: 3px; overflow: hidden; }
+.prog b { display: block; height: 100%; background: var(--signal); border-radius: 3px; }
+
+/* toast */
+.toast { position: absolute; right: 402px; top: 66px; width: 320px; background: var(--raised); border-radius: 12px; box-shadow: var(--shadow-pop); padding: 12px 14px; display: flex; gap: 12px; align-items: flex-start; }
+.toast p { color: var(--fg-2); font-size: 12px; margin-top: 2px; }
+.toast .acts { display: flex; gap: 6px; margin-top: 10px; }
+.toast .btn { height: 26px; font-size: 12px; }
+
+/* type */
+.display { font-size: 28px; line-height: 1.15; font-weight: 600; letter-spacing: -.025em; }
+.title { font-size: 16px; font-weight: 600; letter-spacing: -.012em; }
+.sub { color: var(--fg-2); }
+.faint { color: var(--fg-3); }
+
+/* onboarding */
+.onb { display: grid; grid-template-columns: 1fr 1fr; min-height: 0; padding: 0 10px 10px; gap: 10px; }
+.onb-l { padding: 56px 64px; display: flex; flex-direction: column; gap: 22px; }
+.steps { display: flex; gap: 6px; }
+.steps i { height: 3px; width: 28px; border-radius: 3px; background: var(--surface-3); }
+.steps i.on { background: var(--fg); }
+.provider { display: flex; gap: 14px; align-items: center; padding: 14px; border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
+.provider.sel { box-shadow: 0 0 0 1.5px var(--fg-2), var(--shadow); }
+.brand { width: 22px; height: 22px; flex: none; }
+.brand.sm { width: 15px; height: 15px; }
+.brand.xs { width: 14px; height: 14px; }
+.pmark { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: var(--surface-3); flex: none; font-weight: 700; }
+.provider .meta { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.onb-r { background: var(--stage); border-radius: 12px; position: relative; overflow: hidden; display: grid; place-items: center; }
+.cardlet { position: absolute; background: var(--raised); border-radius: 10px; box-shadow: var(--shadow-pop); padding: 10px 12px; font-size: 12px; display: flex; align-items: center; gap: 8px; }
+
+/* home composer */
+.home { display: grid; grid-template-columns: 240px 1fr; gap: 10px; padding: 0 10px 10px; min-height: 0; }
+.hero { display: flex; flex-direction: column; padding: 40px 48px 32px; overflow: hidden; }
+.hero-main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; }
+.hero-recent { width: min(760px, 100%); margin: 0 auto; padding-top: 24px; border-top: 1px solid var(--line); }
+.big-composer { width: min(680px, 100%); border-radius: 16px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line-strong) inset; padding: 18px 14px 12px 20px; display: flex; flex-direction: column; gap: 18px; }
+.big-composer .ph { font-size: 15px; color: var(--fg); min-height: 48px; line-height: 1.6; padding-right: 6px; }
+.big-composer .ctl { display: flex; align-items: center; gap: 4px; }
+.file-chip { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 4px 0 10px; border-radius: 8px; background: var(--surface-3); color: var(--fg-2); font-size: 12px; font-weight: 500; }
+.file-chip .x { width: 20px; height: 20px; border-radius: 5px; display: grid; place-items: center; color: var(--fg-3); }
+.file-chip .x:hover { background: var(--surface); color: var(--fg); }
+.attach { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line) inset; width: 250px; }
+.ficon { width: 30px; height: 34px; border-radius: 5px; background: var(--surface-3); display: grid; place-items: center; font: 600 9px Inter; color: var(--fg-2); letter-spacing: .03em; flex: none; }
+.recent { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.rc .thumb { aspect-ratio: 16/9; border-radius: 8px; overflow: hidden; box-shadow: 0 0 0 1px var(--line); }
+.rc .thumb svg { width: 100%; height: 100%; display: block; }
+.rc b { display: block; font-weight: 500; margin-top: 7px; font-size: 12px; }
+.rc span { color: var(--fg-3); font-size: 11px; }
+
+/* storyboard */
+.sb { display: grid; grid-template-columns: 1fr 340px; gap: 10px; padding: 0 10px 10px; min-height: 0; }
+.sb-list { padding: 18px 22px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+.beat { display: grid; grid-template-columns: 26px 170px 1fr auto; gap: 16px; padding: 12px; border-radius: 12px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line) inset; align-items: start; }
+.beat .n { width: 26px; height: 26px; border-radius: 7px; background: var(--surface-3); display: grid; place-items: center; font-weight: 600; font-size: 12px; }
+.beat .thumb { aspect-ratio: 16/9; border-radius: 6px; overflow: hidden; }
+.beat .thumb svg { width: 100%; height: 100%; display: block; }
+.beat h4 { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+.beat .say { color: var(--fg-2); margin-top: 4px; }
+.beat .vis { color: var(--fg-3); font-size: 12px; margin-top: 6px; }
+.kv { display: flex; justify-content: space-between; padding: 7px 0; color: var(--fg-2); }
+.kv b { color: var(--fg); font-weight: 500; }
+.sec { padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.sec .title { font-size: 14px; margin-bottom: 6px; }
+.est { display: flex; align-items: baseline; gap: 6px; }
+.est .display { font-size: 24px; }
+
+/* queue table */
+.tbl { width: 100%; border-collapse: collapse; }
+.tbl th { text-align: left; font-weight: 500; color: var(--fg-3); padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.tbl td { padding: 10px 14px; border-bottom: 1px solid var(--line); color: var(--fg-2); vertical-align: middle; }
+.tbl td.name { color: var(--fg); font-weight: 500; }
+.tbl tr.on td { background: var(--surface-2); }
+.mini { width: 72px; aspect-ratio: 16/9; border-radius: 4px; overflow: hidden; display: block; }
+.mini svg { width: 100%; height: 100%; display: block; }
+
+/* settings */
+.set { display: grid; grid-template-columns: 220px 1fr; gap: 10px; padding: 0 10px 10px; min-height: 0; }
+.set-main { padding: 26px 34px; overflow: hidden; display: flex; flex-direction: column; gap: 18px; max-width: 760px; }
+.group { border-radius: 12px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line) inset; }
+.group .it { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.group .it:last-child { border-bottom: 0; }
+.group .it .grow { flex: 1; min-width: 0; }
+.group .it p { color: var(--fg-3); font-size: 12px; }
+.select { height: 28px; padding: 0 10px; border-radius: 7px; background: var(--surface); box-shadow: var(--shadow); display: inline-flex; align-items: center; gap: 8px; font-weight: 500; white-space: nowrap; }
+.toggle { width: 32px; height: 18px; border-radius: 9px; background: var(--fg); position: relative; flex: none; }
+.toggle::after { content: ""; position: absolute; right: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--window); }
+.toggle.off { background: var(--surface-3); }
+.toggle.off::after { right: auto; left: 2px; background: var(--fg-3); }
+.usage { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ucard { padding: 14px; border-radius: 12px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line) inset; display: flex; flex-direction: column; gap: 10px; }
+.ubar { height: 6px; border-radius: 6px; background: var(--surface-3); overflow: hidden; }
+.ubar b { display: block; height: 100%; background: var(--fg-2); }
+
+@media (max-width: 1240px) {
+  .crumb span:not(.cur), .crumb .sep { display: none; }
+  .crumb span.cur { flex-shrink: 0; }
+  .btn.primary .kbd { display: none; }
+  .studio-body { grid-template-columns: minmax(0, 1fr) 320px; }
+  .list-body, .home { grid-template-columns: minmax(0, 1fr); }
+  .studio-body > .side, .list-body > .side, .home > .side { display: none; }
+  .meter .bar, .meter-name { display: none; }
+  .toast { right: 342px; }
+  .composer .ctl .btn:nth-of-type(3) { display: none; }
+  .seg.mode button svg { display: none; }
+}
+@media (max-width: 900px) {
+  .win { aspect-ratio: auto; min-height: 0; }
+  .body, .onb, .home, .sb, .set { grid-template-columns: 1fr !important; }
+  .hide-sm { display: none !important; }
+  .onb-l { padding: 28px 20px; }
+  .recent { grid-template-columns: 1fr 1fr; }
+  .hero { padding: 24px 16px; }
+  .beat { grid-template-columns: 26px 1fr; }
+  .beat .thumb, .beat > :last-child { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- icon sprite (Lucide-style strokes; app ships the same glyphs as SVG assets) -->
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-logo" viewBox="0 0 64 64"><defs>
+    <linearGradient id="lg-tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34343b"/>
+      <stop offset="1" stop-color="#16161a"/>
+    </linearGradient>
+    <radialGradient id="lg-glow" cx=".78" cy=".72" r=".45">
+      <stop offset="0" stop-color="#f0b35a" stop-opacity=".28"/>
+      <stop offset="1" stop-color="#f0b35a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="url(#lg-tile)"/>
+  <rect width="64" height="64" rx="15" fill="url(#lg-glow)"/>
+  <rect x=".75" y=".75" width="62.5" height="62.5" rx="14.25" fill="none" stroke="#ffffff" stroke-opacity=".1" stroke-width="1.5"/>
+  <path d="M16 45V30.5a6.75 6.75 0 0 1 13.5 0V45M29.5 30.5a6.75 6.75 0 0 1 13.5 0c0 7 2 12.5 6 14" fill="none" stroke="#f4f1ea" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="49.5" cy="44.5" r="4.25" fill="#f0b35a"/>
+</symbol>
+  <symbol id="i-claude" viewBox="0 0 24 24"><path fill="#D97757" stroke="none" d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/></symbol>
+  <symbol id="i-openai" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5v14l11-7z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4-4"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h3.6l2 2h7.4a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-film" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M8 5v14M16 5v14M3.5 9.5H8M3.5 14.5H8M16 9.5h4.5M16 14.5h4.5"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 4 8.5 4.5L12 13 3.5 8.5z"/><path d="m3.5 12.5 8.5 4.5 8.5-4.5"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M6 18l1.4-1.4M16.6 7.4 18 6"/></symbol>
+  <symbol id="i-queue" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="m20 11.5-7.8 7.8a4.6 4.6 0 0 1-6.5-6.5l8-8a3 3 0 0 1 4.3 4.3l-8 8a1.5 1.5 0 0 1-2.1-2.1l7.4-7.4"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="i-chevd" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-10z"/><path d="M14 3.5v5h5M8.5 13h7M8.5 16.5h5"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3.5 13.8 10 20.5 12l-6.7 2L12 20.5 10.2 14 3.5 12l6.7-2z"/></symbol>
+  <symbol id="i-script" viewBox="0 0 24 24"><path d="m8.5 8-4 4 4 4M15.5 8l4 4-4 4M13.5 5.5l-3 13"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="m20.5 16-4.5-4.5-8.5 8"/></symbol>
+  <symbol id="i-board" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="7" height="6" rx="1.5"/><rect x="13.5" y="4.5" width="7" height="6" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="6" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="6" rx="1.5"/></symbol>
+  <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/></symbol>
+  <symbol id="i-loop" viewBox="0 0 24 24"><path d="M17 3.5 20 6.5l-3 3"/><path d="M4 12V10a3.5 3.5 0 0 1 3.5-3.5H20M7 20.5 4 17.5l3-3"/><path d="M20 12v2a3.5 3.5 0 0 1-3.5 3.5H4"/></symbol>
+  <symbol id="i-crop" viewBox="0 0 24 24"><path d="M6.5 3v14.5H21M3 6.5h14.5V21"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="2.5"/><path d="M3.5 12h17M12 3.5v17"/></symbol>
+  <symbol id="i-cc" viewBox="0 0 24 24"><rect x="3.5" y="5.5" width="17" height="13" rx="2.5"/><path d="M10.5 10.3a2.2 2.2 0 1 0 0 3.4M17 10.3a2.2 2.2 0 1 0 0 3.4"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11.5A8 8 0 0 0 6.3 6.3L4 8.5M4 4v4.5h4.5M4 12.5a8 8 0 0 0 13.7 5.2L20 15.5M20 20v-4.5h-4.5"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8.5 5.5v13M15.5 5.5v13"/></symbol>
+  <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="18" cy="12" r="1" fill="currentColor"/></symbol>
+  <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4.5 16.5a8 8 0 1 1 15 0"/><path d="m12 13 3.5-4"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5.5c0 4.3-3 7.6-7 9-4-1.4-7-4.7-7-9V6z"/></symbol>
+  <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.2 0 1.8-.8 1.8-1.7 0-1.3-1.1-1.6-1.1-2.8 0-1 .8-1.6 1.8-1.6h2.1a3.9 3.9 0 0 0 3.9-3.9c0-3.9-3.8-7-8.5-7z"/><circle cx="7.8" cy="11" r="1"/><circle cx="10.5" cy="7.5" r="1"/><circle cx="15" cy="7.8" r="1"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 8.5-8.5M16.5 6.5l2.5 2.5"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8v.01"/></symbol>
+</svg>
+
+<!-- reusable scene art (manim-rust "Chalk" house style) -->
+<template id="art-circle">
+  <svg viewBox="0 0 320 180"><rect width="320" height="180" fill="#14161c"/>
+  <g fill="#ffffff08"><circle cx="20" cy="20" r="1"/></g>
+  <text x="18" y="28" fill="#f4f1ea" font-family="Plus Jakarta Sans" font-weight="700" font-size="13">Why a circle's area is πr²</text>
+  <g fill="none" stroke-width="5"><circle cx="92" cy="104" r="44" stroke="#f0b35a" opacity=".95"/><circle cx="92" cy="104" r="34" stroke="#e98a6b"/><circle cx="92" cy="104" r="24" stroke="#8fb4f5"/><circle cx="92" cy="104" r="14" stroke="#83c89b"/></g>
+  <path d="M168 150 L292 150 L168 66 Z" fill="#f0b35a22" stroke="#f0b35a" stroke-width="1.5"/>
+  <g stroke-width="4"><path d="M170 146h120" stroke="#f0b35a"/><path d="M170 136h105" stroke="#e98a6b"/><path d="M170 126h90" stroke="#8fb4f5"/><path d="M170 116h75" stroke="#83c89b"/></g>
+  <text x="222" y="166" fill="#a8a59d" font-family="Caveat" font-size="13">2πr</text><text x="152" y="112" fill="#a8a59d" font-family="Caveat" font-size="13">r</text>
+  </svg>
+</template>
+<template id="art-intro">
+  <svg viewBox="0 0 320 180"><rect width="320" height="180" fill="#14161c"/>
+  <text x="160" y="84" text-anchor="middle" fill="#f4f1ea" font-family="Plus Jakarta Sans" font-weight="700" font-size="20">Area of a Circle</text>
+  <text x="160" y="106" text-anchor="middle" fill="#a8a59d" font-family="Inter" font-size="10">Grade 8 · Geometry</text>
+  <path d="M120 120h80" stroke="#f0b35a" stroke-width="2"/></svg>
+</template>
+<template id="art-graph">
+  <svg viewBox="0 0 320 180"><rect width="320" height="180" fill="#14161c"/>
+  <path d="M40 150H290M40 150V24" stroke="#a8a59d" stroke-width="1.2"/>
+  <g stroke="#ffffff10"><path d="M40 118H290M40 86H290M40 54H290M90 24V150M140 24V150M190 24V150M240 24V150"/></g>
+  <path d="M40 150 Q140 146 190 104 T290 30" fill="none" stroke="#8fb4f5" stroke-width="2.5"/>
+  <circle cx="190" cy="104" r="4" fill="#f0b35a"/><text x="198" y="100" fill="#f0b35a" font-family="Caveat" font-size="14">A = πr²</text>
+  <text x="270" y="166" fill="#a8a59d" font-family="Inter" font-size="9">r</text></svg>
+</template>
+<template id="art-eq">
+  <svg viewBox="0 0 320 180"><rect width="320" height="180" fill="#14161c"/>
+  <text x="160" y="80" text-anchor="middle" fill="#a8a59d" font-family="Inter" font-size="11">base × height ÷ 2</text>
+  <text x="160" y="112" text-anchor="middle" fill="#f4f1ea" font-family="Inter" font-style="italic" font-size="24">½ · 2πr · r = πr²</text>
+  <rect x="210" y="92" width="54" height="28" rx="4" fill="none" stroke="#f0b35a" stroke-width="1.5"/></svg>
+</template>
+<template id="art-quiz">
+  <svg viewBox="0 0 320 180"><rect width="320" height="180" fill="#14161c"/>
+  <text x="28" y="44" fill="#f4f1ea" font-family="Plus Jakarta Sans" font-weight="700" font-size="14">Try it: r = 3 cm</text>
+  <g font-family="Inter" font-size="11" fill="#a8a59d"><rect x="28" y="62" width="120" height="30" rx="6" fill="#ffffff08"/><text x="40" y="81">A  ≈ 18.8 cm²</text>
+  <rect x="28" y="100" width="120" height="30" rx="6" fill="#83c89b22" stroke="#83c89b"/><text x="40" y="119" fill="#83c89b">B  ≈ 28.3 cm²</text></g>
+  <circle cx="232" cy="98" r="48" fill="#8fb4f522" stroke="#8fb4f5" stroke-width="2"/><path d="M232 98h48" stroke="#f0b35a" stroke-width="2"/></svg>
+</template>
+<template id="art-photo">
+  <svg viewBox="0 0 320 180"><rect width="320" height="180" fill="#f6f3ec"/>
+  <text x="22" y="34" fill="#1f2937" font-family="Plus Jakarta Sans" font-weight="700" font-size="14">Photosynthesis</text>
+  <circle cx="250" cy="52" r="20" fill="#f0b35a"/><path d="M120 150c0-50 40-80 80-80-6 40-30 80-80 80z" fill="#83c89b"/><path d="M120 150 190 82" stroke="#24724c" stroke-width="2"/></svg>
+</template>
+<template id="art-vec">
+  <svg viewBox="0 0 320 180"><rect width="320" height="180" fill="#0f1220"/>
+  <g stroke="#ffffff12"><path d="M0 90H320M160 0V180"/></g>
+  <path d="M160 90 240 40" stroke="#8fb4f5" stroke-width="3"/><path d="M160 90 210 130" stroke="#e98a6b" stroke-width="3"/>
+  <text x="22" y="30" fill="#f4f1ea" font-family="Plus Jakarta Sans" font-weight="700" font-size="14">Adding vectors</text></svg>
+</template>
+<template id="art-frac">
+  <svg viewBox="0 0 320 180"><rect width="320" height="180" fill="#fbfaf7"/>
+  <text x="22" y="34" fill="#1f2937" font-family="Plus Jakarta Sans" font-weight="700" font-size="14">Equivalent fractions</text>
+  <g stroke="#1f2937" stroke-width="1.2"><rect x="40" y="70" width="240" height="26" fill="none"/><rect x="40" y="70" width="120" height="26" fill="#f0b35a"/><rect x="40" y="110" width="240" height="26" fill="none"/><rect x="40" y="110" width="120" height="26" fill="#8fb4f5"/><path d="M100 110v26M160 110v26M220 110v26"/></g></svg>
+</template>
+
+<div class="deck">
+  <div class="deck-bar" role="tablist">
+    <span class="t">Manim Studio · design phase 1</span>
+    <button data-s="onboarding">1 · Onboarding</button>
+    <button data-s="home">2 · Home</button>
+    <button data-s="studio" aria-pressed="true">3 · Studio</button>
+    <button data-s="storyboard">4 · Storyboard</button>
+    <button data-s="queue">5 · Renders</button>
+    <button data-s="settings">6 · Settings</button>
+    <button id="theme" title="Toggle theme">◐ Theme</button>
+  </div>
+
+  <div class="frame-wrap">
+
+  <!-- ================= 1 ONBOARDING ================= -->
+  <section class="screen" id="onboarding">
+    <div class="win">
+      <div class="titlebar"><div class="lights"><i></i><i></i><i></i></div><div class="sp"></div><span class="faint" style="font-size:12px">Step 2 of 4</span></div>
+      <div class="onb">
+        <div class="onb-l">
+          <div class="steps"><i class="on"></i><i class="on"></i><i></i><i></i></div>
+          <div>
+            <div class="display">Connect the assistant<br>you already pay for.</div>
+            <p class="sub" style="margin-top:10px;max-width:420px;font-size:14px">Studio uses your existing ChatGPT or Claude plan to write lessons. Nothing is billed separately, and your sign-in stays with the provider.</p>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:10px;max-width:480px">
+            <div class="provider sel">
+              <div class="pmark"><svg class="brand"><use href="#i-claude"/></svg></div>
+              <div><div style="font-weight:600">Claude</div><div class="faint" style="font-size:12px">Claude Code 2.4.1</div></div>
+              <div class="meta"><span class="chip ok"><svg class="svg-i sm"><use href="#i-check"/></svg>Signed in</span></div>
+            </div>
+            <div class="provider">
+              <div class="pmark"><svg class="brand"><use href="#i-openai"/></svg></div>
+              <div><div style="font-weight:600">ChatGPT</div><div class="faint" style="font-size:12px">Codex isn't installed</div></div>
+              <div class="meta"><button class="btn">Install &amp; sign in</button></div>
+            </div>
+            <p class="faint" style="font-size:12px;display:flex;gap:6px;align-items:center"><svg class="svg-i sm"><use href="#i-shield"/></svg>You can connect both. Studio picks the one with more plan left.</p>
+          </div>
+          <div class="sp"></div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn ghost">Back</button><div class="sp"></div>
+            <button class="btn ghost">Skip for now</button>
+            <button class="btn primary lg">Continue <svg class="svg-i sm"><use href="#i-chev"/></svg></button>
+          </div>
+        </div>
+        <div class="onb-r hide-sm">
+          <div class="video" style="width:78%" data-art="art-circle"></div>
+          <div class="cardlet" style="left:7%;top:12%"><span class="dot signal"></span>Writing storyboard · 5 scenes</div>
+          <div class="cardlet" style="right:7%;bottom:14%"><svg class="svg-i sm" style="color:var(--ok)"><use href="#i-check"/></svg>Rendered 1080p in 3.4 s</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 2 HOME ================= -->
+  <section class="screen" id="home">
+    <div class="win">
+      <div class="titlebar">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <svg class="logo" viewBox="0 0 64 64"><use href="#i-logo"/></svg>
+        <div class="crumb"><span class="cur"><svg class="svg-i sm"><use href="#i-folder"/></svg>Grade 8 Geometry</span></div>
+        <div class="sp"></div>
+        <button class="meter num" title="Plan usage"><svg class="brand xs"><use href="#i-claude"/></svg><span class="meter-name">Claude</span><div class="bar"><b style="width:28%"></b></div>28%</button>
+        <button class="btn ghost"><svg class="svg-i sm"><use href="#i-queue"/></svg>Renders</button>
+      </div>
+      <div class="home">
+        <aside class="side hide-sm" data-side></aside>
+        <div class="panel hero">
+          <div class="hero-main">
+            <div class="display" style="text-align:center">What should students learn today?</div>
+            <div class="big-composer">
+              <div class="ph">Explain why the area of a circle is πr² for Grade 8. Unroll the rings into a triangle and end with one practice question.</div>
+              <div class="ctl">
+                <span class="file-chip"><svg class="svg-i sm"><use href="#i-doc"/></svg>Ch7_circles_notes.pdf<button class="x" aria-label="Remove"><svg class="svg-i sm"><use href="#i-x"/></svg></button></span>
+                <div class="sp"></div>
+                <button class="btn ghost icon" aria-label="Attach"><svg class="svg-i"><use href="#i-clip"/></svg></button>
+                <button class="btn ghost">Chalk · 3 min · Narrated <svg class="svg-i sm"><use href="#i-chevd"/></svg></button>
+                <button class="send" style="width:32px;height:32px" aria-label="Start"><svg class="svg-i"><use href="#i-up"/></svg></button>
+              </div>
+            </div>
+            <p class="faint" style="font-size:12px;text-align:center">Type an idea, drop in notes, or paste a full script. Studio shows you a storyboard before writing anything.</p>
+          </div>
+          <div class="hero-recent">
+            <div style="display:flex;align-items:center;margin-bottom:12px"><span class="h-label">Recent</span><div class="sp"></div><button class="btn ghost" style="height:24px;font-size:12px">View all</button></div>
+            <div class="recent">
+              <div class="rc"><div class="thumb" data-art="art-photo"></div><b>Photosynthesis basics</b><span>2:41 · yesterday</span></div>
+              <div class="rc"><div class="thumb" data-art="art-vec"></div><b>Adding vectors</b><span>1:58 · Mon</span></div>
+              <div class="rc"><div class="thumb" data-art="art-frac"></div><b>Equivalent fractions</b><span>3:05 · Oct 28</span></div>
+              <div class="rc"><div class="thumb" data-art="art-graph"></div><b>Reading a graph</b><span>2:12 · Oct 24</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 3 STUDIO ================= -->
+  <section class="screen on" id="studio">
+    <div class="win">
+      <div class="titlebar">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <svg class="logo" viewBox="0 0 64 64"><use href="#i-logo"/></svg>
+        <button class="btn ghost icon hide-sm"><svg class="svg-i"><use href="#i-sidebar"/></svg></button>
+        <div class="crumb"><span><svg class="svg-i sm"><use href="#i-folder"/></svg>Grade 8 Geometry</span><svg class="svg-i sm sep"><use href="#i-chev"/></svg><span class="cur">Area of a circle</span></div>
+        <div class="seg mode hide-sm" style="margin-left:6px">
+          <button><svg class="svg-i sm"><use href="#i-board"/></svg>Storyboard</button>
+          <button class="on"><svg class="svg-i sm"><use href="#i-film"/></svg>Studio</button>
+          <button><svg class="svg-i sm"><use href="#i-script"/></svg>Code</button>
+        </div>
+        <div class="sp"></div>
+        <button class="meter num hide-sm"><svg class="brand xs"><use href="#i-claude"/></svg><span class="meter-name">Claude</span><div class="bar"><b style="width:31%"></b></div>31%</button>
+        <button class="btn ghost hide-sm"><svg class="svg-i sm"><use href="#i-queue"/></svg>Queue <span class="chip" style="height:18px;padding:0 6px">2</span></button>
+        <button class="btn primary"><svg class="svg-i sm"><use href="#i-play"/></svg>Render <span class="kbd">Ctrl ↵</span></button>
+      </div>
+      <div class="body studio-body">
+        <aside class="side hide-sm" data-side data-active="circle"></aside>
+
+        <div style="display:flex;flex-direction:column;gap:10px;min-height:0;min-width:0">
+          <div class="panel" style="flex:1">
+            <div class="stage">
+              <div class="video" data-art="art-circle"></div>
+              <div class="float tools hide-sm">
+                <button class="btn icon" title="Safe areas"><svg class="svg-i"><use href="#i-grid"/></svg></button>
+                <button class="btn icon" title="Captions"><svg class="svg-i"><use href="#i-cc"/></svg></button>
+                <button class="btn icon" title="Aspect"><svg class="svg-i"><use href="#i-crop"/></svg></button>
+                <button class="btn icon" title="Loop"><svg class="svg-i"><use href="#i-loop"/></svg></button>
+              </div>
+              <div class="float transport">
+                <button class="btn icon"><svg class="svg-i"><use href="#i-play"/></svg></button>
+                <span class="tc num">00:48 <span class="faint">/ 02:36</span></span>
+                <span class="chip" style="height:22px">Scene 3 · Unroll</span>
+              </div>
+              <div class="float hide-sm" style="right:12px;bottom:12px">
+                <button class="btn icon"><svg class="svg-i"><use href="#i-minus"/></svg></button>
+                <span class="num faint" style="padding:0 4px;font-size:12px">Fit</span>
+                <button class="btn icon"><svg class="svg-i"><use href="#i-plus"/></svg></button>
+              </div>
+              <div class="float" style="left:12px;top:12px;padding:4px 10px;font-size:12px;gap:8px"><span class="dot ok"></span>Live preview · 30 fps</div>
+            </div>
+          </div>
+          <div class="panel" style="flex:none">
+            <div class="panel-h" style="border:0;padding-bottom:8px">
+              <span class="title" style="font-size:13px">Scenes</span><span class="faint num">5 · 2:36</span>
+              <div class="sp"></div>
+              <span class="faint" style="font-size:12px">Narration timed to the voice</span>
+            </div>
+            <div class="strip">
+              <div class="scene"><div class="thumb" data-art="art-intro"></div><div class="cap"><b>Hook</b><span class="num">0:18</span></div></div>
+              <div class="scene"><div class="thumb" data-art="art-graph"></div><div class="cap"><b>Area grows fast</b><span class="num">0:30</span></div></div>
+              <div class="scene on"><div class="thumb" data-art="art-circle"></div><div class="cap"><span class="dot signal"></span><b>Unroll the rings</b><span class="num">0:42</span></div></div>
+              <div class="scene"><div class="thumb" data-art="art-eq"></div><div class="cap"><b>The formula</b><span class="num">0:34</span></div></div>
+              <div class="scene hide-sm"><div class="thumb" data-art="art-quiz"></div><div class="cap"><b>Practice</b><span class="num">0:32</span></div></div>
+              <div class="scene add hide-sm"><svg class="svg-i"><use href="#i-plus"/></svg></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-h" style="padding:8px">
+            <div class="seg" style="flex:1">
+              <button class="on" style="flex:1;justify-content:center"><svg class="svg-i sm"><use href="#i-spark"/></svg>Assistant</button>
+              <button style="flex:1;justify-content:center"><svg class="svg-i sm"><use href="#i-mic"/></svg>Narration</button>
+              <button style="flex:1;justify-content:center"><svg class="svg-i sm"><use href="#i-image"/></svg>Assets</button>
+            </div>
+          </div>
+          <div class="chat">
+            <div class="msg-u">Scene 3 moves too fast for Grade 8. Slow the unrolling and label the base 2πr.</div>
+            <div class="msg-a"><p>Slowing scene 3 and adding a <b>2πr</b> label under the triangle base. I'm only changing that scene, so the rest stays cached.</p></div>
+            <div class="act"><svg class="svg-i sm"><use href="#i-script"/></svg>Edited <span class="mono">scenes/unroll.ts</span><span class="meta">+6 −2</span></div>
+            <div class="act"><svg class="svg-i sm" style="color:var(--ok)"><use href="#i-check"/></svg>Scene check passed<span class="meta">0.3 s</span></div>
+            <div class="msg-a"><p>Unrolling now takes 9 s instead of 4 s, and the label is in. Scene 3 is re-rendering. The other four reuse their cached frames.</p></div>
+            <div class="act" style="flex-direction:column;align-items:stretch;gap:7px">
+              <div style="display:flex;gap:8px;align-items:center"><span class="dot signal"></span>Rendering scene 3<span class="meta num" style="margin-left:auto">62%</span></div>
+              <div class="prog"><b style="width:62%"></b></div>
+            </div>
+            <div class="chips" style="margin-top:-2px"><span class="faint num" style="font-size:11px">Turn used 1.9k tokens · 0.4% of plan</span></div>
+          </div>
+          <div class="composer">
+            <div class="ph">Ask for a change. Use @ to pick a scene.</div>
+            <div class="ctl">
+              <button class="btn ghost icon"><svg class="svg-i sm"><use href="#i-clip"/></svg></button>
+              <button class="btn ghost"><svg class="brand xs"><use href="#i-claude"/></svg>Sonnet <svg class="svg-i sm"><use href="#i-chevd"/></svg></button>
+              <button class="btn ghost hide-sm">Edits only <svg class="svg-i sm"><use href="#i-chevd"/></svg></button>
+              <div class="sp"></div>
+              <button class="send"><svg class="svg-i sm"><use href="#i-up"/></svg></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="toast hide-sm">
+        <svg class="svg-i" style="margin-top:2px;color:var(--fg-2)"><use href="#i-download"/></svg>
+        <div style="flex:1">
+          <b>Studio 2.1 is ready</b>
+          <p>Downloaded in the background. Applies the next time you open Studio, or now in about 2 s.</p>
+          <div class="acts"><button class="btn primary">Restart now</button><button class="btn ghost">What's new</button></div>
+        </div>
+        <button class="btn ghost icon" style="width:24px;height:24px"><svg class="svg-i sm"><use href="#i-x"/></svg></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 4 STORYBOARD ================= -->
+  <section class="screen" id="storyboard">
+    <div class="win">
+      <div class="titlebar">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <svg class="logo" viewBox="0 0 64 64"><use href="#i-logo"/></svg>
+        <div class="crumb"><span><svg class="svg-i sm"><use href="#i-folder"/></svg>Grade 8 Geometry</span><svg class="svg-i sm sep"><use href="#i-chev"/></svg><span class="cur">Area of a circle</span></div>
+        <div class="seg mode hide-sm" style="margin-left:6px">
+          <button class="on"><svg class="svg-i sm"><use href="#i-board"/></svg>Storyboard</button>
+          <button><svg class="svg-i sm"><use href="#i-film"/></svg>Studio</button>
+          <button><svg class="svg-i sm"><use href="#i-script"/></svg>Code</button>
+        </div>
+        <div class="sp"></div>
+        <span class="chip">Draft · not built yet</span>
+        <button class="btn">Revise</button>
+        <button class="btn primary">Approve &amp; build <svg class="svg-i sm"><use href="#i-chev"/></svg></button>
+      </div>
+      <div class="sb">
+        <div class="panel">
+          <div class="sb-list">
+            <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px">
+              <div class="display" style="font-size:22px">Area of a circle</div>
+              <span class="faint">5 scenes · about 2:36 · Grade 8 · from Ch7_circles_notes.pdf</span>
+            </div>
+            <div class="beat"><div class="n">1</div><div class="thumb" data-art="art-intro"></div><div><h4>Hook: pizza slices</h4><p class="say">“If you double a pizza's radius, do you get twice the pizza?”</p><p class="vis">Title card, then a circle splits into eight wedges.</p></div><span class="faint num">0:18</span></div>
+            <div class="beat"><div class="n">2</div><div class="thumb" data-art="art-graph"></div><div><h4>Area grows faster than radius</h4><p class="say">“Area grows with the square of the radius. Let's see why.”</p><p class="vis">Plot A against r and trace a point along the curve.</p></div><span class="faint num">0:30</span></div>
+            <div class="beat" style="box-shadow:0 0 0 1.5px var(--fg-3) inset"><div class="n">3</div><div class="thumb" data-art="art-circle"></div><div><h4>Unroll the rings</h4><p class="say">“Peel each thin ring off and lay it flat. The strips stack into a triangle.”</p><p class="vis">Four coloured rings straighten one by one into strips. Label base 2πr and height r.</p><div class="chips" style="margin-top:8px"><span class="chip signal">Your note: slow this down</span></div></div><span class="faint num">0:42</span></div>
+            <div class="beat"><div class="n">4</div><div class="thumb" data-art="art-eq"></div><div><h4>The formula</h4><p class="say">“Half of base times height gives πr².”</p><p class="vis">Equation builds term by term, with the result boxed.</p></div><span class="faint num">0:34</span></div>
+            <div class="beat"><div class="n">5</div><div class="thumb" data-art="art-quiz"></div><div><h4>Practice question</h4><p class="say">“A circle has a radius of 3 cm. Pause the video and work out its area.”</p><p class="vis">Two answer cards. After a 5 s pause, the correct one turns green.</p></div><span class="faint num">0:32</span></div>
+          </div>
+          <div class="sp"></div>
+          <div class="composer" style="margin:0 22px 18px">
+            <div class="ph" style="min-height:22px">Tell the assistant what to change, e.g. “merge scenes 1 and 2”. Revisions only rewrite the plan.</div>
+            <div class="ctl"><button class="btn ghost icon"><svg class="svg-i sm"><use href="#i-clip"/></svg></button><button class="btn ghost"><svg class="brand xs"><use href="#i-claude"/></svg>Haiku <svg class="svg-i sm"><use href="#i-chevd"/></svg></button><div class="sp"></div><button class="send"><svg class="svg-i sm"><use href="#i-up"/></svg></button></div>
+          </div>
+        </div>
+        <div class="panel hide-sm">
+          <div class="sec"><div class="title">Before you build</div><p class="sub" style="font-size:12px">The storyboard is a cheap plan. Code is written only after you approve it.</p></div>
+          <div class="sec">
+            <div class="h-label" style="margin-bottom:8px">Estimated build</div>
+            <div class="est"><span class="display num">~14k</span><span class="sub">tokens</span></div>
+            <p class="faint" style="font-size:12px;margin-top:2px">About 3% of your Claude plan's 5-hour window</p>
+            <div class="ubar" style="margin-top:10px"><b style="width:34%"></b></div>
+          </div>
+          <div class="sec">
+            <div class="kv"><span>House style</span><b>Chalk</b></div>
+            <div class="kv"><span>Voice</span><b>Ava · 1.0×</b></div>
+            <div class="kv"><span>Output</span><b class="num">1080p · 30 fps</b></div>
+            <div class="kv"><span>Captions</span><b>Burned in + .srt</b></div>
+            <div class="kv"><span>Model</span><b>Sonnet for build</b></div>
+          </div>
+          <div class="sec" style="border:0">
+            <div class="h-label" style="margin-bottom:8px">Sources</div>
+            <div class="attach" style="width:100%"><div class="ficon">PDF</div><div><div style="font-weight:500;font-size:12px">Ch7_circles_notes.pdf</div><div class="faint" style="font-size:11px">Summarised once and reused</div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 5 RENDERS & QUEUE ================= -->
+  <section class="screen" id="queue">
+    <div class="win">
+      <div class="titlebar">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <svg class="logo" viewBox="0 0 64 64"><use href="#i-logo"/></svg>
+        <div class="crumb"><span class="cur"><svg class="svg-i sm"><use href="#i-queue"/></svg>Renders</span></div>
+        <div class="sp"></div>
+        <div class="seg"><button class="on">All</button><button>Queue</button><button>Finished</button><button>Failed</button></div>
+        <button class="btn"><svg class="svg-i sm"><use href="#i-pause"/></svg>Pause queue</button>
+      </div>
+      <div class="body list-body">
+        <aside class="side hide-sm" data-side data-active="renders"></aside>
+        <div class="panel">
+          <table class="tbl">
+            <thead><tr><th style="width:96px"></th><th>Video</th><th class="hide-sm">Output</th><th>Status</th><th class="hide-sm">Time</th><th style="width:40px"></th></tr></thead>
+            <tbody>
+              <tr class="on"><td><span class="mini" data-art="art-circle"></span></td><td class="name">Area of a circle<div class="faint" style="font-weight:400;font-size:12px">Grade 8 Geometry</div></td><td class="hide-sm num">1080p · 30</td><td><div style="display:flex;flex-direction:column;gap:6px;width:160px"><span style="display:flex;gap:8px;align-items:center;color:var(--fg)"><span class="dot signal"></span>Rendering scene 3 / 5</span><div class="prog"><b style="width:62%"></b></div></div></td><td class="hide-sm num">00:04</td><td><button class="btn ghost icon"><svg class="svg-i"><use href="#i-dots"/></svg></button></td></tr>
+              <tr><td><span class="mini" data-art="art-vec"></span></td><td class="name">Adding vectors · Part 2<div class="faint" style="font-weight:400;font-size:12px">Physics 101</div></td><td class="hide-sm num">1080p · 60</td><td><span class="chip">Waiting · 1st</span></td><td class="hide-sm faint">—</td><td><button class="btn ghost icon"><svg class="svg-i"><use href="#i-dots"/></svg></button></td></tr>
+              <tr><td><span class="mini" data-art="art-frac"></span></td><td class="name">Fractions on a number line<div class="faint" style="font-weight:400;font-size:12px">Maths 5</div></td><td class="hide-sm num">720p · 30</td><td><span class="chip signal"><svg class="svg-i sm"><use href="#i-refresh"/></svg>Fixing script · try 1 of 3</span></td><td class="hide-sm faint">—</td><td><button class="btn ghost icon"><svg class="svg-i"><use href="#i-dots"/></svg></button></td></tr>
+              <tr><td><span class="mini" data-art="art-photo"></span></td><td class="name">Photosynthesis basics<div class="faint" style="font-weight:400;font-size:12px">Biology 7</div></td><td class="hide-sm num">1080p · 30</td><td><span class="chip ok"><svg class="svg-i sm"><use href="#i-check"/></svg>Done · 2:41</span></td><td class="hide-sm num">00:11</td><td><button class="btn ghost icon"><svg class="svg-i"><use href="#i-download"/></svg></button></td></tr>
+              <tr><td><span class="mini" data-art="art-graph"></span></td><td class="name">Reading a graph<div class="faint" style="font-weight:400;font-size:12px">Maths 6</div></td><td class="hide-sm num">1080p · 30</td><td><span class="chip ok"><svg class="svg-i sm"><use href="#i-check"/></svg>Done · 2:12</span></td><td class="hide-sm num">00:09</td><td><button class="btn ghost icon"><svg class="svg-i"><use href="#i-download"/></svg></button></td></tr>
+              <tr><td><span class="mini" data-art="art-quiz"></span></td><td class="name">Circumference quiz<div class="faint" style="font-weight:400;font-size:12px">Grade 8 Geometry</div></td><td class="hide-sm num">1080p · 30</td><td><span class="chip err">Paused · plan limit reached</span></td><td class="hide-sm faint">—</td><td><button class="btn ghost icon"><svg class="svg-i"><use href="#i-dots"/></svg></button></td></tr>
+            </tbody>
+          </table>
+          <div class="sp"></div>
+          <div style="padding:10px 14px;border-top:1px solid var(--line);display:flex;gap:16px;color:var(--fg-3);font-size:12px" class="num"><span>1 rendering · 2 waiting</span><span>Engine: GPU (DX12) · NVENC</span><div class="sp"></div><span>If a video fails: fix and re-render</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 6 SETTINGS ================= -->
+  <section class="screen" id="settings">
+    <div class="win">
+      <div class="titlebar">
+        <div class="lights"><i></i><i></i><i></i></div>
+        <svg class="logo" viewBox="0 0 64 64"><use href="#i-logo"/></svg>
+        <div class="crumb"><span class="cur"><svg class="svg-i sm"><use href="#i-gear"/></svg>Settings</span></div>
+        <div class="sp"></div>
+      </div>
+      <div class="set">
+        <aside class="side hide-sm">
+          <div class="row"><svg class="svg-i"><use href="#i-gear"/></svg>General</div>
+          <div class="row on"><svg class="svg-i"><use href="#i-key"/></svg>Assistants &amp; usage</div>
+          <div class="row"><svg class="svg-i"><use href="#i-palette"/></svg>House styles</div>
+          <div class="row"><svg class="svg-i"><use href="#i-mic"/></svg>Voice &amp; captions</div>
+          <div class="row"><svg class="svg-i"><use href="#i-film"/></svg>Rendering</div>
+          <div class="row"><svg class="svg-i"><use href="#i-download"/></svg>Updates</div>
+          <div class="row"><svg class="svg-i"><use href="#i-info"/></svg>About</div>
+        </aside>
+        <div class="panel">
+          <div class="set-main">
+            <div><div class="title" style="font-size:20px">Assistants &amp; usage</div><p class="sub" style="margin-top:4px">Studio signs in through the official CLIs and never stores your credentials.</p></div>
+            <div class="usage">
+              <div class="ucard">
+                <div style="display:flex;align-items:center;gap:10px"><div class="pmark" style="width:28px;height:28px;border-radius:7px;font-size:12px"><svg class="brand sm"><use href="#i-claude"/></svg></div><b>Claude · Max</b><span class="chip ok" style="margin-left:auto">Default</span></div>
+                <div><div style="display:flex;justify-content:space-between;font-size:12px" class="num"><span class="sub">5-hour window</span><span>31%</span></div><div class="ubar" style="margin-top:6px"><b style="width:31%"></b></div></div>
+                <div><div style="display:flex;justify-content:space-between;font-size:12px" class="num"><span class="sub">Weekly</span><span>12%</span></div><div class="ubar" style="margin-top:6px"><b style="width:12%"></b></div></div>
+                <span class="faint num" style="font-size:11px">Resets in 3 h 12 min</span>
+              </div>
+              <div class="ucard">
+                <div style="display:flex;align-items:center;gap:10px"><div class="pmark" style="width:28px;height:28px;border-radius:7px;font-size:12px"><svg class="brand sm"><use href="#i-openai"/></svg></div><b>ChatGPT · Plus</b><span class="chip" style="margin-left:auto">Fallback</span></div>
+                <div><div style="display:flex;justify-content:space-between;font-size:12px" class="num"><span class="sub">5-hour window</span><span>4%</span></div><div class="ubar" style="margin-top:6px"><b style="width:4%"></b></div></div>
+                <div><div style="display:flex;justify-content:space-between;font-size:12px" class="num"><span class="sub">Weekly</span><span>22%</span></div><div class="ubar" style="margin-top:6px"><b style="width:22%"></b></div></div>
+                <span class="faint num" style="font-size:11px">Resets in 4 h 40 min</span>
+              </div>
+            </div>
+            <div class="group">
+              <div class="it"><div class="grow"><b>Planning model</b><p>Writes storyboards and answers questions. A small model is enough.</p></div><button class="select">Haiku / GPT-mini <svg class="svg-i sm"><use href="#i-chevd"/></svg></button></div>
+              <div class="it"><div class="grow"><b>Build model</b><p>Writes and repairs scene code.</p></div><button class="select">Sonnet / GPT <svg class="svg-i sm"><use href="#i-chevd"/></svg></button></div>
+              <div class="it"><div class="grow"><b>Switch assistant when a plan runs low</b><p>Continues on the other connected plan instead of pausing the queue.</p></div><span class="toggle"></span></div>
+              <div class="it"><div class="grow"><b>Lean context</b><p>Sends the API outline and only the scene being edited, never the whole project.</p></div><span class="toggle"></span></div>
+              <div class="it"><div class="grow"><b>Automatic repairs</b><p>Script errors go back to the assistant, up to three tries.</p></div><button class="select">3 tries <svg class="svg-i sm"><use href="#i-chevd"/></svg></button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  </div>
+  <p class="note">Mockups only. Every token, size and radius here maps to a constant in the GPUI theme (see design/DESIGN.md). Scene art uses the manim-rust “Chalk” house style.</p>
+</div>
+
+<template id="side-tpl">
+  <div class="search"><svg class="svg-i sm"><use href="#i-search"/></svg>Search<span class="kbd">Ctrl K</span></div>
+  <div class="row" style="margin-top:6px"><svg class="svg-i"><use href="#i-plus"/></svg>New video</div>
+  <div class="h-label">Projects</div>
+  <div class="row"><svg class="svg-i sm"><use href="#i-chevd"/></svg>Grade 8 Geometry</div>
+  <div class="row sub" data-k="circle"><span class="dot signal"></span>Area of a circle<span class="meta">now</span></div>
+  <div class="row sub"><span class="dot ok"></span>Circumference<span class="meta">2d</span></div>
+  <div class="row sub"><span class="dot err"></span>Circumference quiz<span class="meta">2d</span></div>
+  <div class="row"><svg class="svg-i sm"><use href="#i-chev"/></svg>Physics 101</div>
+  <div class="row"><svg class="svg-i sm"><use href="#i-chev"/></svg>Biology 7</div>
+  <div class="row"><svg class="svg-i sm"><use href="#i-chev"/></svg>Maths 5</div>
+  <div class="sp"></div>
+  <div class="row"><svg class="svg-i"><use href="#i-palette"/></svg>House styles</div>
+  <div class="row" data-k="renders"><svg class="svg-i"><use href="#i-queue"/></svg>Renders<span class="meta num">2</span></div>
+  <div class="row"><svg class="svg-i"><use href="#i-gear"/></svg>Settings</div>
+</template>
+
+<script>
+document.querySelectorAll('[data-art]').forEach(el => el.append(document.getElementById(el.dataset.art).content.cloneNode(true)));
+document.querySelectorAll('[data-side]').forEach(el => {
+  el.append(document.getElementById('side-tpl').content.cloneNode(true));
+  const a = el.dataset.active; if (a) el.querySelector(`[data-k="${a}"]`)?.classList.add('on');
+});
+const btns = document.querySelectorAll('.deck-bar [data-s]');
+function show(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.toggle('on', s.id === id));
+  btns.forEach(b => b.setAttribute('aria-pressed', b.dataset.s === id));
+  try { localStorage.setItem('ms-screen', id); } catch {}
+}
+btns.forEach(b => b.onclick = () => show(b.dataset.s));
+try { const s = new URLSearchParams(location.search).get('s') || localStorage.getItem('ms-screen'); if (s) show(s); } catch {}
+document.getElementById('theme').onclick = () => {
+  const r = document.documentElement;
+  const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  r.dataset.theme = dark ? 'light' : 'dark';
+};
+</script>
+</body>
+</html>

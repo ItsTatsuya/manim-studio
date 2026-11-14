@@ -1,0 +1,42 @@
+{
+  "title": "Slope as Rise Over Run",
+  "grade": "Grade 8",
+  "scenes": [
+    {
+      "title": "Hook: Which Hill Is Steeper?",
+      "say": "Imagine two ramps. One climbs gently, the other shoots up steeply. How could we measure exactly how steep a line is? Let's find out.",
+      "visual": "A coordinate grid with x and y axes labeled. Two straight line segments drawn as ramps: one shallow in blue, one steep in orange. Small arrows pulse along each line.",
+      "seconds": 10
+    },
+    {
+      "title": "Pick Two Points",
+      "say": "Start with any line on a grid. Choose two points that sit exactly on it. Here we have point A at x equals one, y equals two, and point B at x equals five, y equals six.",
+      "visual": "A straight line crosses the grid. Points A at (1, 2) and B at (5, 6) appear as glowing dots with coordinate labels fading in beside them.",
+      "seconds": 12
+    },
+    {
+      "title": "Draw the Rise and the Run",
+      "say": "Now build a right triangle. Move straight up from point A until you line up with point B. That vertical distance is the rise. Then move straight across to point B. That horizontal distance is the run.",
+      "visual": "From A, a vertical green segment draws upward to y equals six and is labeled rise. A horizontal red segment draws from there to B and is labeled run. The triangle fills in lightly.",
+      "seconds": 15
+    },
+    {
+      "title": "Count the Rise and Run",
+      "say": "The rise goes from two to six, so it is four. The run goes from one to five, so it is also four. Count the units to check.",
+      "visual": "Tick marks appear along the vertical and horizontal segments. Equations write out on screen: rise equals six minus two equals four, and run equals five minus one equals four.",
+      "seconds": 11
+    },
+    {
+      "title": "Slope Equals Rise Over Run",
+      "say": "Slope is rise over run. Four over four equals one. So this line has a slope of one. It rises one unit for every unit it runs.",
+      "visual": "The equation slope equals rise over run appears in large text. Then 4 over 4 equals 1 is written, with the fraction bar animating. The line is highlighted and labeled slope equals 1.",
+      "seconds": 12
+    },
+    {
+      "title": "Practice Question",
+      "say": "Try this one yourself. A line passes through the points at x equals two, y equals three, and x equals six, y equals eleven. What is its slope? Pause the video, work it out, then check your answer.",
+      "visual": "A new grid shows the two points (2, 3) and (6, 11) with a blank triangle. Text reads: Find the slope. Rise equals ? Run equals ? Slope equals ? A pause icon appears.",
+      "seconds": 10
+    }
+  ]
+}

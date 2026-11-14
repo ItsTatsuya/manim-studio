@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux packages (GPUI, audio, fonts)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev \
+            libx11-xcb-dev libxcb1-dev libfontconfig-dev libasound2-dev espeak-ng fonts-dejavu-core
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+
+  release:
+    # Tag vX.Y.Z to publish a pre-release (zip + installer) and refresh the signed
+    # update manifest on the "updates" pre-release. Pre-releases keep the old 1.x app's
+    # updater (which reads only the latest full release) away from them.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Inno Setup
+        run: choco install innosetup -y --no-progress
+      - name: Bundle and sign
+        env:
+          MINISIGN_SECRET: ${{ secrets.MINISIGN_SECRET }}
+        shell: pwsh
+        run: |
+          if (-not $env:MINISIGN_SECRET) { throw "The MINISIGN_SECRET secret is not set" }
+          ./script/bundle-windows.ps1 -Installer -Notes "${{ github.ref_name }}"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release create $tag (Get-Item dist/*.zip) (Get-Item dist/*-setup.exe) --prerelease --latest=false --title "Manim Studio $($tag.TrimStart('v'))" --generate-notes
+          gh release view updates *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create updates --prerelease --latest=false --title "Update manifests" --notes "Signed manifests the app checks for updates. Don't download these."
+          }
+          gh release upload updates dist/manifest-stable.json dist/manifest-stable.json.minisig --clobber

@@ -1,0 +1,17 @@
+[package]
+name = "studio-ui"
+description = "Manim Studio design system: theme tokens, assets and GPUI components"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui.workspace = true
+rust-embed.workspace = true
+unicode-segmentation.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

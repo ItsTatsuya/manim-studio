@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 64 64">
+  <!-- Manim Studio: an ease-in-out timing curve, the shape of every animation, ending in a point. -->
+  <rect width="64" height="64" rx="15" fill="#151518"/>
+  <rect x=".75" y=".75" width="62.5" height="62.5" rx="14.25" fill="none" stroke="#ffffff" stroke-opacity=".09" stroke-width="1.5"/>
+  <path d="M15.5 46C32 46 30 18 45 18" fill="none" stroke="#f2efe8" stroke-width="4.75" stroke-linecap="round"/>
+  <circle cx="15.5" cy="46" r="2.4" fill="#f2efe8" fill-opacity=".45"/>
+  <circle cx="47" cy="18" r="5" fill="#f0b35a"/>
+</svg>

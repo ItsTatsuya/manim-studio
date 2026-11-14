@@ -1,0 +1,532 @@
+<title>Manim Studio House Styles</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&family=JetBrains+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,600&family=Source+Sans+3:wght@400;600&family=Kalam:wght@400;700&family=Caveat:wght@500;600&family=IBM+Plex+Sans:wght@400;600&family=Plus+Jakarta+Sans:wght@800&family=Gochi+Hand&family=Source+Code+Pro:wght@400&family=Bricolage+Grotesque:opsz,wght@12..96,800&family=Instrument+Sans:wght@400&family=Martian+Mono:wght@400;600&family=Reenie+Beanie&family=Archivo:wght@400;800&family=Caveat+Brush&family=Young+Serif&family=Lexend:wght@400&family=Shadows+Into+Light&family=Sora:wght@700&family=Manrope:wght@400&family=Andika:wght@400;700&family=Fredoka:wght@600&family=Nunito:wght@400;700&family=Space+Mono&family=Patrick+Hand&family=DM+Serif+Display&family=DM+Sans:opsz,wght@9..40,400;9..40,500&family=DM+Mono&family=STIX+Two+Text:ital,wght@1,400;1,600&display=swap">
+<style>
+/* Layout: a working style book. Sticky scene switcher, an overview wall of frames, then one spread per style (frame left, spec right). */
+:root {
+  --bg: #F2F3F1;
+  --surface: #FFFFFF;
+  --fg: #15181B;
+  --muted: #5B6168;
+  --line: #D9DCD7;
+  --accent: #2C55C9;
+  --chip: #E8EAE6;
+  --ui: "Inter", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111315; --surface: #191C1F; --fg: #ECEDEA; --muted: #9AA0A6; --line: #2A2E33; --accent: #93B1FF; --chip: #23272B;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111315; --surface: #191C1F; --fg: #ECEDEA; --muted: #9AA0A6; --line: #2A2E33; --accent: #93B1FF; --chip: #23272B;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--ui); font-size: 15px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 64px;
+}
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.wrap { max-width: 1240px; margin: 0 auto; }
+header.intro { padding-block: 48px 28px; display: grid; gap: 14px; }
+.eyebrow { font: 600 12px/1 var(--ui); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+h1 { font: 700 clamp(30px, 4.4vw, 48px)/1.05 var(--ui); letter-spacing: -.025em; margin: 0; text-wrap: balance; }
+.lede { max-width: 66ch; color: var(--muted); margin: 0; font-size: 16px; }
+.lede code, p code, li code, td code { font-family: var(--mono); font-size: .88em; background: var(--chip); padding: 1px 5px; border-radius: 4px; color: var(--fg); }
+
+.toolbar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line); padding-block: 10px; margin-bottom: 28px;
+  display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center;
+}
+.seg { display: inline-flex; background: var(--chip); border-radius: 9px; padding: 3px; gap: 2px; flex-wrap: wrap; }
+.seg button { font: 500 13px/1 var(--ui); border: 0; background: transparent; color: var(--muted); padding: 8px 12px; border-radius: 7px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 1px 2px rgb(0 0 0 / .12); }
+.seg button:focus-visible, .jump a:focus-visible, .copy:focus-visible, .ov:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.jump { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; }
+.jump a { color: var(--muted); text-decoration: none; }
+.jump a:hover { color: var(--fg); }
+.toolbar .label { font-size: 12px; color: var(--muted); }
+
+.overview { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 22px 18px; margin-bottom: 72px; }
+.ov { display: grid; gap: 8px; text-decoration: none; color: inherit; border-radius: 10px; }
+.ov .name { font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; gap: 8px; }
+.ov .name span { color: var(--muted); font-weight: 400; font-size: 12px; }
+.ov:hover .frame { transform: translateY(-2px); }
+.group-h { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 0 0 14px; }
+.group-h h2 { font: 700 20px/1.2 var(--ui); letter-spacing: -.015em; margin: 0; }
+.group-h p { margin: 0; color: var(--muted); font-size: 14px; }
+.overview + .group-h { margin-top: -36px; }
+.badge { display: inline-block; vertical-align: middle; font: 600 11px/1 var(--ui); letter-spacing: .06em; text-transform: uppercase; padding: 6px 10px; border-radius: 999px; margin-left: 10px; position: relative; top: -3px; }
+.badge.locked { background: var(--fg); color: var(--bg); }
+.badge.new { box-shadow: inset 0 0 0 1px var(--line); color: var(--muted); }
+
+.spread { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: 28px; padding-block: 36px; border-top: 1px solid var(--line); scroll-margin-top: 70px; }
+@media (max-width: 900px) { .spread { grid-template-columns: minmax(0, 1fr); } }
+.spread h2 { font: 700 26px/1.1 var(--ui); letter-spacing: -.02em; margin: 0; }
+.tag { color: var(--muted); margin: 4px 0 0; }
+.spec { display: grid; gap: 22px; align-content: start; min-width: 0; }
+.spec h3 { font: 600 11px/1 var(--ui); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 10px; }
+.best { font-size: 14px; margin: 0; }
+.fonts { display: grid; gap: 8px; }
+.fontrow { display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 10px; align-items: baseline; }
+.fontrow .role { font: 500 11px/1 var(--mono); color: var(--muted); }
+.fontrow .spec-name { font-size: 20px; line-height: 1.2; overflow-wrap: anywhere; }
+.fontrow .meta { display: block; font: 400 11px/1.4 var(--mono); color: var(--muted); }
+.swatches { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.sw { display: grid; gap: 4px; min-width: 0; }
+.sw i { display: block; aspect-ratio: 1.6; border-radius: 6px; box-shadow: inset 0 0 0 1px rgb(127 127 127 / .25); }
+.sw b { font: 500 10px/1.2 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips span { font: 500 12px/1 var(--mono); background: var(--chip); padding: 8px 10px; border-radius: 6px; }
+.chips .ok { color: var(--fg); }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.copy { font: 600 13px/1 var(--ui); border: 1px solid var(--line); background: var(--surface); color: var(--fg); padding: 10px 14px; border-radius: 8px; cursor: pointer; }
+.copy:hover { border-color: var(--accent); }
+details { min-width: 0; }
+details summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+details pre { font: 12px/1.5 var(--mono); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow-x: auto; margin: 10px 0 0; max-height: 340px; }
+.status { font-size: 12px; color: var(--muted); min-height: 1em; }
+
+.notes { border-top: 1px solid var(--line); padding-top: 40px; margin-top: 20px; display: grid; gap: 26px; }
+.notes h2 { font: 700 26px/1.1 var(--ui); letter-spacing: -.02em; margin: 0; }
+.notes-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px 36px; }
+.notes-grid > div { min-width: 0; }
+.notes h3 { font-size: 15px; margin: 0 0 6px; }
+.notes p, .notes li { color: var(--muted); max-width: 64ch; margin: 0; }
+.notes ul { padding-left: 18px; margin: 0; display: grid; gap: 4px; }
+.tablebox { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 13px; min-width: 620px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 11px/1.2 var(--ui); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+tr:last-child td { border-bottom: 0; }
+
+/* ---------- the video frame (everything inside scales with the frame width) ---------- */
+.frame {
+  --u: 7.03cqw; /* one manim scene unit: frame is 14.22 units wide */
+  position: relative; aspect-ratio: 16 / 9; width: 100%; max-width: 100%; overflow: hidden;
+  container-type: inline-size; border-radius: 10px;
+  background: var(--s-bg); color: var(--s-text); font-family: var(--s-body);
+  box-shadow: 0 1px 2px rgb(0 0 0 / .08), 0 8px 24px -12px rgb(0 0 0 / .25);
+  transition: transform .2s ease;
+}
+@media (prefers-reduced-motion: reduce) { .frame { transition: none; } }
+.frame .pat { position: absolute; inset: 0; pointer-events: none; }
+.frame[data-pattern="grid"] .pat {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--s-muted) 16%, transparent) .09cqw, transparent .09cqw),
+    linear-gradient(90deg, color-mix(in srgb, var(--s-muted) 16%, transparent) .09cqw, transparent .09cqw);
+  background-size: calc(var(--ps) * var(--u)) calc(var(--ps) * var(--u));
+  background-position: center;
+}
+.frame[data-pattern="dots"] .pat {
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--s-muted) 38%, transparent) .14cqw, transparent .2cqw);
+  background-size: calc(var(--ps) * var(--u)) calc(var(--ps) * var(--u));
+  background-position: center;
+}
+.stage { position: absolute; inset: 0; padding: calc(var(--m) * var(--u)); }
+.hd { font-family: var(--s-head); font-weight: var(--hw); letter-spacing: var(--hls); line-height: 1.05; font-size: calc(var(--sz-title) * .085cqw); margin: 0; color: var(--s-text); }
+.bar { display: none; width: 8cqw; height: .5cqw; border-radius: 1cqw; background: var(--s-primary); margin-top: 1.1cqw; }
+.frame[data-accent="true"] .bar { display: block; }
+.frame[data-title="top-center"] .head { text-align: center; }
+.frame[data-title="top-center"] .bar { margin-inline: auto; }
+.body { font-size: calc(var(--sz-body) * .085cqw); line-height: 1.3; }
+.small { font-size: calc(var(--sz-small) * .085cqw); line-height: 1.3; }
+.lab { font-size: calc(var(--sz-small) * .075cqw); letter-spacing: .12em; text-transform: uppercase; color: var(--s-muted); font-weight: 600; }
+.math { font-family: "STIX Two Text", "Cambria Math", serif; font-style: italic; }
+.math .up { font-style: normal; }
+.hand { font-family: var(--s-hand); color: var(--s-accent); font-size: calc(var(--sz-body) * .1cqw); line-height: 1; white-space: nowrap; }
+.box { border-radius: 1.3cqw; padding: 1.6cqw 2cqw; }
+.frame[data-boxes="card"] .box.key { background: var(--s-key); box-shadow: inset 0 0 0 .14cqw color-mix(in srgb, var(--s-primary) 40%, transparent); }
+.frame[data-boxes="card"] .box.ex { background: var(--s-ex); box-shadow: inset 0 0 0 .14cqw color-mix(in srgb, var(--s-secondary) 40%, transparent); }
+.frame[data-boxes="outline"] .box.key { box-shadow: inset 0 0 0 .2cqw var(--s-primary); }
+.frame[data-boxes="outline"] .box.ex { box-shadow: inset 0 0 0 .2cqw var(--s-secondary); }
+.p { color: var(--s-primary); } .s { color: var(--s-secondary); } .a { color: var(--s-accent); }
+.pos { color: var(--s-positive); } .neg { color: var(--s-negative); } .mu { color: var(--s-muted); }
+
+/* title card */
+.sc-title .tw { position: absolute; left: calc(var(--m) * var(--u)); top: 50%; transform: translateY(-50%); width: 54%; display: grid; gap: 1.6cqw; }
+.sc-title .big { font-size: calc(var(--sz-title) * .13cqw); line-height: 1; text-wrap: balance; }
+.sc-title .sub { color: var(--s-muted); max-width: 30ch; }
+.sc-title .eb { font-size: calc(var(--sz-small) * .08cqw); letter-spacing: .14em; text-transform: uppercase; font-weight: 600; color: var(--s-primary); }
+.sc-title svg.disc { position: absolute; right: 7%; top: 50%; width: 30%; transform: translateY(-50%); overflow: visible; }
+.sc-title .hand { transform: rotate(-3deg); transform-origin: left; }
+.frame[data-title="center"] .sc-title .tw, .frame[data-title="top-center"] .sc-title .tw { left: 50%; transform: translate(-50%, -50%); width: 78%; text-align: center; justify-items: center; }
+.frame[data-title="center"] .sc-title svg.disc, .frame[data-title="top-center"] .sc-title svg.disc { display: none; }
+
+/* key idea */
+.sc-def .colL { position: absolute; left: calc(var(--m) * var(--u)); top: 27%; width: 47%; display: grid; gap: 1.6cqw; }
+.sc-def .eq { font-size: calc(var(--sz-title) * .12cqw); line-height: 1.1; margin-top: .6cqw; }
+.sc-def .colR { position: absolute; left: 57%; top: 30%; width: 37%; }
+.sc-def .colR svg { width: 100%; overflow: visible; }
+
+/* graph */
+.sc-graph svg.plot { position: absolute; left: 3%; top: 21%; width: 58%; overflow: visible; }
+.sc-graph .side { position: absolute; right: calc(var(--m) * var(--u)); top: 30%; width: 32%; display: grid; gap: 1.4cqw; }
+
+/* code */
+.sc-code .codebox { position: absolute; left: calc(var(--m) * var(--u)); top: 27%; width: 58%; }
+.sc-code pre { margin: 0; font-family: var(--s-code); font-size: calc(var(--sz-small) * .078cqw); line-height: 1.55; white-space: pre; color: var(--s-text); }
+.sc-code .out { position: absolute; right: calc(var(--m) * var(--u)); top: 31%; width: 25%; display: grid; gap: 1.2cqw; }
+.sc-code .k { color: var(--s-primary); } .sc-code .f { color: var(--s-secondary); } .sc-code .n { color: var(--s-accent); } .sc-code .c { color: var(--s-muted); font-style: italic; } .sc-code .st { color: var(--s-positive); }
+</style>
+
+<div class="wrap">
+  <header class="intro">
+    <div class="eyebrow">Manim Studio · Settings → House styles</div>
+    <h1>House styles for lesson videos</h1>
+    <p class="lede">Six styles are locked in. Four more options follow for review. Each style is a complete engine theme: ten colour roles, four font roles, type sizes, layout and pacing. Every field matches <code>manim::theme::Theme</code>, so any of these can go straight into <code>crates/studio-render/src/style.rs</code>. All fonts are SIL Open Font License, so they can be bundled with the app and burned into exported video.</p>
+  </header>
+
+  <nav class="toolbar" aria-label="Preview controls">
+    <span class="label" id="scene-label">Scene</span>
+    <div class="seg" role="group" aria-labelledby="scene-label" id="scenes"></div>
+    <div class="jump" id="jump"></div>
+  </nav>
+
+  <div class="group-h"><h2>Locked in</h2><p>Slate, Clean, Playground, Documentary, Phosphor and Whiteboard</p></div>
+  <section class="overview" id="overview-locked" aria-label="Locked styles"></section>
+  <div class="group-h"><h2>Other options</h2><p>Not locked, kept here in case a subject needs them</p></div>
+  <section class="overview" id="overview-new" aria-label="New style options"></section>
+  <main id="spreads"></main>
+
+  <section class="notes" id="shipping">
+    <h2>Shipping notes</h2>
+    <div class="notes-grid">
+      <div>
+        <h3>The handwriting font is not bundled today</h3>
+        <p>All four current styles name <code>Caveat</code> for the <code>hand</code> role, but <code>crates/studio-ui/assets/fonts</code> only holds Inter, Inter Display and JetBrains Mono. On a machine without Caveat, annotations fall back to a system face. Whatever styles ship, bundle their hand fonts.</p>
+      </div>
+      <div>
+        <h3>What happens to the current four</h3>
+        <ul>
+          <li>Chalk → <b>Slate</b> (locked)</li>
+          <li>Grid → <b>Clean</b> (locked)</li>
+          <li>Paper → <b>Whiteboard</b> (locked)</li>
+          <li>Night → <b>Phosphor</b> (locked)</li>
+          <li>Playground and Documentary are new additions.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Variable fonts are fine</h3>
+        <p>The engine sets a variable font&#39;s <code>wght</code> axis to the weight it asks for, so most families ship as one variable file. Titles are drawn at 600, headings at 500 and handwriting at 600, whatever the style; a static family snaps to its nearest weight.</p>
+      </div>
+      <div>
+        <h3>Possible engine additions</h3>
+        <ul>
+          <li><code>fonts.heading_weight</code>: titles are always 600 today, so Plus Jakarta Sans can&#39;t reach its intended 800.</li>
+          <li><code>fonts.math_family</code>: let Documentary typeset equations in a matching serif.</li>
+          <li><code>layout.title_case</code>: some styles read better with sentence case enforced.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="tablebox">
+      <table>
+        <thead><tr><th>Style</th><th>Status</th><th>Files to bundle (static TTF)</th><th>Approx. size</th></tr></thead>
+        <tbody id="bundle"></tbody>
+      </table>
+    </div>
+    <p class="status">Sizes are rough estimates for Latin static files. Families shared between styles only ship once.</p>
+  </section>
+</div>
+
+<script>
+const FALLBACK = ["Segoe UI Symbol", "Nirmala UI"];
+const STYLES = [
+  {
+    id: "slate", name: "Slate", locked: true, replaces: "Chalk", tag: "A chalkboard, cleaned up.",
+    best: "Maths and physics walkthroughs, step-by-step derivations, anything you would teach at a board.",
+    fonts: { heading: ["Fraunces", 600, "-0.01em"], body: ["Source Sans 3", 400], code: ["JetBrains Mono", 400], hand: ["Kalam", 400] },
+    colors: { background: "#1D2622", text: "#EDEADF", muted: "#9DAAA1", primary: "#F3CF6B", secondary: "#8CC8E6", accent: "#EE9A8C", positive: "#9AD7A8", negative: "#EE7F74", key_fill: "#27332D", example_fill: "#22303A" },
+    sizes: { title: 56, heading: 40, body: 32, small: 24 },
+    layout: { margin: 0.65, title: "top-left", boxes: "card", accent: true, pattern: "none", pattern_spacing: 0.5 },
+    pacing: { run_time: 1.0, wait: 1.0, words_per_second: 2.4 },
+    files: "Fraunces SemiBold · Source Sans 3 Regular, SemiBold · Kalam Regular", kb: 690
+  },
+  {
+    id: "clean", name: "Clean", locked: true, replaces: "Grid", tag: "Bright, neutral, quietly modern.",
+    best: "Product explainers, data literacy, business and workplace training. Uses the fonts the app already bundles plus one heading face.",
+    fonts: { heading: ["Plus Jakarta Sans", 800, "-0.025em"], body: ["Inter", 400], code: ["JetBrains Mono", 400], hand: ["Caveat", 600] },
+    colors: { background: "#FFFFFF", text: "#111827", muted: "#6B7280", primary: "#0F766E", secondary: "#2563EB", accent: "#B45309", positive: "#16A34A", negative: "#DC2626", key_fill: "#E7F5F3", example_fill: "#EAF0FE" },
+    sizes: { title: 54, heading: 40, body: 32, small: 24 },
+    layout: { margin: 0.65, title: "top-left", boxes: "card", accent: true, pattern: "grid", pattern_spacing: 0.5 },
+    pacing: { run_time: 1.0, wait: 1.0, words_per_second: 2.4 },
+    files: "Plus Jakarta Sans ExtraBold · Caveat SemiBold (Inter, JetBrains Mono already bundled)", kb: 230
+  },
+  {
+    id: "playground", name: "Playground", locked: true, tag: "Round, warm and loud enough for kids.",
+    best: "Primary school, ages 6 to 11: early number, phonics, simple science. Bigger type and slower pacing.",
+    fonts: { heading: ["Fredoka", 600, "0"], body: ["Nunito", 400], code: ["Space Mono", 400], hand: ["Patrick Hand", 400] },
+    colors: { background: "#FFF7E8", text: "#23203A", muted: "#6E6880", primary: "#C93F14", secondary: "#14998C", accent: "#6545E0", positive: "#2FA84F", negative: "#E5383B", key_fill: "#FFE3D4", example_fill: "#D9F3EE" },
+    sizes: { title: 60, heading: 44, body: 36, small: 27 },
+    layout: { margin: 0.7, title: "top-center", boxes: "card", accent: false, pattern: "dots", pattern_spacing: 0.7 },
+    pacing: { run_time: 1.2, wait: 1.4, words_per_second: 2.0 },
+    files: "Fredoka SemiBold · Nunito Regular, Bold · Space Mono Regular · Patrick Hand", kb: 610
+  },
+  {
+    id: "documentary", name: "Documentary", locked: true, tag: "Cinematic serif on near-black.",
+    best: "History, biographies and essay-style science. Centred titles and outlined boxes keep the frame calm under narration.",
+    fonts: { heading: ["DM Serif Display", 400, "0"], body: ["DM Sans", 400], code: ["DM Mono", 400], hand: ["Caveat", 600] },
+    colors: { background: "#121110", text: "#F1EDE4", muted: "#A39D92", primary: "#E9B44C", secondary: "#8DB8C8", accent: "#E07A5F", positive: "#9CC59A", negative: "#E26D5A", key_fill: "#1E1C19", example_fill: "#1A2024" },
+    sizes: { title: 58, heading: 42, body: 31, small: 23 },
+    layout: { margin: 0.8, title: "top-center", boxes: "outline", accent: false, pattern: "none", pattern_spacing: 0.5 },
+    pacing: { run_time: 1.2, wait: 1.3, words_per_second: 2.2 },
+    files: "DM Serif Display · DM Sans Regular, Medium · DM Mono Regular · Caveat SemiBold", kb: 460
+  },
+  {
+    id: "riso", name: "Riso", tag: "Two-ink risograph print: fluorescent pink and blue.",
+    best: "Social and short-form explainers, design and art topics, anything that should feel made by hand rather than by software.",
+    fonts: { heading: ["Bricolage Grotesque", 800, "-0.03em"], body: ["Instrument Sans", 400], code: ["Martian Mono", 400], hand: ["Reenie Beanie", 400] },
+    colors: { background: "#F6F3EC", text: "#1D1B2E", muted: "#66627A", primary: "#C81E57", secondary: "#0068A8", accent: "#00796B", positive: "#2E7D32", negative: "#C62828", key_fill: "#FBE1EA", example_fill: "#DDEBF5" },
+    sizes: { title: 58, heading: 42, body: 32, small: 24 },
+    layout: { margin: 0.65, title: "top-left", boxes: "card", accent: false, pattern: "dots", pattern_spacing: 0.35 },
+    pacing: { run_time: 0.9, wait: 0.9, words_per_second: 2.5 },
+    files: "Bricolage Grotesque ExtraBold · Instrument Sans Regular · Martian Mono Regular · Reenie Beanie", kb: 520
+  },
+  {
+    id: "phosphor", name: "Phosphor", locked: true, replaces: "Night", tag: "An amber terminal screen.",
+    best: "Programming, operating systems, networking and cybersecurity. Headings set in a monospace so code never looks out of place.",
+    fonts: { heading: ["JetBrains Mono", 600, "-0.02em"], body: ["IBM Plex Sans", 400], code: ["JetBrains Mono", 400], hand: ["Caveat", 600] },
+    colors: { background: "#15120C", text: "#F2E6C9", muted: "#A89C80", primary: "#FFB547", secondary: "#8FD694", accent: "#F28C5B", positive: "#A6E3A1", negative: "#F2766B", key_fill: "#221D13", example_fill: "#1A2015" },
+    sizes: { title: 44, heading: 34, body: 30, small: 23 },
+    layout: { margin: 0.6, title: "top-left", boxes: "outline", accent: true, pattern: "grid", pattern_spacing: 0.5 },
+    pacing: { run_time: 0.9, wait: 1.0, words_per_second: 2.5 },
+    files: "IBM Plex Sans (variable) · Caveat (variable); JetBrains Mono already bundled", kb: 420
+  },
+  {
+    id: "signal", name: "Signal", tag: "Swiss poster: heavy grotesk, red and black.",
+    best: "Economics, statistics, news-style explainers and arguments that need to land one point per slide.",
+    fonts: { heading: ["Archivo", 800, "-0.035em"], body: ["Archivo", 400], code: ["Space Mono", 400], hand: ["Caveat Brush", 400] },
+    colors: { background: "#F3F1EC", text: "#121212", muted: "#5E5B55", primary: "#C8211A", secondary: "#1F5FA8", accent: "#0F7B6C", positive: "#2E7D32", negative: "#C62828", key_fill: "#FBE3E1", example_fill: "#E3ECF6" },
+    sizes: { title: 60, heading: 42, body: 32, small: 24 },
+    layout: { margin: 0.6, title: "top-left", boxes: "outline", accent: true, pattern: "none", pattern_spacing: 0.5 },
+    pacing: { run_time: 0.9, wait: 1.0, words_per_second: 2.4 },
+    files: "Archivo Regular, ExtraBold · Caveat Brush (Space Mono shared with Playground)", kb: 380
+  },
+  {
+    id: "field", name: "Field Notes", tag: "A naturalist's notebook in sage and ochre.",
+    best: "Biology, ecology, geography and earth science. The body face is built for reading speed, which helps longer captions.",
+    fonts: { heading: ["Young Serif", 400, "-0.01em"], body: ["Lexend", 400], code: ["Source Code Pro", 400], hand: ["Shadows Into Light", 400] },
+    colors: { background: "#EDF1E8", text: "#1C2A20", muted: "#5D6B60", primary: "#2F6B3E", secondary: "#8A4F1F", accent: "#B03A2E", positive: "#3B7A2A", negative: "#B3261E", key_fill: "#DCE8D6", example_fill: "#F0E3D2" },
+    sizes: { title: 54, heading: 40, body: 31, small: 24 },
+    layout: { margin: 0.7, title: "top-left", boxes: "card", accent: false, pattern: "grid", pattern_spacing: 0.6 },
+    pacing: { run_time: 1.0, wait: 1.1, words_per_second: 2.3 },
+    files: "Young Serif · Lexend Regular · Source Code Pro Regular · Shadows Into Light", kb: 360
+  },
+  {
+    id: "lilac", name: "Lilac", tag: "Soft violet, friendly and current.",
+    best: "Psychology, health, study skills and general-audience YouTube explainers. Gentle enough for long watch times.",
+    fonts: { heading: ["Sora", 700, "-0.02em"], body: ["Manrope", 400], code: ["JetBrains Mono", 400], hand: ["Gochi Hand", 400] },
+    colors: { background: "#EFEBFA", text: "#211A3B", muted: "#645C80", primary: "#5532C4", secondary: "#C2366A", accent: "#08716C", positive: "#2E7D32", negative: "#C62828", key_fill: "#E2DAFB", example_fill: "#F9DEE8" },
+    sizes: { title: 54, heading: 40, body: 32, small: 24 },
+    layout: { margin: 0.65, title: "top-left", boxes: "card", accent: true, pattern: "dots", pattern_spacing: 0.6 },
+    pacing: { run_time: 1.0, wait: 1.0, words_per_second: 2.4 },
+    files: "Sora Bold · Manrope Regular · Gochi Hand (JetBrains Mono already bundled)", kb: 300
+  },
+  {
+    id: "whiteboard", name: "Whiteboard", locked: true, replaces: "Paper", tag: "Three marker colours on a clean board.",
+    best: "Classic whiteboard explainers, tutoring, exam revision. Hand-lettered headings with a literacy-focused body face.",
+    fonts: { heading: ["Kalam", 700, "0"], body: ["Andika", 400], code: ["Space Mono", 400], hand: ["Kalam", 400] },
+    colors: { background: "#FBFCFD", text: "#1B1F24", muted: "#5F6670", primary: "#1F5FCF", secondary: "#10865A", accent: "#D12F2F", positive: "#10865A", negative: "#D12F2F", key_fill: "#E8F0FC", example_fill: "#E5F4EC" },
+    sizes: { title: 58, heading: 42, body: 33, small: 25 },
+    layout: { margin: 0.65, title: "top-left", boxes: "outline", accent: false, pattern: "none", pattern_spacing: 0.5 },
+    pacing: { run_time: 1.0, wait: 1.1, words_per_second: 2.3 },
+    files: "Kalam Bold (Regular shared with Slate) · Andika Regular (Space Mono shared)", kb: 420
+  }
+];
+
+const SCENES = [["title", "Title card"], ["def", "Key idea"], ["graph", "Graph"], ["code", "Code"]];
+let scene = "title";
+try { const s = localStorage.getItem("hs-scene"); if (SCENES.some(x => x[0] === s)) scene = s; } catch (e) {}
+
+const ff = (f, generic) => `"${f[0]}", ${generic}`;
+function frameVars(st) {
+  const c = st.colors, f = st.fonts;
+  return [
+    `--s-bg:${c.background}`, `--s-text:${c.text}`, `--s-muted:${c.muted}`, `--s-primary:${c.primary}`,
+    `--s-secondary:${c.secondary}`, `--s-accent:${c.accent}`, `--s-positive:${c.positive}`, `--s-negative:${c.negative}`,
+    `--s-key:${c.key_fill}`, `--s-ex:${c.example_fill}`,
+    `--s-head:${ff(f.heading, "serif")}`, `--hw:${f.heading[1]}`, `--hls:${f.heading[2]}`,
+    `--s-body:${ff(f.body, "sans-serif")}`, `--s-code:${ff(f.code, "monospace")}`, `--s-hand:${ff(f.hand, "cursive")}`,
+    `--sz-title:${st.sizes.title}`, `--sz-body:${st.sizes.body}`, `--sz-small:${st.sizes.small}`,
+    `--m:${st.layout.margin}`, `--ps:${st.layout.pattern_spacing}`
+  ].join(";");
+}
+
+function wedgeDisc(c) {
+  const n = 12, R = 100, parts = [];
+  for (let i = 0; i < n; i++) {
+    const a0 = (i / n) * 2 * Math.PI - Math.PI / 2, a1 = ((i + 1) / n) * 2 * Math.PI - Math.PI / 2;
+    const p = (a) => `${(R * Math.cos(a)).toFixed(2)} ${(R * Math.sin(a)).toFixed(2)}`;
+    const fill = i % 2 ? c.secondary : c.primary;
+    parts.push(`<path d="M0 0 L${p(a0)} A${R} ${R} 0 0 1 ${p(a1)} Z" fill="${fill}" fill-opacity="${i % 2 ? .55 : .8}" stroke="${c.background}" stroke-width="2"/>`);
+  }
+  return `<svg class="disc" viewBox="-120 -120 240 240" aria-hidden="true">${parts.join("")}
+    <line x1="0" y1="0" x2="100" y2="0" stroke="${c.text}" stroke-width="3"/>
+    <circle cx="0" cy="0" r="4" fill="${c.text}"/>
+    <text x="50" y="-8" text-anchor="middle" font-family="STIX Two Text, serif" font-style="italic" font-size="24" fill="${c.text}">r</text></svg>`;
+}
+
+function unrolled(c, hand) {
+  const n = 8, w = 44, h = 120, x0 = 10, y0 = 40, parts = [];
+  for (let i = 0; i < n; i++) {
+    const x = x0 + i * w / 1;
+    parts.push(`<path d="M${x} ${y0 + h} L${x + w / 2} ${y0} L${x + w} ${y0 + h} Z" fill="${c.primary}" fill-opacity=".8" stroke="${c.background}" stroke-width="2"/>`);
+    if (i < n - 1) parts.push(`<path d="M${x + w / 2} ${y0} L${x + w} ${y0 + h} L${x + w * 1.5} ${y0} Z" fill="${c.secondary}" fill-opacity=".55" stroke="${c.background}" stroke-width="2"/>`);
+  }
+  const right = x0 + n * w;
+  return `<svg viewBox="0 -30 400 260" aria-hidden="true">${parts.join("")}
+    <path d="M${x0} ${y0 + h + 16} q0 10 10 10 h${(right - x0) / 2 - 20} q10 0 10 10 q0 -10 10 -10 h${(right - x0) / 2 - 20} q10 0 10 -10" fill="none" stroke="${c.muted}" stroke-width="2.5"/>
+    <text x="${(x0 + right) / 2}" y="${y0 + h + 66}" text-anchor="middle" font-family="STIX Two Text, serif" font-style="italic" font-size="28" fill="${c.text}">π r</text>
+    <line x1="${right + 16}" y1="${y0}" x2="${right + 16}" y2="${y0 + h}" stroke="${c.muted}" stroke-width="2.5"/>
+    <text x="${right + 30}" y="${y0 + h / 2 + 9}" font-family="STIX Two Text, serif" font-style="italic" font-size="28" fill="${c.text}">r</text>
+    <path d="M70 -2 C 90 18, 110 22, 130 30" fill="none" stroke="${c.accent}" stroke-width="3" stroke-linecap="round"/>
+    <path d="M118 24 L131 31 L119 37" fill="none" stroke="${c.accent}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="-6" y="-8" font-family='${hand}' font-size="30" fill="${c.accent}">unroll the wedges</text></svg>`;
+}
+
+function plot(c, hand) {
+  const ox = 300, oy = 340, sx = 120, sy = 66, pts = [];
+  for (let x = -2.2; x <= 2.2001; x += 0.05) pts.push(`${(ox + x * sx).toFixed(1)},${(oy - x * x * sy).toFixed(1)}`);
+  const ticks = [-2, -1, 1, 2].map(t => `<line x1="${ox + t * sx}" y1="${oy - 6}" x2="${ox + t * sx}" y2="${oy + 6}" stroke="${c.muted}" stroke-width="2"/><text x="${ox + t * sx}" y="${oy + 30}" text-anchor="middle" font-size="20" fill="${c.muted}" font-family="inherit">${t < 0 ? "−" + -t : t}</text>`).join("");
+  return `<svg class="plot" viewBox="0 0 600 380" aria-hidden="true">
+    <line x1="30" y1="${oy}" x2="575" y2="${oy}" stroke="${c.muted}" stroke-width="2.5"/>
+    <line x1="${ox}" y1="10" x2="${ox}" y2="${oy + 10}" stroke="${c.muted}" stroke-width="2.5"/>
+    ${ticks}
+    <polyline points="${pts.join(" ")}" fill="none" stroke="${c.primary}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="350" y1="${274 + 77}" x2="545" y2="${274 - 137.5}" stroke="${c.accent}" stroke-width="3.5" stroke-linecap="round"/>
+    <circle cx="420" cy="274" r="8" fill="${c.accent}" stroke="${c.background}" stroke-width="3"/>
+    <text x="440" y="300" font-size="22" fill="${c.text}" font-family="STIX Two Text, serif" font-style="italic">(1, 1)</text>
+    <text x="520" y="40" font-size="26" fill="${c.primary}" font-family="STIX Two Text, serif" font-style="italic">y = x²</text>
+    <text x="330" y="150" font-family='${hand}' font-size="30" fill="${c.accent}" transform="rotate(-6 330 150)">steepness here: 2</text></svg>`;
+}
+
+function headBlock(text) {
+  return `<div class="head"><h3 class="hd" style="font-size:calc(var(--sz-title) * .085cqw)">${text}</h3><div class="bar"></div></div>`;
+}
+
+function sceneHTML(st, which) {
+  const c = st.colors, hand = `"${st.fonts.hand[0]}", cursive`;
+  if (which === "title") return `<div class="stage sc-title"><div class="tw">
+      <div class="eb">Chapter 3 · Geometry</div>
+      <h3 class="hd big">The area of a circle</h3>
+      <div class="body sub">Why the answer is πr², shown by cutting a circle into wedges.</div>
+      <div class="hand">spoiler: you can unroll it</div></div>${wedgeDisc(c)}</div>`;
+  if (which === "def") return `<div class="stage sc-def">${headBlock("Key idea")}
+      <div class="colL">
+        <div class="box key"><div class="lab">Area of a circle</div><div class="eq math">A = <span class="p up">π</span>r²</div></div>
+        <div class="box ex body"><div class="lab">Example</div><span class="math">r</span> = 3 cm &nbsp;→&nbsp; <span class="math">A</span> = 9π ≈ <b class="s">28.27 cm²</b></div>
+        <div class="small"><span class="neg">✗</span> <span class="mu">2πr is the circumference, not the area</span></div>
+      </div>
+      <div class="colR">${unrolled(c, hand)}</div></div>`;
+  if (which === "graph") return `<div class="stage sc-graph">${headBlock("Slope of a curve")}${plot(c, hand)}
+      <div class="side">
+        <div class="box key body"><div class="lab">Function</div><span class="math">f</span>(<span class="math">x</span>) = <span class="math">x</span>²</div>
+        <div class="box ex body"><div class="lab">Derivative</div><span class="math">f′</span>(<span class="math">x</span>) = <b class="a">2<span class="math">x</span></b></div>
+        <div class="small"><span class="pos">✓</span> <span class="mu">at x = 1 the slope is 2</span></div>
+      </div></div>`;
+  return `<div class="stage sc-code">${headBlock("Check it numerically")}
+      <div class="box key codebox"><pre><span class="k">import</span> numpy <span class="k">as</span> np
+
+<span class="k">def</span> <span class="f">wedge_area</span>(r, n):
+    <span class="c"># n thin wedges ≈ a parallelogram</span>
+    base = np.pi * r
+    <span class="k">return</span> base * r
+
+<span class="f">print</span>(<span class="st">f"{</span>wedge_area(<span class="n">3</span>, <span class="n">64</span>)<span class="st">:.2f}"</span>)</pre></div>
+      <div class="out"><div class="box ex"><div class="lab">Output</div><div class="body" style="font-family:var(--s-code)">28.27</div></div>
+      <div class="hand" style="font-size:calc(var(--sz-body) * .09cqw)">same as 9π ✓</div></div></div>`;
+}
+
+function frame(st, which, label) {
+  const l = st.layout;
+  return `<div class="frame" role="img" aria-label="${label}" style='${frameVars(st)}' data-pattern="${l.pattern}" data-accent="${l.accent}" data-boxes="${l.boxes}" data-title="${l.title}"><div class="pat"></div>${sceneHTML(st, which)}</div>`;
+}
+
+function themeJSON(st) {
+  const o = {
+    id: st.id, name: st.name,
+    fonts: { heading: st.fonts.heading[0], body: st.fonts.body[0], code: st.fonts.code[0], hand: st.fonts.hand[0], math: "auto", fallback: FALLBACK },
+    colors: st.colors, sizes: st.sizes, layout: st.layout, pacing: st.pacing
+  };
+  return JSON.stringify(o, null, 2);
+}
+
+function lum(hex) {
+  const v = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(x => x <= .03928 ? x / 12.92 : Math.pow((x + .055) / 1.055, 2.4));
+  return .2126 * v[0] + .7152 * v[1] + .0722 * v[2];
+}
+function contrast(a, b) { const x = lum(a), y = lum(b); return ((Math.max(x, y) + .05) / (Math.min(x, y) + .05)).toFixed(1); }
+
+const sceneName = () => SCENES.find(s => s[0] === scene)[1];
+
+function renderScenes() {
+  document.getElementById("scenes").innerHTML = SCENES.map(([id, n]) => `<button type="button" id="scene-${id}" data-scene="${id}" aria-pressed="${id === scene}">${n}</button>`).join("");
+}
+function renderOverview() {
+  const card = st => `<a class="ov" href="#${st.id}">${frame(st, scene, `${st.name} style, ${sceneName()} scene`)}<div class="name">${st.name}<span>${st.fonts.heading[0]} + ${st.fonts.body[0]}</span></div></a>`;
+  document.getElementById("overview-locked").innerHTML = STYLES.filter(s => s.locked).map(card).join("");
+  document.getElementById("overview-new").innerHTML = STYLES.filter(s => !s.locked).map(card).join("");
+}
+function renderSpreads() {
+  document.getElementById("spreads").innerHTML = STYLES.map(st => {
+    const roles = [["head", st.fonts.heading, `${st.fonts.heading[1]}`], ["body", st.fonts.body, "400"], ["code", st.fonts.code, "400"], ["hand", st.fonts.hand, `${st.fonts.hand[1]}`]];
+    const fonts = roles.map(([r, f, w]) => `<div class="fontrow"><span class="role">${r}</span><span class="spec-name" style='font-family:"${f[0]}", sans-serif; font-weight:${w}'>${f[0]}<span class="meta">weight ${w} · OFL</span></span></div>`).join("");
+    const sw = Object.entries(st.colors).map(([k, v]) => `<div class="sw"><i style="background:${v}"></i><b>${k.replace("_fill", "")}<br>${v}</b></div>`).join("");
+    const l = st.layout, c = st.colors;
+    return `<section class="spread" id="${st.id}" aria-labelledby="h-${st.id}">
+      <div style="min-width:0">${frame(st, scene, `${st.name} style, ${sceneName()} scene`)}</div>
+      <div class="spec">
+        <div><h2 id="h-${st.id}">${st.name}<span class="badge ${st.locked ? "locked" : "new"}">${st.locked ? "Locked" : "New option"}</span></h2><p class="tag">${st.tag}</p></div>
+        <p class="best">${st.best}</p>
+        <div><h3>Fonts</h3><div class="fonts">${fonts}</div></div>
+        <div><h3>Colour roles</h3><div class="swatches">${sw}</div></div>
+        <div><h3>Layout and legibility</h3><div class="chips">
+          <span>title: ${l.title}</span><span>boxes: ${l.boxes}</span><span>pattern: ${l.pattern}</span><span>accent bar: ${l.accent ? "on" : "off"}</span>
+          <span>sizes ${st.sizes.title}/${st.sizes.heading}/${st.sizes.body}/${st.sizes.small}</span><span>${st.pacing.words_per_second} words/s</span>
+          <span class="ok">text ${contrast(c.text, c.background)}:1</span><span class="ok">primary ${contrast(c.primary, c.background)}:1</span><span class="ok">muted ${contrast(c.muted, c.background)}:1</span>
+        </div></div>
+        <div class="actions"><button class="copy" type="button" id="copy-${st.id}" data-copy="${st.id}">Copy theme JSON</button><span class="status" id="status-${st.id}" aria-live="polite"></span></div>
+        <details><summary>Show theme JSON</summary><pre id="json-${st.id}">${themeJSON(st)}</pre></details>
+      </div></section>`;
+  }).join("");
+}
+function renderJump() {
+  document.getElementById("jump").innerHTML = STYLES.map(s => `<a href="#${s.id}">${s.name}</a>`).join("") + `<a href="#shipping">Shipping notes</a>`;
+}
+function renderBundle() {
+  document.getElementById("bundle").innerHTML = STYLES.map(s => `<tr><td><b>${s.name}</b></td><td>${s.locked ? "Locked" : "Option"}</td><td>${s.files}</td><td style="font-variant-numeric:tabular-nums">~${s.kb >= 1000 ? (s.kb / 1000).toFixed(1) + " MB" : s.kb + " KB"}</td></tr>`).join("");
+}
+function rerenderFrames() { renderOverview(); renderSpreads(); }
+
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-scene]");
+  if (b) {
+    scene = b.dataset.scene;
+    try { localStorage.setItem("hs-scene", scene); } catch (err) {}
+    document.querySelectorAll("[data-scene]").forEach(x => x.setAttribute("aria-pressed", x.dataset.scene === scene));
+    rerenderFrames();
+    return;
+  }
+  const cp = e.target.closest("[data-copy]");
+  if (cp) {
+    const id = cp.dataset.copy, st = STYLES.find(s => s.id === id), status = document.getElementById("status-" + id);
+    try { await navigator.clipboard.writeText(themeJSON(st)); status.textContent = "Copied"; }
+    catch (err) {
+      const pre = document.getElementById("json-" + id); pre.closest("details").open = true;
+      const r = document.createRange(); r.selectNodeContents(pre); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      status.textContent = "Selected. Press Ctrl+C to copy.";
+    }
+  }
+});
+
+renderScenes(); renderJump(); rerenderFrames(); renderBundle();
+</script>

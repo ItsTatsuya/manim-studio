@@ -1,0 +1,42 @@
+{
+  "title": "How Plants Make Food: Photosynthesis",
+  "grade": "Grade 7",
+  "scenes": [
+    {
+      "title": "Hook: A Plant Making Its Own Dinner",
+      "say": "Plants do not eat food the way we do. Yet every leaf on a tree is busy making its own food. Let us find out how.",
+      "visual": "A potted plant centred on a plain chalk-white background. A small sun drawn in the top left corner with a few short chalk rays. Soft chalk arrows dance around the leaves to suggest activity. Title text fades in: Photosynthesis.",
+      "seconds": 15
+    },
+    {
+      "title": "What Goes In",
+      "say": "Photosynthesis needs three ingredients. Carbon dioxide from the air. Water from the soil. And light energy from the sun.",
+      "visual": "A simple leaf diagram drawn with a few curved shapes and a midrib line. Three labelled arrows point toward the leaf: an arrow from the air labelled carbon dioxide, an arrow from below labelled water, and a yellow sun ray labelled light. Each label appears one after another as it is spoken.",
+      "seconds": 18
+    },
+    {
+      "title": "Inside the Leaf",
+      "say": "Inside the leaf are tiny green parts called chloroplasts. They contain chlorophyll, which captures the light energy the plant needs.",
+      "visual": "A zoomed-in circle of the leaf cell drawn with a simple oval outline. Several small green ovals inside are labelled chloroplast. A short chalk label reads chlorophyll captures light. Light rays drawn as dashed yellow lines strike the green shapes.",
+      "seconds": 16
+    },
+    {
+      "title": "What Comes Out",
+      "say": "Using that light energy, the plant turns carbon dioxide and water into glucose, a sugar used for energy. It also releases oxygen into the air.",
+      "visual": "The leaf diagram returns. Arrows now point out: one arrow labelled glucose leaves the leaf, and another arrow labelled oxygen floats up into the air. The word equation is written across the bottom in chalk.",
+      "seconds": 16
+    },
+    {
+      "title": "The Word Equation",
+      "say": "Here is the word equation. Carbon dioxide plus water, in the presence of light and chlorophyll, gives glucose plus oxygen.",
+      "visual": "Chalk text line by line: carbon dioxide plus water, then an arrow with light and chlorophyll written above it, then glucose plus oxygen. Each reactant and product is underlined in a different chalk colour as it is read.",
+      "seconds": 12
+    },
+    {
+      "title": "Practice Question",
+      "say": "Practice question. Which gas does a plant take in from the air during photosynthesis? Pause the video and think. The answer is carbon dioxide.",
+      "visual": "A chalk-boxed question on the screen: Which gas does a plant take in from the air during photosynthesis? A pause symbol appears, then the answer carbon dioxide is revealed with a chalk circle drawn around it.",
+      "seconds": 7
+    }
+  ]
+}

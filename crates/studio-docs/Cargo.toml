@@ -1,0 +1,15 @@
+[package]
+name = "studio-docs"
+description = "Manim Studio document ingestion: text out of PDF, DOCX, PPTX, Markdown and plain text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+zip = { version = "2", default-features = false, features = ["deflate"] }
+pdf-extract = "0.9"
+
+[lints]
+workspace = true
