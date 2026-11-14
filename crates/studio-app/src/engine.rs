@@ -450,13 +450,11 @@ impl Workspace {
         if !self.prefs.narration {
             return "Off".into();
         }
-        let name = match self.voice_spec().speaker() {
-            studio_render::voice::Speaker::Kokoro(id, _) => {
-                studio_render::kokoro::VOICES.iter().find(|(v, _)| *v == id).map_or(id.clone(), |(_, l)| l.to_string())
-            }
-            studio_render::voice::Speaker::System(Some(v)) => v,
-            studio_render::voice::Speaker::System(None) => "System voice".into(),
+        let Some(speaker) = self.voice_spec().speaker() else {
+            return "Natural voice not downloaded".into();
         };
+        let id = speaker.voice;
+        let name = studio_render::kokoro::VOICES.iter().find(|(v, _)| *v == id).map_or(id.clone(), |(_, l)| l.to_string());
         format!("{name} · {}", SPEEDS[self.prefs.speed.min(SPEEDS.len() - 1)].0)
     }
 
@@ -681,6 +679,12 @@ impl Workspace {
             .ok();
         })
         .detach();
+    }
+
+    /// The Kokoro voice id narration uses.
+    pub fn voice_spec_id(&self) -> &'static str {
+        let spec = self.voice_spec();
+        studio_render::kokoro::VOICES.iter().map(|(id, _)| *id).find(|id| *id == spec.voice_id()).unwrap_or(studio_render::kokoro::DEFAULT_VOICE)
     }
 
     fn voice_spec(&self) -> studio_render::voice::VoiceSpec {

@@ -1,6 +1,6 @@
 mod chrome;
 mod home;
-mod onboarding;
+pub mod onboarding;
 mod renders;
 mod settings;
 mod storyboard;

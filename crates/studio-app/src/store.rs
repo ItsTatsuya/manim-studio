@@ -17,7 +17,16 @@ use studio_ui::IconName;
 
 use crate::model::{Msg, Project, Provider, Scene, SceneEngine, Video, VideoSettings, VideoStatus};
 
+/// `STUDIO_HOME=<dir>` keeps settings and data in one folder instead of the user's
+/// profile (for tests and screenshots that must not touch real projects).
+pub fn studio_home() -> Option<PathBuf> {
+    std::env::var_os("STUDIO_HOME").map(PathBuf::from)
+}
+
 pub fn data_dir() -> Option<PathBuf> {
+    if let Some(home) = studio_home() {
+        return Some(home.join("data"));
+    }
     directories::ProjectDirs::from("app", "ManimStudio", "Manim Studio").map(|d| d.data_dir().to_path_buf())
 }
 
@@ -226,11 +235,19 @@ pub fn save_chat(v: &Video) {
     }
 }
 
+/// Folder name of the bundled sample lesson's project.
+const SAMPLE_PROJECT: &str = "grade-8-geometry";
+
+/// The project that holds the bundled sample lesson.
+pub fn is_sample_project(p: &Project) -> bool {
+    p.dir.file_name().is_some_and(|n| n == SAMPLE_PROJECT)
+}
+
 /// Every project and video on disk. The bundled sample lesson is installed first, so
 /// there is always something to open.
 pub fn load() -> Vec<Project> {
     let Some(root) = projects_dir() else { return vec![] };
-    let sample_project = root.join("grade-8-geometry");
+    let sample_project = root.join(SAMPLE_PROJECT);
     let sample_video = sample_project.join("area-of-a-circle");
     // Install the sample once. After that only refresh it while it exists, so deleting
     // it (or its folder) sticks.

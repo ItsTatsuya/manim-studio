@@ -490,29 +490,13 @@ impl Workspace {
             this.refresh_voice(this.current, cx);
             cx.notify();
         }));
-        use studio_render::{kokoro, voice::SYSTEM_DEFAULT};
+        use studio_render::kokoro;
         let ready = self.natural == crate::engine::NaturalVoice::Ready;
-        // Shown names and the `prefs.voice` value each one stands for.
-        let mut names: Vec<String> = Vec::new();
-        let mut values: Vec<Option<String>> = Vec::new();
-        if ready {
-            for (id, label) in kokoro::VOICES {
-                names.push(label.to_string());
-                values.push(Some(id.to_string()));
-            }
-        }
-        names.push("System default".into());
-        values.push(if ready { Some(SYSTEM_DEFAULT.into()) } else { None });
-        for v in &self.voices {
-            names.push(v.clone());
-            values.push(Some(v.clone()));
-        }
-        let current = match &self.prefs.voice {
-            None if ready => Some(kokoro::DEFAULT_VOICE.to_string()),
-            Some(v) if !ready && (v == SYSTEM_DEFAULT || kokoro::is_voice(v)) => None,
-            v => v.clone(),
-        };
-        let selected = values.iter().position(|v| *v == current).unwrap_or(0);
+        // Kokoro's voices; `prefs.voice` holds the picked id (None = the default voice).
+        let names: Vec<String> = kokoro::VOICES.iter().map(|(_, label)| label.to_string()).collect();
+        let ids: Vec<&'static str> = kokoro::VOICES.iter().map(|(id, _)| *id).collect();
+        let current = self.voice_spec_id();
+        let selected = ids.iter().position(|id| *id == current).unwrap_or(0);
         let voice = Dropdown::new(
             "voice",
             Button::new(("voice", 0usize), names[selected.min(names.len() - 1)].clone()).icon_right(IconName::ChevronDown),
@@ -524,7 +508,7 @@ impl Workspace {
         .on_toggle(with_value(cx, |this, open: bool, _, cx| this.toggle_menu("voice", open, cx)))
         .on_select(with_value(cx, move |this, i: usize, _, cx| {
             this.open_menu = None;
-            this.prefs.voice = values.get(i).cloned().flatten();
+            this.prefs.voice = ids.get(i).map(|id| id.to_string());
             this.save_prefs();
             this.refresh_voice(this.current, cx);
             cx.notify();
@@ -600,7 +584,10 @@ impl Workspace {
             Dl::Failed(e) => format!("Download failed: {e}"),
             _ => "espeak-ng reads names and words the natural voice's dictionaries don't know; without it they are spelled out letter by letter. Free (GPL), runs as a separate program.".into(),
         };
-        let preview = Button::new("voice-try", "Listen").with_icon(IconName::Play).on_click(click(cx, |this, _, cx| this.preview_voice(cx)));
+        let preview = Button::new("voice-try", "Listen")
+            .with_icon(IconName::Play)
+            .disabled(!ready)
+            .on_click(click(cx, |this, _, cx| this.preview_voice(cx)));
         group(cx)
             .child(item("Narration", "Read each scene's narration aloud and time the scene to it.", narration, false, cx))
             .child(item("Natural voice", natural_desc, natural, false, cx))
@@ -609,9 +596,9 @@ impl Workspace {
             .child(item(
                 "Voice",
                 if ready {
-                    "Natural voices first, then your computer's built-in ones. Each line is spoken once and cached."
+                    "Each line is spoken once and cached."
                 } else {
-                    "Your computer's built-in voices until the natural voice is downloaded. Each line is spoken once and cached."
+                    "Download the natural voice above to hear narration."
                 },
                 div().flex().gap(px(6.)).child(preview).child(voice),
                 false,

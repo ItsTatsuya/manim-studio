@@ -1,13 +1,10 @@
-//! Narration: text to a WAV file with the system's speech engine (Windows SAPI,
-//! macOS `say`, Linux `espeak-ng`/`espeak`). Offline and free; each line is cached by
-//! a hash of its text and voice settings.
+//! Narration: text to a WAV file with Kokoro, the natural voice that runs on this
+//! computer (downloaded once from Settings or onboarding). Each line is cached by a
+//! hash of its text and voice settings.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::process::Command;
-#[cfg(windows)]
-use std::process::Stdio;
 
 use anyhow::{Context, Result, bail};
 
@@ -16,23 +13,22 @@ use crate::cache::Fnv;
 /// Which voice and how fast.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VoiceSpec {
-    /// A Kokoro voice id ([`crate::kokoro::VOICES`]), [`SYSTEM_DEFAULT`], or a system voice
-    /// name from [`voices`]. `None`: Kokoro's default voice when it is downloaded, else the
-    /// system default.
+    /// A Kokoro voice id ([`crate::kokoro::VOICES`]). `None`, or an id Kokoro doesn't
+    /// know (such as a system voice saved by an older version), uses the default voice.
     pub voice: Option<String>,
     /// Speaking speed, 1.0 = normal.
     pub rate: f32,
 }
 
-/// `VoiceSpec::voice` value for the system's default voice.
-pub const SYSTEM_DEFAULT: &str = "system";
-
-/// The voice that will actually speak.
+/// The voice that will actually speak: a Kokoro voice id and the model it runs on.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Speaker {
-    Kokoro(String, crate::kokoro::Quality),
-    System(Option<String>),
+pub struct Speaker {
+    pub voice: String,
+    pub quality: crate::kokoro::Quality,
 }
+
+/// Shown when narration is asked for before the natural voice is downloaded.
+pub const NOT_DOWNLOADED: &str = "The natural voice isn't downloaded yet (Settings → Voice & captions)";
 
 static KOKORO_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// 0 = High, 1 = Standard (see [`crate::kokoro::Quality`]).
@@ -80,17 +76,17 @@ pub fn reset_kokoro() {
 }
 
 impl VoiceSpec {
-    pub fn speaker(&self) -> Speaker {
-        let usable = kokoro_usable();
-        match (self.voice.as_deref(), usable) {
-            (None, Some(q)) => Speaker::Kokoro(crate::kokoro::DEFAULT_VOICE.to_string(), q),
-            (None | Some(SYSTEM_DEFAULT), _) => Speaker::System(None),
-            (Some(v), q) if crate::kokoro::is_voice(v) => match q {
-                Some(q) => Speaker::Kokoro(v.to_string(), q),
-                None => Speaker::System(None),
-            },
-            (Some(v), _) => Speaker::System(Some(v.to_string())),
+    /// The voice id that will speak (the default when unset or unknown).
+    pub fn voice_id(&self) -> &str {
+        match self.voice.as_deref() {
+            Some(v) if crate::kokoro::is_voice(v) => v,
+            _ => crate::kokoro::DEFAULT_VOICE,
         }
+    }
+
+    /// `None` until the natural voice is downloaded.
+    pub fn speaker(&self) -> Option<Speaker> {
+        Some(Speaker { voice: self.voice_id().to_string(), quality: kokoro_usable()? })
     }
 
     fn key(&self, text: &str) -> u64 {
@@ -98,61 +94,16 @@ impl VoiceSpec {
         h.write(b"voice-v3");
         h.write(text.as_bytes());
         let speaker = self.speaker();
-        h.write(format!("{speaker:?}").as_bytes());
+        // Same text as the old `Speaker::Kokoro(id, quality)` debug form, so cached lines stay valid.
+        if let Some(Speaker { voice, quality }) = &speaker {
+            h.write(format!("Kokoro({voice:?}, {quality:?})").as_bytes());
+        }
         // espeak-ng changes how unknown words are read.
-        if matches!(speaker, Speaker::Kokoro(..)) && espeak().is_some() {
+        if speaker.is_some() && espeak().is_some() {
             h.write(b"espeak");
         }
         h.write(format!("{:.2}", self.rate).as_bytes());
         h.finish()
-    }
-}
-
-#[cfg(windows)]
-fn quiet(cmd: &mut Command) -> &mut Command {
-    use std::os::windows::process::CommandExt;
-    cmd.creation_flags(0x0800_0000)
-}
-
-#[cfg(windows)]
-fn powershell(script: &str) -> Result<String> {
-    let out = quiet(Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", script]))
-        .stdin(Stdio::null())
-        .output()
-        .context("starting PowerShell")?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        bail!("{}", err.lines().find(|l| !l.trim().is_empty()).unwrap_or("speech failed").trim());
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-}
-
-/// Installed voices, by name.
-pub fn voices() -> Vec<String> {
-    #[cfg(windows)]
-    {
-        powershell(
-            "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; \
-             $s.GetInstalledVoices() | Where-Object { $_.Enabled } | ForEach-Object { $_.VoiceInfo.Name }",
-        )
-        .map(|o| o.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
-        .unwrap_or_default()
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let out = Command::new("say").args(["-v", "?"]).output().ok();
-        out.map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .filter_map(|l| l.split("  ").next().map(|n| n.trim().to_string()))
-                .filter(|n| !n.is_empty())
-                .collect()
-        })
-        .unwrap_or_default()
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        Vec::new()
     }
 }
 
@@ -163,66 +114,16 @@ pub fn synthesize(text: &str, spec: &VoiceSpec, out: &Path) -> Result<f64> {
     }
     let tmp = out.with_extension("partial.wav");
     let _ = std::fs::remove_file(&tmp);
-    let voice = match spec.speaker() {
-        Speaker::Kokoro(id, quality) => {
-            let dir = kokoro_dir().context("no voice folder")?;
-            let mut slot = KOKORO.lock().unwrap_or_else(|e| e.into_inner());
-            if slot.as_ref().is_none_or(|k| k.quality != quality) {
-                *slot = None;
-                *slot = Some(crate::kokoro::Kokoro::load(dir, quality)?);
-            }
-            let samples = slot.as_mut().expect("loaded").speak(text, &id, spec.rate)?;
-            drop(slot);
-            crate::kokoro::write_wav(&tmp, &samples)?;
-            let secs = wav_seconds(&tmp)?;
-            std::fs::rename(&tmp, out)?;
-            return Ok(secs);
-        }
-        Speaker::System(v) => v,
-    };
-    #[cfg(windows)]
-    {
-        let text_file = out.with_extension("txt");
-        std::fs::write(&text_file, text)?;
-        // SAPI rate is -10..10; map 0.5x..2x onto it.
-        let rate = ((spec.rate.clamp(0.5, 2.0).log2()) * 10.0).round() as i32;
-        let select = match &voice {
-            Some(v) => format!("$s.SelectVoice('{}');", v.replace('\'', "''")),
-            None => String::new(),
-        };
-        let script = format!(
-            "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; {select} \
-             $s.Rate = {rate}; $s.SetOutputToWaveFile('{}'); $s.Speak((Get-Content -Raw -Encoding UTF8 '{}')); $s.Dispose()",
-            tmp.display().to_string().replace('\'', "''"),
-            text_file.display().to_string().replace('\'', "''"),
-        );
-        let r = powershell(&script);
-        let _ = std::fs::remove_file(&text_file);
-        r?;
+    let Speaker { voice, quality } = spec.speaker().context(NOT_DOWNLOADED)?;
+    let dir = kokoro_dir().context("no voice folder")?;
+    let mut slot = KOKORO.lock().unwrap_or_else(|e| e.into_inner());
+    if slot.as_ref().is_none_or(|k| k.quality != quality) {
+        *slot = None;
+        *slot = Some(crate::kokoro::Kokoro::load(dir, quality)?);
     }
-    #[cfg(target_os = "macos")]
-    {
-        let wpm = (175.0 * spec.rate.clamp(0.5, 2.0)).round().to_string();
-        let mut cmd = Command::new("say");
-        if let Some(v) = &voice {
-            cmd.args(["-v", v]);
-        }
-        let st = cmd.args(["-r", &wpm, "--data-format=LEI16@22050", "-o"]).arg(&tmp).arg(text).status()?;
-        if !st.success() {
-            bail!("say failed");
-        }
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        let wpm = (170.0 * spec.rate.clamp(0.5, 2.0)).round().to_string();
-        let _ = &voice;
-        let ok = ["espeak-ng", "espeak"].iter().any(|exe| {
-            Command::new(exe).args(["-s", &wpm, "-w"]).arg(&tmp).arg(text).status().is_ok_and(|s| s.success())
-        });
-        if !ok {
-            bail!("no speech engine found (install espeak-ng)");
-        }
-    }
+    let samples = slot.as_mut().expect("loaded").speak(text, &voice, spec.rate)?;
+    drop(slot);
+    crate::kokoro::write_wav(&tmp, &samples)?;
     let secs = wav_seconds(&tmp)?;
     std::fs::rename(&tmp, out)?;
     Ok(secs)
@@ -546,21 +447,6 @@ mod tests {
         b.extend_from_slice(&data);
         std::fs::write(&p, b).unwrap();
         assert!((wav_seconds(&p).unwrap() - 1.0).abs() < 1e-9);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
-
-#[cfg(all(test, windows))]
-mod system_tests {
-    #[test]
-    fn speaks_a_line() {
-        let dir = std::env::temp_dir().join(format!("studio-voice-{}", std::process::id()));
-        let spec = super::VoiceSpec { voice: None, rate: 1.0 };
-        let l = super::line("If you double a pizza's radius, do you get twice the pizza?", &spec, &dir).unwrap();
-        assert!(l.seconds > 1.5 && l.seconds < 8.0, "{}", l.seconds);
-        // Cached the second time.
-        let again = super::line("If you double a pizza's radius, do you get twice the pizza?", &spec, &dir).unwrap();
-        assert_eq!(l, again);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

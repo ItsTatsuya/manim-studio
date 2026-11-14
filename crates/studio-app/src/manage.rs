@@ -130,11 +130,15 @@ impl Workspace {
     }
 
     /// The folder a new video from Home goes into.
-    pub fn home_target(&self) -> usize {
-        self.home_project
-            .filter(|p| *p < self.projects.len())
-            .unwrap_or(self.current.0)
-            .min(self.projects.len().saturating_sub(1))
+    /// The folder a new video from the home composer goes into: the one picked with
+    /// "New video" in a folder, else the open video's folder, but never the bundled sample's
+    /// folder unless it was picked (`None`: a new "My videos" folder is made).
+    pub fn home_target(&self) -> Option<usize> {
+        if let Some(p) = self.home_project.filter(|p| *p < self.projects.len()) {
+            return Some(p);
+        }
+        let own = |p: &usize| self.projects.get(*p).is_some_and(|p| !crate::store::is_sample_project(p));
+        Some(self.current.0).filter(own).or_else(|| (0..self.projects.len()).find(own))
     }
 
     // ------------------------------------------------------------------ rename

@@ -108,6 +108,12 @@ fn present(dir: &Path, a: &Asset) -> bool {
 }
 
 /// Bytes still to download for `quality`.
+/// Everything `quality` needs, whether or not some of it is already here (for showing
+/// "x of y MB" while downloading).
+pub fn total_size(quality: Quality) -> u64 {
+    ASSETS.iter().chain([quality.model()]).map(|a| a.size).sum::<u64>() + runtime::DOWNLOAD
+}
+
 pub fn download_size(dir: &Path, quality: Quality) -> u64 {
     let runtime = if runtime::present(dir) { 0 } else { runtime::DOWNLOAD };
     ASSETS.iter().chain([quality.model()]).filter(|a| !present(dir, a)).map(|a| a.size).sum::<u64>() + runtime

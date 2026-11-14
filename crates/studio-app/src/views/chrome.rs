@@ -44,7 +44,7 @@ impl Workspace {
         let mut right = div().flex().flex_none().items_center().gap(px(6.));
         match self.screen {
             Screen::Onboarding => {
-                right = right.child(faint(format!("Step {} of 4", self.onboarding_step + 1), cx).mr(px(8.)));
+                right = right.child(faint(format!("Step {} of {}", self.onboarding_step + 1, crate::views::onboarding::STEPS), cx).mr(px(8.)));
             }
             Screen::Home => {
                 right = right.child(self.usage_meter(compact, cx));

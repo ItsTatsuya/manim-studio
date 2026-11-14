@@ -156,6 +156,9 @@ impl Default for Prefs {
 }
 
 fn path() -> Option<PathBuf> {
+    if let Some(home) = crate::store::studio_home() {
+        return Some(home.join("config").join("settings.json"));
+    }
     directories::ProjectDirs::from("app", "ManimStudio", "Manim Studio")
         .map(|d| d.config_dir().join("settings.json"))
 }

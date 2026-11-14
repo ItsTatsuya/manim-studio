@@ -705,11 +705,18 @@ impl Workspace {
             self.go(Screen::Settings, cx);
             return;
         }
-        if self.projects.is_empty()
-            && let Some(p) = store::new_project("My videos") {
+        let pi = match self.home_target() {
+            Some(pi) => pi,
+            None => {
+                let Some(p) = store::new_project("My videos") else {
+                    self.notice = Some("Couldn't create the video folder.".into());
+                    cx.notify();
+                    return;
+                };
                 self.projects.push(p);
+                self.projects.len() - 1
             }
-        let pi = self.home_target();
+        };
         self.home_project = None;
         let title: String = request.split_whitespace().take(6).collect::<Vec<_>>().join(" ");
         let Some(mut video) = store::new_video(&self.projects[pi], &title, &request) else {
@@ -732,25 +739,9 @@ impl Workspace {
         self.home_input.update(cx, |i, cx| i.clear(cx));
         self.open_video(pi, vi, cx);
         self.mode = Mode::Storyboard;
-        let style = studio_render::style::STYLES[self.prefs.house_style.min(studio_render::style::STYLES.len() - 1)].name;
-        use crate::model::{APPROACHES, ENDINGS, LEVELS, PACES};
-        let target = self.prefs.video_seconds.clamp(crate::model::LENGTH_RANGE.0, crate::model::LENGTH_RANGE.1);
-        let approach = APPROACHES[self.prefs.approach.min(APPROACHES.len() - 1)].guide;
-        let level = LEVELS[self.prefs.level.min(LEVELS.len() - 1)].guide;
-        let wps = PACES[self.prefs.pace.min(PACES.len() - 1)].1;
-        let ending = ENDINGS[self.prefs.ending.min(ENDINGS.len() - 1)].guide;
         let effort = self.prefs.planning_reasoning.effort(Some(Effort::Low));
         if docs.is_empty() {
-            let p = prompt::plan(&PlanOptions {
-                request: &request,
-                sources: &[],
-                target_seconds: target,
-                style_name: style,
-                approach,
-                level,
-                words_per_second: wps,
-                ending,
-            });
+            let p = self.plan_prompt(&request, &[], self.prefs.house_style);
             self.start_turn((pi, vi), TurnKind::Plan, p, true, effort, cx);
             return;
         }
@@ -793,21 +784,75 @@ impl Workspace {
                     this.push_msg((pi, vi), Msg::Activity { icon: IconName::Info, ok: false, text: e, meta: String::new() });
                 }
                 this.set_working((pi, vi), None);
-                let p = prompt::plan(&PlanOptions {
-                    request: &request,
-                    sources: &texts,
-                    target_seconds: target,
-                    style_name: style,
-                    approach,
-                    level,
-                    words_per_second: wps,
-                    ending,
-                });
+                let p = this.plan_prompt(&request, &texts, this.prefs.house_style);
                 this.start_turn((pi, vi), TurnKind::Plan, p, true, effort, cx);
             })
             .ok();
         })
         .detach();
+    }
+
+    /// The storyboard-planning prompt for `request`, with the composer's options.
+    fn plan_prompt(&self, request: &str, sources: &[String], style: usize) -> String {
+        use crate::model::{APPROACHES, ENDINGS, LEVELS, PACES};
+        prompt::plan(&PlanOptions {
+            request,
+            sources,
+            target_seconds: self.prefs.video_seconds.clamp(crate::model::LENGTH_RANGE.0, crate::model::LENGTH_RANGE.1),
+            style_name: studio_render::style::STYLES[style.min(studio_render::style::STYLES.len() - 1)].name,
+            approach: APPROACHES[self.prefs.approach.min(APPROACHES.len() - 1)].guide,
+            level: LEVELS[self.prefs.level.min(LEVELS.len() - 1)].guide,
+            words_per_second: PACES[self.prefs.pace.min(PACES.len() - 1)].1,
+            ending: ENDINGS[self.prefs.ending.min(ENDINGS.len() - 1)].guide,
+        })
+    }
+
+    /// Plan the open video again after its first plan failed (same request, and the
+    /// documents it was given, read back from `sources/`).
+    pub fn retry_plan(&mut self, cx: &mut Context<Self>) {
+        let video = self.current;
+        let v = self.video();
+        let (Some(request), None) = (v.request.clone(), v.storyboard.as_ref()) else { return };
+        if self.busy(video) {
+            return;
+        }
+        if self.pick_provider().is_none() {
+            self.notice = Some("Connect an assistant first: Settings → Assistants & usage.".into());
+            self.settings_page = crate::app::SettingsPage::Assistants;
+            self.go(Screen::Settings, cx);
+            return;
+        }
+        let style = v.settings.style.unwrap_or(self.prefs.house_style);
+        let mut texts: Vec<String> = v
+            .dir
+            .as_ref()
+            .and_then(|d| std::fs::read_dir(d.join("sources")).ok())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "md"))
+            .filter_map(|p| std::fs::read_to_string(p).ok())
+            .collect();
+        let budget = 24_000 / texts.len().max(1);
+        for t in &mut texts {
+            *t = studio_docs::truncate(t, budget);
+        }
+        if let Some(v) = self.video_mut(video) {
+            v.busy = Some(Busy::Planning);
+        }
+        let effort = self.prefs.planning_reasoning.effort(Some(Effort::Low));
+        let p = self.plan_prompt(&request, &texts, style);
+        self.start_turn(video, TurnKind::Plan, p, true, effort, cx);
+        cx.notify();
+    }
+
+    /// The last error the assistant reported for `video`, if its latest message is one.
+    pub fn last_error(&self, video: &crate::model::Video) -> Option<String> {
+        video.chat.iter().rev().find_map(|m| match m {
+            Msg::Activity { ok: false, text, .. } => Some(text.clone()),
+            _ => None,
+        })
     }
 
     /// Storyboard revise box.

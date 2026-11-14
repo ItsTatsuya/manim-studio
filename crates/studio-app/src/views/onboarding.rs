@@ -5,13 +5,24 @@ use gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
     Styled, Window, div, prelude::FluentBuilder, px, relative,
 };
-use studio_ui::components::{Button, Chip, Dot, Tone, floating, provider_mark};
+use studio_ui::components::{Button, Chip, ProgressBar, Tone, provider_mark};
 use studio_ui::theme::{self, ActiveTheme, radius};
 use studio_ui::{Icon, IconName};
 
-const STEPS: usize = 4;
+pub const STEPS: usize = 5;
+/// The natural-voice download step.
+const VOICE_STEP: usize = 3;
 
 impl Workspace {
+    /// Go to onboarding step `step`; arriving at the voice step starts its download.
+    pub fn enter_onboarding_step(&mut self, step: usize, cx: &mut Context<Self>) {
+        self.onboarding_step = step.min(STEPS - 1);
+        if self.onboarding_step == VOICE_STEP && self.natural == crate::engine::NaturalVoice::Missing {
+            self.download_natural_voice(cx);
+        }
+        cx.notify();
+    }
+
     pub fn render_onboarding(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.theme().clone();
         let step = self.onboarding_step;
@@ -19,14 +30,21 @@ impl Workspace {
             0 => self.onb_welcome(cx),
             1 => self.onb_connect(cx),
             2 => self.onb_style(cx),
+            3 => self.onb_voice(cx),
             _ => self.onb_ready(cx),
         };
         let art = match step {
             2 => HOUSE_STYLES[self.prefs.house_style.min(HOUSE_STYLES.len() - 1)].art,
-            3 => studio_ui::assets::Art::Quiz,
+            4 => studio_ui::assets::Art::Quiz,
             _ => studio_ui::assets::Art::Circle,
         };
-        let can_continue = step != 1 || self.providers.iter().any(|p| p.signed_in);
+        let voice_ready = self.natural == crate::engine::NaturalVoice::Ready;
+        let can_continue = match step {
+            1 => self.providers.iter().any(|p| p.signed_in),
+            // Narration needs the natural voice: no way past this step until it's on disk.
+            VOICE_STEP => voice_ready,
+            _ => true,
+        };
 
         let left = div()
             .w(relative(0.5))
@@ -46,8 +64,15 @@ impl Workspace {
                         .bg(if i <= step { t.fg } else { t.surface_3 })
                 })),
             )
-            .child(motion::enter(div().child(body), ("onb-step", step), motion::BASE, 8.))
-            .child(div().flex_1())
+            // The step scrolls on short windows; Back / Continue stay pinned below it.
+            .child(
+                div()
+                    .id(("onb-body", step))
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(motion::enter(div().pb(px(4.)).child(body), ("onb-step", step), motion::BASE, 8.)),
+            )
             .child(
                 div()
                     .flex()
@@ -56,24 +81,47 @@ impl Workspace {
                     .max_w(px(520.))
                     .when(step > 0, |d| {
                         d.child(Button::new("onb-back", "Back").ghost().on_click(click(cx, |this, _, cx| {
-                            this.onboarding_step -= 1;
-                            cx.notify();
+                            this.enter_onboarding_step(this.onboarding_step.saturating_sub(1), cx)
                         })))
                     })
                     .child(div().flex_1())
+                    // The last step's choices sit where Continue was on every other step.
+                    .when(step == STEPS - 1, |d| {
+                        d.when(self.sample_video().is_some(), |d| {
+                            d.child(Button::new("onb-sample", "Open the sample lesson").ghost().on_click(click(cx, |this, _, cx| {
+                                this.finish_onboarding(cx);
+                                if let Some((p, v)) = this.sample_video() {
+                                    this.open_video(p, v, cx);
+                                }
+                            })))
+                        })
+                        .child(
+                            Button::new("onb-own", "Start my own")
+                                .primary()
+                                .large()
+                                .icon_right(IconName::ChevronRight)
+                                .on_click(click(cx, |this, _, cx| this.finish_onboarding(cx))),
+                        )
+                    })
                     .when(step < STEPS - 1, |d| {
-                        d.child(Button::new("onb-skip", "Skip setup").ghost().on_click(click(cx, |this, _, cx| this.finish_onboarding(cx))))
-                            .child(
-                                Button::new("onb-next", "Continue")
-                                    .primary()
-                                    .large()
-                                    .disabled(!can_continue)
-                                    .icon_right(IconName::ChevronRight)
-                                    .on_click(click(cx, |this, _, cx| {
-                                        this.onboarding_step += 1;
-                                        cx.notify();
-                                    })),
-                            )
+                        // Skipping still has to stop at the voice download.
+                        d.when(step != VOICE_STEP, |d| {
+                            d.child(Button::new("onb-skip", "Skip setup").ghost().on_click(click(cx, |this, _, cx| {
+                                if this.natural == crate::engine::NaturalVoice::Ready {
+                                    this.finish_onboarding(cx);
+                                } else {
+                                    this.enter_onboarding_step(VOICE_STEP, cx);
+                                }
+                            })))
+                        })
+                        .child(
+                            Button::new("onb-next", if step == VOICE_STEP && !voice_ready { "Waiting for the voice…" } else { "Continue" })
+                                .primary()
+                                .large()
+                                .disabled(!can_continue)
+                                .icon_right(IconName::ChevronRight)
+                                .on_click(click(cx, |this, _, cx| this.enter_onboarding_step(this.onboarding_step + 1, cx))),
+                        )
                     }),
             );
 
@@ -91,46 +139,28 @@ impl Workspace {
             .justify_center()
             .overflow_hidden()
             .child(
-                motion::enter(
-                    div()
-                        .w(relative(0.78))
-                        .aspect_ratio(16. / 9.)
-                        .rounded(radius::INNER)
-                        .overflow_hidden()
-                        .border_1()
-                        .border_color(t.line)
-                        .child(match &self.stage.frame {
-                            Some(img) => still_image(img.clone()).into_any_element(),
-                            None => stage_image(art).into_any_element(),
-                        }),
-                    ("onb-art", self.stage.frame.is_some() as usize),
-                    motion::SLOW,
-                    0.,
-                ),
-            )
-            .child(
-                floating(cx)
-                    .absolute()
-                    .left(relative(0.07))
-                    .top(relative(0.12))
-                    .gap(px(8.))
-                    .px(px(12.))
-                    .py(px(8.))
-                    .text_size(px(12.))
-                    .child(Dot::new(Tone::Signal))
-                    .child("Writing storyboard · 5 scenes"),
-            )
-            .child(
-                floating(cx)
-                    .absolute()
-                    .right(relative(0.07))
-                    .bottom(relative(0.14))
-                    .gap(px(8.))
-                    .px(px(12.))
-                    .py(px(8.))
-                    .text_size(px(12.))
-                    .child(Icon::new(IconName::Check).small().color(t.ok))
-                    .child("Rendered 1080p in 3.4 s"),
+                div()
+                    .w(relative(0.78))
+                    .flex()
+                    .flex_col()
+                    .gap(px(14.))
+                    .child(motion::enter(
+                        div()
+                            .w_full()
+                            .aspect_ratio(16. / 9.)
+                            .rounded(radius::INNER)
+                            .overflow_hidden()
+                            .border_1()
+                            .border_color(t.line)
+                            .child(match &self.stage.frame {
+                                Some(img) => still_image(img.clone()).into_any_element(),
+                                None => stage_image(art).into_any_element(),
+                            }),
+                        ("onb-art", self.stage.frame.is_some() as usize),
+                        motion::SLOW,
+                        0.,
+                    ))
+                    .children(self.onb_caption(cx)),
             );
 
         div()
@@ -140,6 +170,40 @@ impl Workspace {
             .child(left)
             .when(!theme::is_compact(window) || window.viewport_size().width > px(1000.), |d| d.child(right))
             .into_any_element()
+    }
+
+    /// Under the preview: a hairline playhead and which scene of the sample is playing.
+    fn onb_caption(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let t = cx.theme();
+        let video = self.video();
+        let scene = video.scenes.get(self.scene)?;
+        let total = video.length().max(0.01);
+        let progress = (self.playhead / total).clamp(0., 1.);
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .child(
+                    div()
+                        .h(px(2.))
+                        .w_full()
+                        .rounded_full()
+                        .bg(t.surface_3)
+                        .child(div().h_full().w(relative(progress)).rounded_full().bg(t.fg_3)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .text_size(px(12.))
+                        .text_color(t.fg_3)
+                        .child(div().flex_1().min_w_0().truncate().child(format!("Sample lesson · {}", scene.title)))
+                        .child(div().flex_none().font_family(studio_ui::theme::FONT_MONO).child(format!("{} / {}", self.scene + 1, video.scenes.len()))),
+                )
+                .into_any_element(),
+        )
     }
 
     fn onb_heading(&self, h: &'static str, body: &'static str, cx: &Context<Self>) -> impl IntoElement {
@@ -269,15 +333,20 @@ impl Workspace {
             .child(
                 div()
                     .flex()
-                    .items_center()
+                    .items_start()
                     .gap(px(6.))
                     .text_color(t.fg_3)
                     .text_size(px(12.))
-                    .child(Icon::new(IconName::Shield).small().color(t.fg_3))
-                    .child(format!(
-                        "You can connect both. Studio uses {} first and switches when a plan runs low.",
-                        if self.default_provider == Provider::Claude { "Claude" } else { "ChatGPT" }
-                    )),
+                    .max_w(px(500.))
+                    .child(div().flex_none().pt(px(1.)).child(Icon::new(IconName::Shield).small().color(t.fg_3)))
+                    .child(div().flex_1().min_w_0().child(if self.providers.iter().any(|p| p.signed_in) {
+                        format!(
+                            "You can connect both. Studio uses {} first and switches when a plan runs low.",
+                            if self.default_provider == Provider::Claude { "Claude" } else { "ChatGPT" }
+                        )
+                    } else {
+                        "Sign in to one to continue. Sign-in opens a terminal and your browser; Studio notices when you're done.".to_string()
+                    })),
             )
             .into_any_element()
     }
@@ -322,18 +391,21 @@ impl Workspace {
                         .child(faint(s.blurb, cx)),
                 )
         });
+        // Three per row: six styles fit in two rows.
+        const PER_ROW: usize = 3;
         let cards: Vec<_> = cards.collect();
-        let mut rows = div().flex().flex_col().gap(px(10.)).max_w(px(520.));
-        let mut it = cards.into_iter();
-        while let Some(a) = it.next() {
-            let b = it.next();
-            rows = rows.child(
-                div()
-                    .flex()
-                    .gap(px(10.))
-                    .child(div().flex_1().min_w_0().flex().flex_col().child(a))
-                    .child(div().flex_1().min_w_0().flex().flex_col().when_some(b, |d, b| d.child(b))),
-            );
+        let mut rows = div().flex().flex_col().gap(px(10.)).max_w(px(560.));
+        let mut it = cards.into_iter().peekable();
+        while it.peek().is_some() {
+            let mut row = div().flex().gap(px(10.));
+            for _ in 0..PER_ROW {
+                let cell = div().flex_1().min_w_0().flex().flex_col();
+                row = row.child(match it.next() {
+                    Some(card) => cell.child(card),
+                    None => cell,
+                });
+            }
+            rows = rows.child(row);
         }
         div()
             .flex()
@@ -348,61 +420,169 @@ impl Workspace {
             .into_any_element()
     }
 
-    fn onb_ready(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// The natural voice (Kokoro) is the only narrator: download it here (it starts on
+    /// arrival) before onboarding can finish.
+    fn onb_voice(&self, cx: &mut Context<Self>) -> AnyElement {
+        use crate::engine::NaturalVoice;
         let t = cx.theme().clone();
-        let p = self.providers.iter().find(|p| p.provider == self.default_provider);
-        let row = |k: &'static str, v: String| {
-            div()
-                .flex()
-                .justify_between()
-                .py(px(8.))
-                .border_b_1()
-                .border_color(t.line)
-                .child(div().text_color(t.fg_2).child(k))
-                .child(strong(v))
+        let total_mb = studio_render::kokoro::total_size(self.voice_quality()) as f32 / 1_000_000.;
+        let (status, action): (String, Option<AnyElement>) = match &self.natural {
+            NaturalVoice::Ready => (
+                format!("Installed · {}", self.voice_label()),
+                Some(
+                    Button::new("onb-voice-try", "Listen")
+                        .with_icon(IconName::Play)
+                        .on_click(click(cx, |this, _, cx| this.preview_voice(cx)))
+                        .into_any_element(),
+                ),
+            ),
+            NaturalVoice::Downloading(f) => (format!("Downloading · {:.0} of {:.0} MB", f * total_mb, total_mb), None),
+            NaturalVoice::Missing => (
+                format!("One-time download · {total_mb:.0} MB"),
+                Some(
+                    Button::new("onb-voice-download", "Download")
+                        .primary()
+                        .with_icon(IconName::Download)
+                        .on_click(click(cx, |this, _, cx| this.download_natural_voice(cx)))
+                        .into_any_element(),
+                ),
+            ),
+            NaturalVoice::Failed(e) => (
+                format!("Download failed: {e}"),
+                Some(
+                    Button::new("onb-voice-download", "Try again")
+                        .primary()
+                        .with_icon(IconName::Refresh)
+                        .on_click(click(cx, |this, _, cx| this.download_natural_voice(cx)))
+                        .into_any_element(),
+                ),
+            ),
         };
+        let (fraction, done) = match &self.natural {
+            NaturalVoice::Downloading(f) => (Some(*f), false),
+            NaturalVoice::Ready => (None, true),
+            _ => (None, false),
+        };
+        let note = match &self.natural {
+            NaturalVoice::Ready => "Ready. You can pick another voice and speed later in Settings → Voice & captions.",
+            NaturalVoice::Failed(_) => "Check your internet connection and try again. Studio needs the voice to narrate videos.",
+            _ => "Studio needs the voice to narrate videos, so setup continues once it's downloaded. It only happens once.",
+        };
+        let card = div()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .p(px(14.))
+            .max_w(px(500.))
+            .rounded(radius::PANEL)
+            .bg(t.surface)
+            .border_1()
+            .border_color(if done { t.fg_3 } else { t.line })
+            .shadow(t.edge())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(14.))
+                    .child(
+                        div()
+                            .size(px(40.))
+                            .flex_none()
+                            .rounded(radius::CONTROL)
+                            .bg(t.surface_2)
+                            .border_1()
+                            .border_color(t.line)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(Icon::new(if done { IconName::Check } else { IconName::Volume }).color(if done { t.ok } else { t.fg_2 })),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(strong("Natural voice").font_weight(gpui::FontWeight::SEMIBOLD))
+                            .child(faint(status, cx)),
+                    )
+                    .when_some(fraction, |d, f| {
+                        d.child(div().flex_none().font_family(studio_ui::theme::FONT_MONO).text_size(px(13.)).child(format!("{:.0}%", f * 100.)))
+                    })
+                    .children(action),
+            )
+            .when_some(fraction, |d, f| d.child(ProgressBar::new(f).tone(Tone::Neutral).height(6.)));
         div()
             .flex()
             .flex_col()
             .gap(px(22.))
             .child(self.onb_heading(
-                "You're set.",
-                "Start with a sample lesson to see the whole flow, or go straight to your own.",
+                "Give your lessons a voice.",
+                "Narration uses Kokoro, a natural voice that runs on this computer. Nothing you write is sent anywhere.",
                 cx,
             ))
+            .child(card)
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap(px(6.))
+                    .max_w(px(500.))
+                    .text_color(t.fg_3)
+                    .text_size(px(12.))
+                    .child(div().pt(px(1.)).flex_none().child(Icon::new(IconName::Info).small().color(t.fg_3)))
+                    .child(div().flex_1().min_w_0().child(note)),
+            )
+            .into_any_element()
+    }
+
+    fn onb_ready(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let p = self.providers.iter().find(|p| p.provider == self.default_provider && p.signed_in)
+            .or_else(|| self.providers.iter().find(|p| p.signed_in));
+        let row = |k: &'static str, v: AnyElement| {
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .min_h(px(36.))
+                .border_b_1()
+                .border_color(t.line)
+                .child(div().text_color(t.fg_2).child(k))
+                .child(v)
+        };
+        let assistant: AnyElement = match p {
+            Some(p) => strong(format!("{} · {}", p.provider.name(), p.plan_label())).into_any_element(),
+            None => div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(faint("Not connected", cx))
+                .child(Button::new("onb-connect-again", "Connect").small().on_click(click(cx, |this, _, cx| this.enter_onboarding_step(1, cx))))
+                .into_any_element(),
+        };
+        let (heading, body) = if p.is_some() {
+            ("You're set.", "Start your first lesson, or open the sample to see the whole flow first.")
+        } else {
+            ("Almost there.", "Connect Claude or ChatGPT to write your own lessons. You can open the sample lesson either way.")
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(22.))
+            .child(self.onb_heading(heading, body, cx))
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .max_w(px(460.))
+                    .child(row("Assistant", assistant))
+                    .child(row("House style", strong(HOUSE_STYLES[self.prefs.house_style.min(HOUSE_STYLES.len() - 1)].name).into_any_element()))
+                    .child(row("Voice", strong(self.voice_label()).into_any_element()))
                     .child(row(
-                        "Assistant",
-                        p.filter(|p| p.signed_in).map_or("Not connected".into(), |p| format!("{} · {}", p.provider.name(), p.plan_label())),
-                    ))
-                    .child(row("House style", HOUSE_STYLES[self.prefs.house_style.min(HOUSE_STYLES.len() - 1)].name.into()))
-                    .child(row("Voice", self.voice_label()))
-                    .child(row("Rendering", self.engine.backend_info.clone().unwrap_or_else(|| "Checked on first render".into()))),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(8.))
-                    .child(
-                        Button::new("onb-sample", "Open the sample lesson")
-                            .primary()
-                            .large()
-                            .on_click(click(cx, |this, _, cx| {
-                                this.finish_onboarding(cx);
-                                if let Some((p, v)) = this.sample_video() {
-                                    this.open_video(p, v, cx);
-                                }
-                            })),
-                    )
-                    .child(
-                        Button::new("onb-own", "Start my own")
-                            .large()
-                            .on_click(click(cx, |this, _, cx| this.finish_onboarding(cx))),
-                    ),
+                        "Rendering",
+                        strong(self.engine.backend_info.clone().unwrap_or_else(|| "Checked on first render".into())).into_any_element(),
+                    )),
             )
             .into_any_element()
     }

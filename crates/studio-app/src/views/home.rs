@@ -144,6 +144,7 @@ impl Workspace {
                 .child(faint(format!("{} · {updated}", format_short(secs)), cx).text_size(text::CAPS))
         });
 
+        let folder = self.home_target().and_then(|p| self.projects.get(p)).map_or("My videos".to_string(), |p| p.name.clone());
         panel(cx)
             .size_full()
             .px(px(48.))
@@ -163,18 +164,16 @@ impl Workspace {
                         "Type an idea, drop in notes, or paste a full script. Studio shows you a storyboard before writing anything.",
                         cx,
                     ))
-                    .when_some(self.projects.get(self.home_target()).map(|p| p.name.clone()), |d, folder| {
-                        d.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(6.))
-                                .text_size(text::SMALL)
-                                .text_color(t.fg_3)
-                                .child(Icon::new(IconName::Folder).small().color(t.fg_3))
-                                .child(format!("Saves to {folder}")),
-                        )
-                    }),
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .text_size(text::SMALL)
+                            .text_color(t.fg_3)
+                            .child(Icon::new(IconName::Folder).small().color(t.fg_3))
+                            .child(format!("Saves to {folder}")),
+                    ),
             )
             .child(
                 div()

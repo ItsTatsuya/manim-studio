@@ -216,8 +216,6 @@ pub struct Workspace {
     pub stage: Stage,
     /// Narration playback (absent without an audio device).
     pub audio: Option<crate::audio::Audio>,
-    /// System voices for Settings → Voice.
-    pub voices: Vec<String>,
     pub natural: crate::engine::NaturalVoice,
     /// Stage overlays and playback: safe-area guides, narration captions, loop the scene.
     pub stage_safe: bool,
@@ -320,16 +318,18 @@ impl Workspace {
         crate::store::apply_folder_order(&mut projects, &prefs.folder_order);
         let engine = Engine::start();
         let last = prefs.last_video.clone();
-        let current = projects
+        let last_found = projects
             .iter()
             .enumerate()
-            .find_map(|(pi, p)| p.videos.iter().position(|v| last.is_some() && v.dir == last).map(|vi| (pi, vi)))
+            .find_map(|(pi, p)| p.videos.iter().position(|v| last.is_some() && v.dir == last).map(|vi| (pi, vi)));
+        let current = last_found
             .or_else(|| {
                 projects.iter().enumerate().find_map(|(pi, p)| p.videos.iter().position(|v| v.has_scripts()).map(|vi| (pi, vi)))
             })
             .unwrap_or((0, 0));
-        // Every video deleted: open on the composer.
-        let screen = if screen == Screen::Video && !projects.iter().any(|p| !p.videos.is_empty()) { Screen::Home } else { screen };
+        // Reopen the last video; with none (first run after "Start my own", or it was
+        // deleted) open on the composer rather than the sample lesson.
+        let screen = if screen == Screen::Video && last_found.is_none() { Screen::Home } else { screen };
         let providers = [Provider::Claude, Provider::OpenAi]
             .map(|p| {
                 let mut s = ProviderStatus::unknown(p);
@@ -403,7 +403,6 @@ impl Workspace {
                 a.set_volume(start_volume);
                 a
             }),
-            voices: Vec::new(),
             natural: crate::engine::NaturalVoice::Missing,
             stage_safe: false,
             wm_bounds: Default::default(),
@@ -443,10 +442,12 @@ impl Workspace {
         this.request_style_previews();
         this.detect_providers(cx);
         this.refresh_voice(this.current, cx);
-        this.load_voices(cx);
         this.schedule_update_check(cx);
         if this.screen == Screen::Onboarding {
             this.start_onboarding_demo(cx);
+        } else if this.prefs.narration && this.natural == crate::engine::NaturalVoice::Missing {
+            // Set up before narration became natural-voice only.
+            this.notice = Some("Narration needs the natural voice. Download it once in Settings → Voice & captions.".into());
         }
         this
     }
@@ -511,7 +512,7 @@ impl Workspace {
             }
         }
         if let Ok(step) = std::env::var("STUDIO_STEP") {
-            self.onboarding_step = step.parse().unwrap_or(0).min(3);
+            self.onboarding_step = step.parse().unwrap_or(0).min(4);
         }
     }
 
@@ -877,19 +878,6 @@ impl Workspace {
         self.persist(video);
         self.refresh_voice(video, cx);
         cx.notify();
-    }
-
-    /// Installed system voices, loaded in the background (it takes a moment on Windows).
-    fn load_voices(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            let voices = cx.background_executor().spawn(async { studio_render::voice::voices() }).await;
-            this.update(cx, |this, cx| {
-                this.voices = voices;
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
     }
 
     pub fn finish_onboarding(&mut self, cx: &mut Context<Self>) {
