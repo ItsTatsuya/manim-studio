@@ -38,8 +38,8 @@ jobs:
   release:
     # Tag vX.Y.Z to publish a release (zip + installer) and refresh the signed update
     # manifest on the "updates" release. Tags with a suffix (v0.2.0-beta.1) publish as
-    # pre-releases. "updates" must stay a pre-release: the old 1.x app's updater reads
-    # this repo's latest full release and rejects a tag that isn't vX.Y.Z.
+    # pre-releases. "updates" must stay a pre-release so it never becomes the repo's
+    # "Latest" release (that should always be a version people can download).
     if: startsWith(github.ref, 'refs/tags/v')
     needs: test
     runs-on: windows-latest

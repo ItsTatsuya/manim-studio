@@ -1,6 +1,4 @@
 ; Inno Setup script for Manim Studio (per-user install, no admin rights needed).
-; Named "Manim Studio 2" so it installs next to the 1.x app (same folder and shortcut
-; names would overwrite its Start Menu entry).
 ; Build: script\bundle-windows.ps1 -Installer   (needs Inno Setup 6: winget install JRSoftware.InnoSetup)
 
 #ifndef AppVersion
@@ -12,11 +10,11 @@
 
 [Setup]
 AppId={{6C3B2E4A-6E0E-4E3B-9C55-6A1E8D7F2B10}
-AppName=Manim Studio 2
+AppName=Manim Studio
 AppVersion={#AppVersion}
 AppPublisher=Manim Studio
-DefaultDirName={localappdata}\Programs\Manim Studio 2
-DefaultGroupName=Manim Studio 2
+DefaultDirName={localappdata}\Programs\Manim Studio
+DefaultGroupName=Manim Studio
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=..\..\dist
@@ -34,14 +32,14 @@ Source: "{#SourceDir}\manim-studio.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\studio-engine.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Manim Studio 2"; Filename: "{app}\manim-studio.exe"
-Name: "{userdesktop}\Manim Studio 2"; Filename: "{app}\manim-studio.exe"; Tasks: desktopicon
+Name: "{group}\Manim Studio"; Filename: "{app}\manim-studio.exe"
+Name: "{userdesktop}\Manim Studio"; Filename: "{app}\manim-studio.exe"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 
 [Run]
-Filename: "{app}\manim-studio.exe"; Description: "Open Manim Studio 2"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\manim-studio.exe"; Description: "Open Manim Studio"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 ; Leftovers from in-place updates (previous version kept for rollback).

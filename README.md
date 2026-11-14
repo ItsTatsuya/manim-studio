@@ -1,6 +1,6 @@
-# Manim Studio 2
+# Manim Studio
 
-A native rewrite of [Manim Studio](https://github.com/ItsTatsuya/manim-studio) in Rust on
+A native desktop app in Rust on
 [GPUI-CE](https://github.com/gpui-ce/gpui-ce). Teachers describe a lesson, drop in notes or
 paste a script, and get a narrated, captioned video rendered by
 [manim-rust](https://github.com/ItsTatsuya/manim-rust).

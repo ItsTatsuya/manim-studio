@@ -1,9 +1,9 @@
-# Manim Studio 2: Design (Phase 1)
+# Manim Studio: Design (Phase 1)
 
 Status: draft for review · 2026-11-12
 Mockups: [`mockups/index.html`](mockups/index.html) (open in a browser and use the tabs to switch screens and themes)
 
-Manim Studio 2 is a native Rust app built on GPUI-CE and rendered by the
+Manim Studio is a native Rust app built on GPUI-CE and rendered by the
 [manim-rust](https://github.com/ItsTatsuya/manim-rust) engine. Teachers describe a
 lesson, upload notes, or paste a script, and get a narrated, captioned video. The
 visual baseline is [Frame](https://github.com/66HEX/frame): graphite surfaces, one

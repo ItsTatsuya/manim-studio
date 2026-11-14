@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/studio-ui", "crates/studio-render", "crates/studio-agent", "crates/studio-docs", "crates/studio-updater", "crates/studio-app", "tools/icongen", "tools/tokenbench", "tools/release-sign"]
 
 [workspace.package]
-version = "0.1.1"
+version = "1.0.0"
 edition = "2024"
 license = "MIT"
 publish = false

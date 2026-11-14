@@ -8,7 +8,7 @@ use crate::prefs::Prefs;
 use gpui::{
     AnimationExt, AnyElement, App, AppContext, Bounds, StyledImage, ClickEvent, Context, Div, Entity, FocusHandle, Focusable, FontWeight,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render, ScrollHandle, SharedString,
-    Styled, Subscription, Task, TitlebarOptions, Window,
+    StatefulInteractiveElement, Styled, Subscription, Task, TitlebarOptions, Window,
     WindowBounds, WindowControlArea, WindowDecorations, WindowOptions, div, point,
     prelude::FluentBuilder, px, size,
 };
@@ -174,6 +174,11 @@ pub struct Workspace {
     pub retries: std::collections::HashMap<std::path::PathBuf, crate::assistant::RetrySpec>,
     /// A one-line message for the teacher (errors, "connect an assistant first").
     pub notice: Option<String>,
+    /// The notice the hide timer was started for, its generation, and whether the
+    /// pointer is over it (which holds the timer).
+    notice_seen: Option<String>,
+    notice_gen: u64,
+    notice_hovered: bool,
     /// Documents attached in the Home composer.
     pub attachments: Vec<std::path::PathBuf>,
     /// Assistant turns in flight.
@@ -374,6 +379,9 @@ impl Workspace {
             home_project: None,
             retries: Default::default(),
             notice: None,
+            notice_seen: None,
+            notice_gen: 0,
+            notice_hovered: false,
             attachments: Vec::new(),
             running: Vec::new(),
             home_input,
@@ -450,7 +458,7 @@ impl Workspace {
             this.start_onboarding_demo(cx);
         } else if this.prefs.narration && this.natural == crate::engine::NaturalVoice::Missing {
             // Set up before narration became natural-voice only.
-            this.notice = Some("Narration needs the natural voice. Download it once in Settings → Voice & captions.".into());
+            this.notice = Some(VOICE_NOTICE.into());
         }
         this
     }
@@ -895,6 +903,53 @@ impl Workspace {
     }
 }
 
+/// Shown at startup when narration is on but the natural voice isn't downloaded.
+pub const VOICE_NOTICE: &str = "Narration needs the natural voice. It's a one-time download of about 116 MB.";
+/// How long an informational notice stays up (longer while the pointer is on it).
+const NOTICE_SECS: Duration = Duration::from_secs(6);
+
+/// Errors stay until dismissed; tips and confirmations hide on their own.
+pub fn notice_is_error(text: &str) -> bool {
+    let t = text.to_lowercase();
+    t.starts_with("couldn't") || t.starts_with("can't") || t.contains("failed") || t.contains("didn't work")
+}
+
+impl Workspace {
+    /// A new notice: start its hide timer unless it's an error.
+    fn track_notice(&mut self, cx: &mut Context<Self>) {
+        if self.notice == self.notice_seen {
+            return;
+        }
+        self.notice_seen = self.notice.clone();
+        self.notice_gen += 1;
+        self.notice_hovered = false;
+        if self.notice.as_deref().is_none_or(notice_is_error) {
+            return;
+        }
+        let generation = self.notice_gen;
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            cx.background_executor().timer(NOTICE_SECS).await;
+            loop {
+                // Still the same notice? Hold while the pointer is on it.
+                let held = this.update(cx, |this, _| (this.notice_gen == generation).then_some(this.notice_hovered)).ok().flatten();
+                match held {
+                    None => return,
+                    Some(true) => cx.background_executor().timer(Duration::from_millis(500)).await,
+                    Some(false) => break,
+                }
+            }
+            this.update(cx, |this, cx| {
+                if this.notice_gen == generation {
+                    this.notice = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+}
+
 impl Focusable for Workspace {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
@@ -1040,6 +1095,7 @@ pub fn scene_image(scene: &model::Scene, cx: &App) -> AnyElement {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.track_notice(cx);
         let t = cx.theme().clone();
         let content: AnyElement = match self.screen {
             Screen::Onboarding => self.render_onboarding(window, cx),
@@ -1182,20 +1238,43 @@ impl Render for Workspace {
             )
             .when_some(self.notice.clone(), |d, notice| {
                 let t = cx.theme().clone();
+                let error = notice_is_error(&notice);
+                let offer_voice = notice == VOICE_NOTICE
+                    && matches!(self.natural, crate::engine::NaturalVoice::Missing | crate::engine::NaturalVoice::Failed(_));
                 d.child(
                     div().absolute().top(space::TITLEBAR + space::GUTTER).left_0().right_0().flex().justify_center().child(
-                        floating(cx)
-                            .max_w(px(520.))
-                            .gap(px(10.))
-                            .px(px(12.))
-                            .py(px(8.))
-                            .rounded(radius::PANEL)
-                            .child(Icon::new(IconName::Info).small().color(t.fg_2))
-                            .child(div().flex_1().min_w_0().child(notice))
-                            .child(Button::icon("notice-close", IconName::X).small().on_click(click(cx, |this, _, cx| {
-                                this.notice = None;
-                                cx.notify();
-                            }))),
+                        motion::enter(
+                            floating(cx)
+                                .id("notice")
+                                .max_w(px(560.))
+                                .gap(px(10.))
+                                .px(px(12.))
+                                .py(px(8.))
+                                .rounded(radius::PANEL)
+                                .on_hover(cx.listener(|this, hovered: &bool, _, _| this.notice_hovered = *hovered))
+                                .child(Icon::new(IconName::Info).small().color(if error { t.err } else { t.fg_2 }))
+                                .child(div().flex_1().min_w_0().child(notice))
+                                .when(offer_voice, |d| {
+                                    d.child(
+                                        Button::new("notice-voice", "Download")
+                                            .primary()
+                                            .small()
+                                            .with_icon(IconName::Download)
+                                            .on_click(click(cx, |this, _, cx| {
+                                                this.download_natural_voice(cx);
+                                                this.notice = Some("Downloading the natural voice. Progress is in Settings → Voice & captions.".into());
+                                                cx.notify();
+                                            })),
+                                    )
+                                })
+                                .child(Button::icon("notice-close", IconName::X).small().on_click(click(cx, |this, _, cx| {
+                                    this.notice = None;
+                                    cx.notify();
+                                }))),
+                            ("notice", self.notice_gen as usize),
+                            motion::BASE,
+                            6.,
+                        ),
                     ),
                 )
             })

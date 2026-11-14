@@ -659,6 +659,10 @@ impl Workspace {
                 match result {
                     Ok(()) => {
                         this.natural = NaturalVoice::Ready;
+                        // Onboarding shows its own "Ready".
+                        if this.screen != crate::app::Screen::Onboarding {
+                            this.notice = Some("The natural voice is installed. Narration is ready.".into());
+                        }
                         if let Some(dir) = studio_render::voice::kokoro_dir() {
                             studio_render::kokoro::remove_other_models(dir, quality);
                         }
