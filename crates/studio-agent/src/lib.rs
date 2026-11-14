@@ -10,6 +10,7 @@
 pub mod claude;
 pub mod codex;
 pub mod detect;
+pub mod errors;
 pub mod events;
 mod process;
 pub mod prompt;

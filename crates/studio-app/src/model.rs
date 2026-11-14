@@ -477,6 +477,9 @@ pub enum Msg {
         text: String,
         meta: String,
     },
+    /// The assistant failed. The raw text is kept and explained when shown
+    /// (`studio_agent::errors::explain`), so the wording improves with updates.
+    Problem { provider: Provider, raw: String },
     /// The assistant is working: one live status line.
     Working(Working),
     Rendering,
@@ -495,6 +498,11 @@ pub struct Working {
 }
 
 impl Msg {
+    /// A failure explained in plain words, with what would fix it.
+    pub fn explain(provider: Provider, raw: &str) -> studio_agent::errors::Explained {
+        studio_agent::errors::explain(provider.agent(), raw, crate::store::now())
+    }
+
     /// Rows that narrate the assistant's internals (files it touched, checks that
     /// passed). Older chats saved them; they are no longer shown.
     pub fn is_work_detail(&self) -> bool {

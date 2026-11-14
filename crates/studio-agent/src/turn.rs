@@ -38,13 +38,22 @@ pub struct TurnRequest {
 pub struct Turn {
     pub events: async_channel::Receiver<AgentEvent>,
     child: Arc<Mutex<Option<Child>>>,
+    cancelled: std::sync::atomic::AtomicBool,
 }
 
 impl Turn {
     pub fn cancel(&self) {
+        self.cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(c) = self.child.lock().unwrap().as_mut() {
             let _ = c.kill();
         }
+    }
+}
+
+impl Turn {
+    /// [`Turn::cancel`] was called (the turn didn't fail on its own).
+    pub fn cancelled(&self) -> bool {
+        self.cancelled.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -124,7 +133,7 @@ pub fn start(req: TurnRequest) -> Result<Turn> {
         };
         let _ = tx.send_blocking(final_ev);
     });
-    Ok(Turn { events, child })
+    Ok(Turn { events, child, cancelled: Default::default() })
 }
 
 /// Run a turn to the end and collect its text (for planning calls).

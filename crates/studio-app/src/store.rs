@@ -71,6 +71,7 @@ enum ChatRecord {
     User { text: String },
     Assistant { text: String },
     Activity { ok: bool, text: String, meta: String },
+    Problem { provider: String, raw: String },
     Usage { text: String },
 }
 
@@ -200,6 +201,11 @@ fn load_chat(dir: &Path) -> Vec<Msg> {
         .map(|r| match r {
             ChatRecord::User { text } => Msg::User(text),
             ChatRecord::Assistant { text } => Msg::Assistant(text),
+            // Failures saved before they were explained become explained ones.
+            ChatRecord::Activity { ok: false, text, .. } if text.starts_with("Claude Code stopped: ") || text.starts_with("Codex stopped: ") => {
+                let (cli, raw) = text.split_once(" stopped: ").unwrap_or_default();
+                Msg::Problem { provider: if cli == "Codex" { Provider::OpenAi } else { Provider::Claude }, raw: raw.to_string() }
+            }
             ChatRecord::Activity { ok, text, meta } => {
                 let icon = if text.starts_with("Edited") || text.starts_with("Wrote") {
                     IconName::Script
@@ -210,6 +216,7 @@ fn load_chat(dir: &Path) -> Vec<Msg> {
                 };
                 Msg::Activity { icon, ok, text, meta }
             }
+            ChatRecord::Problem { provider, raw } => Msg::Problem { provider: Provider::from_key(&provider).unwrap_or(Provider::Claude), raw },
             ChatRecord::Usage { text } => Msg::Usage(text),
         })
         .filter(|m| !m.is_work_detail())
@@ -226,6 +233,7 @@ pub fn save_chat(v: &Video) {
             Msg::User(t) => Some(ChatRecord::User { text: t.clone() }),
             Msg::Assistant(t) => Some(ChatRecord::Assistant { text: t.clone() }),
             Msg::Activity { ok, text, meta, .. } => Some(ChatRecord::Activity { ok: *ok, text: text.clone(), meta: meta.clone() }),
+            Msg::Problem { provider, raw } => Some(ChatRecord::Problem { provider: provider.key().into(), raw: raw.clone() }),
             Msg::Usage(t) => Some(ChatRecord::Usage { text: t.clone() }),
             Msg::Working(_) | Msg::Rendering => None,
         })

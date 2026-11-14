@@ -112,12 +112,19 @@ pub fn parse(line: &str) -> Vec<AgentEvent> {
             };
             let failed = v.get("is_error").and_then(Value::as_bool).unwrap_or(false);
             let error = failed.then(|| {
-                v.get("result")
+                let text = v
+                    .get("result")
                     .and_then(Value::as_str)
                     .filter(|s| !s.is_empty())
                     .or_else(|| v.get("subtype").and_then(Value::as_str))
-                    .unwrap_or("the assistant stopped")
-                    .to_string()
+                    .unwrap_or("the assistant stopped");
+                // The API's own code says more than the sentence (see `errors::explain`).
+                match (v.get("api_error_code").and_then(Value::as_str), v.get("api_error_status").and_then(Value::as_u64)) {
+                    (Some(code), Some(status)) => format!("{text} [{code}, HTTP {status}]"),
+                    (Some(code), None) => format!("{text} [{code}]"),
+                    (None, Some(status)) => format!("{text} [HTTP {status}]"),
+                    (None, None) => text.to_string(),
+                }
             });
             out.push(AgentEvent::Done {
                 session: v.get("session_id").and_then(Value::as_str).map(str::to_string),

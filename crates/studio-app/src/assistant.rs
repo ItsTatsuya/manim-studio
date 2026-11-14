@@ -30,9 +30,19 @@ pub enum TurnKind {
 }
 
 /// A running assistant turn for a video.
+/// A turn as it was asked for, kept when it fails so "Try again" repeats it exactly.
+#[derive(Clone, Debug)]
+pub struct RetrySpec {
+    kind: TurnKind,
+    prompt: String,
+    planning: bool,
+    effort: Option<Effort>,
+}
+
 pub struct Running {
     pub video: (usize, usize),
     pub kind: TurnKind,
+    retry: RetrySpec,
     turn: Turn,
     started: Instant,
     text: String,
@@ -224,6 +234,67 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The assistant failed: explain it in the chat (and on the storyboard) and keep the
+    /// turn so it can be retried.
+    fn fail_problem(&mut self, v: (usize, usize), provider: Provider, raw: String, retry: Option<RetrySpec>, cx: &mut Context<Self>) {
+        self.set_working(v, None);
+        self.push_msg(v, Msg::Problem { provider, raw });
+        let dir = self.video_mut(v).and_then(|video| {
+            video.busy = None;
+            if video.status == VideoStatus::Building {
+                video.status = if video.scenes.iter().any(|s| s.engine.file.is_some()) { VideoStatus::Failed } else { VideoStatus::Draft };
+            }
+            video.dir.clone()
+        });
+        if let (Some(dir), Some(retry)) = (dir, retry) {
+            self.retries.insert(dir, retry);
+        }
+        self.persist(v);
+        cx.notify();
+    }
+
+    /// "Try again" on a failure: repeat the failed turn, or plan again after a restart.
+    pub fn retry_failed(&mut self, cx: &mut Context<Self>) {
+        let video = self.current;
+        if self.busy(video) {
+            return;
+        }
+        let dir = self.video().dir.clone();
+        let spec = dir.and_then(|d| self.retries.remove(&d));
+        let Some(spec) = spec else {
+            if self.video().storyboard.is_none() {
+                self.retry_plan(cx);
+            }
+            return;
+        };
+        if let Some(v) = self.video_mut(video) {
+            v.busy = Some(match spec.kind {
+                TurnKind::Plan => Busy::Planning,
+                TurnKind::Revise => Busy::Revising,
+                TurnKind::Build => Busy::Building,
+                TurnKind::Edit => Busy::Editing,
+                TurnKind::Repair { scene, k } => Busy::Fixing { scene: scene + 1, k, of: k },
+            });
+            if spec.kind == TurnKind::Build {
+                v.status = VideoStatus::Building;
+            }
+        }
+        if !spec.planning {
+            self.set_working(video, Some("Trying again".into()));
+        }
+        self.start_turn(video, spec.kind, spec.prompt, spec.planning, spec.effort, cx);
+    }
+
+    /// Whether "Try again" has something to repeat for the open video.
+    pub fn can_retry(&self) -> bool {
+        self.video().dir.as_ref().is_some_and(|d| self.retries.contains_key(d)) || self.video().storyboard.is_none()
+    }
+
+    /// The other signed-in assistant, if there is one (for "Use ChatGPT instead").
+    pub fn other_provider(&self, provider: Provider) -> Option<Provider> {
+        self.providers.iter().find(|p| p.provider != provider && p.signed_in).map(|p| p.provider)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn start_turn(
         &mut self,
@@ -265,6 +336,8 @@ impl Workspace {
             (TurnKind::Edit, Some((p, id))) if *p == provider && (!self.prefs.lean_context || v.resume_next) => Some(id.clone()),
             _ => None,
         };
+        let retry = RetrySpec { kind: kind.clone(), prompt: prompt_text.clone(), planning, effort };
+        self.retries.remove(&dir);
         let req = TurnRequest {
             provider: provider.agent(),
             exe,
@@ -282,12 +355,13 @@ impl Workspace {
         }
         let turn = match turn::start(req) {
             Ok(t) => t,
-            Err(e) => return self.fail_early(video, format!("Couldn't start {}: {e:#}", provider.cli()), cx),
+            Err(e) => return self.fail_problem(video, provider, format!("Couldn't start {}: {e:#}", provider.cli()), Some(retry), cx),
         };
         let events = turn.events.clone();
         self.running.push(Running {
             video,
             kind,
+            retry,
             turn,
             started: Instant::now(),
             text: String::new(),
@@ -432,17 +506,13 @@ impl Workspace {
             return;
         }
         if let Some(e) = error {
-            self.set_working(video, None);
-            let stopped = e.contains("stopped") || e.contains("killed");
-            self.push_msg(
-                video,
-                Msg::Activity {
-                    icon: IconName::Info,
-                    ok: false,
-                    text: if stopped { "Stopped".into() } else { format!("{} stopped: {}", r.provider.cli(), studio_render::short_error(&e)) },
-                    meta: String::new(),
-                },
-            );
+            // Cancelled from the app ("Stop"): no explanation needed.
+            if r.turn.cancelled() {
+                self.set_working(video, None);
+                self.push_msg(video, Msg::Activity { icon: IconName::Info, ok: false, text: "Stopped".into(), meta: String::new() });
+            } else {
+                return self.fail_problem(video, r.provider, e, Some(r.retry), cx);
+            }
             if let Some(v) = self.video_mut(video) {
                 v.busy = None;
                 if v.status == VideoStatus::Building {
@@ -853,6 +923,19 @@ impl Workspace {
             Msg::Activity { ok: false, text, .. } => Some(text.clone()),
             _ => None,
         })
+    }
+
+    /// The latest failure in `video`'s chat, if the assistant failed after the last thing
+    /// the teacher asked.
+    pub fn last_problem(video: &crate::model::Video) -> Option<(usize, Provider, String)> {
+        for (i, m) in video.chat.iter().enumerate().rev() {
+            match m {
+                Msg::Problem { provider, raw } => return Some((i, *provider, raw.clone())),
+                Msg::User(_) => return None,
+                _ => {}
+            }
+        }
+        None
     }
 
     /// Storyboard revise box.

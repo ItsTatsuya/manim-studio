@@ -170,6 +170,8 @@ pub struct Workspace {
     pub confirm: Option<crate::manage::Confirm>,
     /// The folder the Home composer files new videos into (else the open video's).
     pub home_project: Option<usize>,
+    /// Failed turns by video folder, for "Try again".
+    pub retries: std::collections::HashMap<std::path::PathBuf, crate::assistant::RetrySpec>,
     /// A one-line message for the teacher (errors, "connect an assistant first").
     pub notice: Option<String>,
     /// Documents attached in the Home composer.
@@ -370,6 +372,7 @@ impl Workspace {
             rename_input,
             confirm: None,
             home_project: None,
+            retries: Default::default(),
             notice: None,
             attachments: Vec::new(),
             running: Vec::new(),

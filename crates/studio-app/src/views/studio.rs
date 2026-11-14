@@ -502,6 +502,7 @@ impl Workspace {
         let busy = self.busy(self.current);
         let empty = chat.is_empty();
         let has_scripts = self.video().has_scripts();
+        let latest_problem = Workspace::last_problem(self.video()).map(|(i, ..)| i);
         let items = chat.iter().enumerate().filter(|(_, m)| !m.is_work_detail()).map(|(i, m)| -> (usize, AnyElement) {
             (i, match m {
                 Msg::User(s) => div()
@@ -520,6 +521,7 @@ impl Workspace {
                     .into_any_element(),
                 Msg::Assistant(s) => div().line_height(px(20.)).child(s.clone()).into_any_element(),
                 Msg::Activity { icon, ok, text: label, meta } => activity_row(*icon, *ok, label.clone(), meta.clone(), cx),
+                Msg::Problem { provider, raw } => self.problem_card(i, *provider, raw, latest_problem == Some(i), cx),
                 Msg::Working(w) => working_line(w, cx),
                 Msg::Rendering => match progress {
                     Some(p) => div()

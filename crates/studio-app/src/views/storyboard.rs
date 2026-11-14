@@ -6,7 +6,7 @@ use gpui::{
 };
 use studio_ui::components::{Button, Chip, Tone, caps, panel};
 use studio_ui::theme::{self, ActiveTheme, FONT_MONO, radius, space, text};
-use studio_ui::{Icon, IconName};
+use studio_ui::IconName;
 
 impl Workspace {
     pub fn render_storyboard(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -87,49 +87,39 @@ impl Workspace {
         // The plan never arrived (assistant error, plan run out, sign-in…): say why, and
         // offer to try again instead of leaving an empty page.
         let failed = (!planning && beats.is_empty() && video.storyboard.is_none() && video.request.is_some()).then(|| {
-            let reason = self.last_error(&video).unwrap_or_else(|| "The assistant stopped before the storyboard was written.".into());
+            let card = match Workspace::last_problem(&video) {
+                Some((i, provider, raw)) => self.problem_card(i, provider, &raw, true, cx),
+                // Saved by an older version, or the plan came back unreadable.
+                None => {
+                    let reason = self.last_error(&video).unwrap_or_else(|| "The assistant stopped before the storyboard was written.".into());
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(10.))
+                        .p(px(14.))
+                        .rounded(radius::PANEL)
+                        .bg(t.surface_2)
+                        .border_1()
+                        .border_color(t.line_strong)
+                        .child(strong("The storyboard couldn't be written"))
+                        .child(sub(reason, cx))
+                        .child(
+                            div().child(
+                                Button::new("plan-retry", "Try again")
+                                    .primary()
+                                    .with_icon(IconName::Refresh)
+                                    .on_click(click(cx, |this, _, cx| this.retry_failed(cx))),
+                            ),
+                        )
+                        .into_any_element()
+                }
+            };
             div()
                 .flex()
                 .flex_col()
-                .gap(px(12.))
-                .p(px(16.))
-                .rounded(radius::PANEL)
-                .bg(t.surface_2)
-                .border_1()
-                .border_color(t.line_strong)
+                .gap(px(10.))
                 .when_some(video.request.clone(), |d, r| d.child(faint(format!("“{r}”"), cx)))
-                .child(
-                    div()
-                        .flex()
-                        .items_start()
-                        .gap(px(10.))
-                        .child(div().pt(px(2.)).child(Icon::new(IconName::Info).color(t.err)))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .gap(px(4.))
-                                .child(strong("The storyboard couldn't be written"))
-                                .child(sub(reason, cx)),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .gap(px(8.))
-                        .child(
-                            Button::new("plan-retry", "Try again")
-                                .primary()
-                                .with_icon(IconName::Refresh)
-                                .on_click(click(cx, |this, _, cx| this.retry_plan(cx))),
-                        )
-                        .child(Button::new("plan-settings", "Assistant settings").ghost().on_click(click(cx, |this, _, cx| {
-                            this.settings_page = crate::app::SettingsPage::Assistants;
-                            this.go(crate::app::Screen::Settings, cx);
-                        }))),
-                )
+                .child(card)
         });
         // Rough: the scene API context plus writing each scene (cached context is cheap).
         let est_tokens = 20_000 + video.scenes.len() as u64 * 8_000;
