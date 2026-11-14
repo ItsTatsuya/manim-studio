@@ -5,6 +5,12 @@ use studio_render::{sample, style};
 
 #[test]
 fn sample_scenes_run_cleanly_in_every_style() {
+    // The app registers its bundled fonts with the engine; without them layout would be
+    // measured with whatever system face the machine falls back to (DejaVu on Linux is
+    // wide enough to push titles off the frame).
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../studio-ui/assets");
+    studio_render::fonts::register_dir(&assets.join("fonts"));
+    studio_render::fonts::register_dir(&assets.join("lesson-fonts"));
     let dir = std::env::temp_dir().join(format!("studio-sample-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let scenes = sample::install(&dir).unwrap();
