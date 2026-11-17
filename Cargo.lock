@@ -3304,7 +3304,7 @@ dependencies = [
 
 [[package]]
 name = "icongen"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "ico",
@@ -6357,7 +6357,7 @@ dependencies = [
 
 [[package]]
 name = "release-sign"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "minisign",
@@ -7240,7 +7240,7 @@ dependencies = [
 
 [[package]]
 name = "studio-agent"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -7251,7 +7251,7 @@ dependencies = [
 
 [[package]]
 name = "studio-app"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -7275,7 +7275,7 @@ dependencies = [
 
 [[package]]
 name = "studio-docs"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "pdf-extract",
@@ -7284,7 +7284,7 @@ dependencies = [
 
 [[package]]
 name = "studio-render"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -7300,7 +7300,7 @@ dependencies = [
 
 [[package]]
 name = "studio-ui"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "gpui-ce",
@@ -7311,7 +7311,7 @@ dependencies = [
 
 [[package]]
 name = "studio-updater"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "minisign",
@@ -7720,7 +7720,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tokenbench"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "serde",
