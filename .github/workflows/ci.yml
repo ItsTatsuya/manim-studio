@@ -99,7 +99,8 @@ jobs:
           # Re-running the job for the same tag reuses the release and replaces its files.
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
-            $flags = if ($tag.Contains('-')) { @('--prerelease', '--latest=false') } else { @('--latest') }
+            # @(...) around the whole if: a one-item branch would otherwise become a string, and splatting a string passes its characters.
+            $flags = @(if ($tag.Contains('-')) { '--prerelease', '--latest=false' } else { '--latest' })
             gh release create $tag @assets @flags --title $title --generate-notes
             if ($LASTEXITCODE -ne 0) { throw "creating the $tag release failed" }
           } else {
