@@ -288,11 +288,22 @@ pub fn pad_for_narration(host: &ScriptHost, seconds: f64) {
     });
 }
 
-/// Newest modification time over the script and everything it depends on.
-fn signature(req: &OpenScene) -> Option<(SystemTime, usize)> {
-    let deps = crate::cache::dependencies(&req.path, &req.root);
-    let newest = deps.iter().filter_map(|d| std::fs::metadata(d).and_then(|m| m.modified()).ok()).max()?;
-    Some((newest, deps.len()))
+/// The files a scene depends on and their modification times, in a stable order.
+type Watch = Vec<(PathBuf, Option<SystemTime>)>;
+
+fn watch(req: &OpenScene) -> Watch {
+    crate::cache::dependencies(&req.path, &req.root)
+        .into_iter()
+        .map(|d| {
+            let m = std::fs::metadata(&d).and_then(|m| m.modified()).ok();
+            (d, m)
+        })
+        .collect()
+}
+
+/// Whether any watched file changed (or vanished), by stat alone: no re-parsing.
+fn touched(w: &Watch) -> bool {
+    w.iter().any(|(p, m)| std::fs::metadata(p).and_then(|m| m.modified()).ok() != *m)
 }
 
 impl Preview {
@@ -338,9 +349,15 @@ impl Preview {
 struct Current {
     generation: u64,
     req: OpenScene,
-    signature: Option<(SystemTime, usize)>,
+    /// Dependencies at the last load; statted every idle tick, re-derived now and then.
+    watch: Watch,
     checked: Instant,
+    /// Idle ticks since the dependency list was last re-derived (new imports).
+    ticks: u32,
 }
+
+/// How often (in idle ticks of 500 ms) the dependency list itself is re-derived.
+const REPARSE_TICKS: u32 = 10;
 
 fn preview_thread(output: Output, rx: mpsc::Receiver<Cmd>, tx: async_channel::Sender<PreviewEvent>) {
     let mut host: Option<ScriptHost> = None;
@@ -371,23 +388,33 @@ fn preview_thread(output: Output, rx: mpsc::Receiver<Cmd>, tx: async_channel::Se
                 }
             }
         }
-        // Idle: reload when the scene's files change.
+        // Idle: reload when the scene's files change. Statting the cached dependency
+        // list is cheap; the list itself is re-derived only every few seconds.
         if open.is_none() && seek.is_none()
             && let Some(cur) = &mut current
-                && cur.checked.elapsed() >= Duration::from_millis(500) {
-                    cur.checked = Instant::now();
-                    let sig = signature(&cur.req);
-                    if sig.is_some() && sig != cur.signature {
-                        open = Some((cur.generation, cur.req.clone()));
-                        seek = Some(last_t);
-                    }
-                }
+            && cur.checked.elapsed() >= Duration::from_millis(500)
+        {
+            cur.checked = Instant::now();
+            cur.ticks += 1;
+            let changed = touched(&cur.watch)
+                || (cur.ticks >= REPARSE_TICKS && {
+                    cur.ticks = 0;
+                    let w = watch(&cur.req);
+                    !w.is_empty() && w != cur.watch
+                });
+            if changed {
+                open = Some((cur.generation, cur.req.clone()));
+                seek = Some(last_t);
+            }
+        }
+        let reloaded = open.is_some();
         if let Some((generation, req)) = open {
             // Drop the old scene first: the engine keeps one scene per thread.
             host = None;
-            let sig = signature(&req);
+            drawn = false;
+            let w = watch(&req);
             let started = Instant::now();
-            match load(&req, output) {
+            match crate::guard(|| load(&req, output)) {
                 Ok((h, scene, timeline)) => {
                     let _ = tx.send_blocking(PreviewEvent::Loaded {
                         generation,
@@ -397,7 +424,6 @@ fn preview_thread(output: Output, rx: mpsc::Receiver<Cmd>, tx: async_channel::Se
                         elapsed: started.elapsed(),
                     });
                     host = Some(h);
-                    drawn = false;
                 }
                 Err(e) => {
                     let _ = tx.send_blocking(PreviewEvent::Failed {
@@ -408,13 +434,35 @@ fn preview_thread(output: Output, rx: mpsc::Receiver<Cmd>, tx: async_channel::Se
                 }
             }
             // Keep watching a failed scene too, so fixing the file brings it back.
-            current = Some(Current { generation, req, signature: sig, checked: Instant::now() });
+            current = Some(Current { generation, req, watch: w, checked: Instant::now(), ticks: 0 });
             if seek.is_none() && host.is_some() {
                 seek = Some(0.0);
             }
         }
-        if let (Some(t), Some(h), Some(cur)) = (seek, &host, &current) {
-            match frame_near(h, t) {
+        // Nothing changed since this moment was shown: don't draw and send it again.
+        if !reloaded && drawn && seek == Some(last_t) {
+            continue;
+        }
+        if let (Some(t), Some(cur)) = (seek, &current)
+            && host.is_some()
+        {
+            let mut result = frame_near(host.as_ref().expect("checked"), t);
+            if result.as_ref().err().is_some_and(crate::is_engine_panic) {
+                // The engine panicked inside this host: drop it (its state lives in
+                // thread-locals) and rebuild it from the script before trying again.
+                host = None;
+                result = match crate::guard(|| load(&cur.req, output)) {
+                    Ok((h, ..)) => {
+                        let r = frame_near(&h, t);
+                        if !r.as_ref().err().is_some_and(crate::is_engine_panic) {
+                            host = Some(h);
+                        }
+                        r
+                    }
+                    Err(e) => Err(e),
+                };
+            }
+            match result {
                 Ok(rgba) => {
                     last_t = t;
                     drawn = true;
@@ -422,8 +470,8 @@ fn preview_thread(output: Output, rx: mpsc::Receiver<Cmd>, tx: async_channel::Se
                     let _ = tx.send_blocking(PreviewEvent::Frame { generation: cur.generation, time: t, frame });
                 }
                 // The scene ran (the check passed) but this moment couldn't be drawn (a
-                // safety net: manim-rust 3deae09 fixed the known seeking bug). Keep the
-                // last frame rather than flashing an error.
+                // safety net for engine seeking bugs). Keep the last frame rather than
+                // flashing an error.
                 Err(_) if drawn => {}
                 Err(e) => {
                     let _ = tx.send_blocking(PreviewEvent::Failed {
@@ -438,22 +486,28 @@ fn preview_thread(output: Output, rx: mpsc::Receiver<Cmd>, tx: async_channel::Se
 }
 
 /// A frame at `t`, or at the next moments an animation starts if the engine can't seek
-/// to `t` itself. Engine panics are caught so the preview thread survives them.
+/// to `t` itself. Engine panics are caught (see [`crate::guard`]); a panic is returned
+/// at once so the caller can rebuild the host instead of poking a broken one.
 fn frame_near(host: &ScriptHost, t: f64) -> Result<Vec<u8>> {
-    let try_at = |t: f64| -> Result<Vec<u8>> {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| host.frame_at(t)))
-            .unwrap_or_else(|_| Err(anyhow!("the engine couldn't draw this moment")))
-    };
+    let try_at = |t: f64| -> Result<Vec<u8>> { crate::guard(|| host.frame_at(t)) };
     let first = match try_at(t) {
         Ok(f) => return Ok(f),
+        Err(e) if crate::is_engine_panic(&e) => return Err(e),
         Err(e) => e,
     };
-    let later: Vec<f64> = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| host.timeline()))
+    let later: Vec<f64> = crate::guard(|| Ok(host.timeline()))
         .ok()
         .flatten()
         .map(|tl| tl.plays.iter().map(|p| p.start + 1e-3).filter(|s| *s > t).take(4).collect())
         .unwrap_or_default();
-    later.into_iter().find_map(|s| try_at(s).ok()).ok_or(first)
+    for s in later {
+        match try_at(s) {
+            Ok(f) => return Ok(f),
+            Err(e) if crate::is_engine_panic(&e) => return Err(e),
+            Err(_) => {}
+        }
+    }
+    Err(first)
 }
 
 // ---------------------------------------------------------------------- thumbnails
@@ -511,25 +565,39 @@ impl Thumbnailer {
             .name("studio-thumbs".into())
             .stack_size(STACK)
             .spawn(move || {
-                while let Ok(first) = rx.recv() {
+                // Stills go first; of the clip requests (hover previews) only the newest
+                // is kept, so style previews nobody is looking at never delay thumbnails.
+                let mut pending: Vec<ThumbJob> = Vec::new();
+                let add = |pending: &mut Vec<ThumbJob>, job: ThumbJob| {
                     // Newest request per key wins.
-                    let mut batch: Vec<ThumbJob> = Vec::new();
-                    for (k, r, clip) in std::iter::once(first).chain(rx.try_iter()) {
-                        batch.retain(|(bk, _, _)| *bk != k);
-                        batch.push((k, r, clip));
+                    pending.retain(|(k, _, _)| *k != job.0);
+                    if job.2.is_some() {
+                        pending.retain(|(_, _, clip)| clip.is_none());
                     }
-                    for (key, req, clip) in batch {
-                        let path = req.path.clone();
-                        let result = match clip {
-                            None => render_thumb(&req, output)
-                                .map(|(frame, timeline)| ThumbEvent::Ready { key, path: path.clone(), frame, timeline }),
-                            Some(fps) => render_clip(&req, output, fps)
-                                .map(|frames| ThumbEvent::Clip { key, path: path.clone(), frames, fps }),
-                        };
-                        let ev = result.unwrap_or_else(|e| ThumbEvent::Failed { key, path, error: format!("{e:#}") });
-                        if etx.send_blocking(ev).is_err() {
-                            return;
+                    pending.push(job);
+                };
+                loop {
+                    if pending.is_empty() {
+                        match rx.recv() {
+                            Ok(job) => add(&mut pending, job),
+                            Err(_) => return,
                         }
+                    }
+                    for job in rx.try_iter() {
+                        add(&mut pending, job);
+                    }
+                    let at = pending.iter().position(|(_, _, clip)| clip.is_none()).unwrap_or(0);
+                    let (key, req, clip) = pending.remove(at);
+                    let path = req.path.clone();
+                    let result = match clip {
+                        None => render_thumb(&req, output)
+                            .map(|(frame, timeline)| ThumbEvent::Ready { key, path: path.clone(), frame, timeline }),
+                        Some(fps) => render_clip(&req, output, fps)
+                            .map(|frames| ThumbEvent::Clip { key, path: path.clone(), frames, fps }),
+                    };
+                    let ev = result.unwrap_or_else(|e| ThumbEvent::Failed { key, path, error: format!("{e:#}") });
+                    if etx.send_blocking(ev).is_err() {
+                        return;
                     }
                 }
             })
@@ -542,7 +610,9 @@ impl Thumbnailer {
         let _ = self.tx.send((key, Box::new(scene), None));
     }
 
-    /// Queue a short clip of the scene at `fps` (previews that play on hover).
+    /// Queue a short clip of the scene at `fps` (previews that play on hover). Only the
+    /// newest pending clip request is kept: an older one still waiting is dropped without
+    /// an event, and thumbnails are rendered before any clip.
     pub fn request_clip(&self, key: u64, scene: OpenScene, fps: f64) {
         let _ = self.tx.send((key, Box::new(scene), Some(fps.max(1.0))));
     }
@@ -552,19 +622,23 @@ impl Thumbnailer {
     }
 }
 
+/// A fresh host per call (dropped, panicked or not, when the guard returns), so a caught
+/// engine panic never leaves a broken host behind for the next request.
 fn render_thumb(req: &OpenScene, output: Output) -> Result<(Frame, TimelineInfo)> {
-    let (host, _, timeline) = load(req, output)?;
-    let rgba = host.frame_at(thumbnail_time(&timeline))?;
-    Ok((Frame::from_rgba(output.width, output.height, rgba), timeline))
+    crate::guard(|| {
+        let (host, _, timeline) = load(req, output)?;
+        let rgba = host.frame_at(thumbnail_time(&timeline))?;
+        Ok((Frame::from_rgba(output.width, output.height, rgba), timeline))
+    })
 }
 
 fn render_clip(req: &OpenScene, output: Output, fps: f64) -> Result<Vec<Frame>> {
-    let (host, _, timeline) = load(req, output)?;
-    let seconds = timeline.duration.clamp(0.0, CLIP_MAX_SECONDS);
-    let count = (seconds * fps).floor() as usize + 1;
-    (0..count)
-        .map(|i| Ok(Frame::from_rgba(output.width, output.height, host.frame_at(i as f64 / fps)?)))
-        .collect()
+    crate::guard(|| {
+        let (host, _, timeline) = load(req, output)?;
+        let seconds = timeline.duration.clamp(0.0, CLIP_MAX_SECONDS);
+        let count = (seconds * fps).floor() as usize + 1;
+        (0..count).map(|i| Ok(Frame::from_rgba(output.width, output.height, host.frame_at(i as f64 / fps)?))).collect()
+    })
 }
 
 /// Run a scene once (no frames) and return its timeline: duration, plays, markers and
@@ -573,7 +647,7 @@ pub fn check(req: &OpenScene) -> Result<TimelineInfo> {
     let req = req.clone();
     std::thread::Builder::new()
         .stack_size(STACK)
-        .spawn(move || load(&req, Output::new(1280, 720, 30.0)).map(|(_, _, t)| t))
+        .spawn(move || crate::guard(|| load(&req, Output::new(1280, 720, 30.0)).map(|(_, _, t)| t)))
         .context("spawning the check thread")?
         .join()
         .map_err(|_| anyhow!("the engine panicked"))?

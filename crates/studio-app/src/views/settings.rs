@@ -520,15 +520,19 @@ impl Workspace {
         let captions = self.dropdown("captions", &CAPTIONS, self.prefs.captions, cx, |this, i, _, _| this.prefs.captions = i);
         let natural: AnyElement = match &self.natural {
             crate::engine::NaturalVoice::Ready => faint("Installed", cx).into_any_element(),
+            _ if !kokoro::supported() => faint("Not available", cx).into_any_element(),
             crate::engine::NaturalVoice::Downloading(f) => div()
                 .flex()
                 .items_center()
                 .gap(px(8.))
                 .child(div().w(px(120.)).child(ProgressBar::new(*f).tone(Tone::Neutral).height(6.)))
                 .child(faint(format!("{:.0}%", f * 100.), cx))
+                .child(Button::new("natural-cancel", "Cancel").ghost().small().on_click(click(cx, |this, _, cx| this.cancel_natural_voice(cx))))
                 .into_any_element(),
             crate::engine::NaturalVoice::Missing | crate::engine::NaturalVoice::Failed(_) => {
-                let size = studio_render::voice::kokoro_dir().map_or(0, |d| kokoro::download_size(d, self.voice_quality()));
+                let size = self.probes.borrow_mut().kokoro_size.get(self.prefs.voice_model, |_| {
+                    studio_render::voice::kokoro_dir().map_or(0, |d| kokoro::download_size(d, self.voice_quality()))
+                });
                 let label = if matches!(self.natural, crate::engine::NaturalVoice::Failed(_)) {
                     "Try again".to_string()
                 } else {
@@ -541,6 +545,7 @@ impl Workspace {
             }
         };
         let natural_desc = match &self.natural {
+            _ if !kokoro::supported() => kokoro::UNSUPPORTED.to_string(),
             crate::engine::NaturalVoice::Failed(e) => format!("Download failed: {e}"),
             _ => "Kokoro: lifelike voices that run on this computer. One-time download; nothing is sent anywhere.".into(),
         };
@@ -552,7 +557,7 @@ impl Workspace {
             "Standard is a smaller 8-bit copy of the original High model and sounds the same to most ears. Only the one you pick is kept on disk; switching re-speaks the narration."
         };
         use crate::engine::NaturalVoice as Dl;
-        let espeak_found = studio_render::voice::espeak();
+        let espeak_found = self.probes.borrow_mut().espeak.get((), |_| studio_render::voice::espeak());
         let espeak: AnyElement = match &self.espeak {
             Dl::Ready => faint(if espeak_found.is_some_and(|e| !e.bundled) { "Found on this computer" } else { "Installed" }, cx)
                 .into_any_element(),
@@ -562,6 +567,7 @@ impl Workspace {
                 .gap(px(8.))
                 .child(div().w(px(120.)).child(ProgressBar::new(*f).tone(Tone::Neutral).height(6.)))
                 .child(faint(format!("{:.0}%", f * 100.), cx))
+                .child(Button::new("espeak-cancel", "Cancel").ghost().small().on_click(click(cx, |this, _, cx| this.cancel_espeak(cx))))
                 .into_any_element(),
             Dl::Missing | Dl::Failed(_) if studio_render::kokoro::espeak::CAN_INSTALL => {
                 let label = if matches!(self.espeak, Dl::Failed(_)) {
@@ -597,6 +603,8 @@ impl Workspace {
                 "Voice",
                 if ready {
                     "Each line is spoken once and cached."
+                } else if !kokoro::supported() {
+                    "Narration isn't available on this platform yet."
                 } else {
                     "Download the natural voice above to hear narration."
                 },
@@ -622,6 +630,7 @@ impl Workspace {
                 .gap(px(8.))
                 .child(div().w(px(120.)).child(ProgressBar::new(*f).tone(Tone::Neutral).height(6.)))
                 .child(faint(format!("{:.0}%", f * 100.), cx))
+                .child(Button::new("ffmpeg-cancel", "Cancel").ghost().small().on_click(click(cx, |this, _, cx| this.cancel_ffmpeg(cx))))
                 .into_any_element(),
             _ if self.engine.ffmpeg => Chip::new("Ready").tone(Tone::Ok).icon(IconName::Check).into_any_element(),
             Dl::Failed(_) => Button::new("ffmpeg-dl", "Try again")
@@ -906,7 +915,7 @@ impl Workspace {
                 .disabled(disabled || self.update == UpdateState::Checking)
                 .on_click(click(cx, |this, _, cx| this.check_for_update(cx)))
         };
-        let rollback = self.can_roll_back();
+        let rollback = self.can_roll_back_cached();
         group(cx)
             .child(item("Version", status, check, false, cx))
             .child(item("Channel", "Beta gets new features a week early.", channel, false, cx))
@@ -974,11 +983,11 @@ impl Workspace {
 
     fn settings_about(&mut self, cx: &mut Context<Self>) -> AnyElement {
         group(cx)
-            .child(item("Manim Studio", concat!("Version ", env!("CARGO_PKG_VERSION")), Button::new("release-notes", "Release notes").ghost().with_icon(IconName::External), false, cx))
-            .child(item("Open-source licenses", "Inter, JetBrains Mono (OFL) · GPUI-CE (Apache-2.0)", Button::new("licenses", "View").ghost(), false, cx))
+            .child(item("Manim Studio", concat!("Version ", env!("CARGO_PKG_VERSION")), Button::new("release-notes", "Release notes").ghost().with_icon(IconName::External).on_click(|_, _, _| crate::crash::open_url(&crate::crash::release_url())), false, cx))
+            .child(item("Open-source licenses", "Inter, JetBrains Mono (OFL) · GPUI-CE (Apache-2.0). The font licenses are in the source.", Button::new("licenses", "View").ghost().with_icon(IconName::External).on_click(|_, _, _| crate::crash::open_url(crate::crash::licenses_url())), false, cx))
             .child(item(
                 "Report a problem",
-                if crate::crash::latest().is_some() {
+                if self.probes.borrow_mut().crash_report.get((), |_| crate::crash::latest().is_some()) {
                     "Opens a pre-filled issue with the latest crash report's summary. Nothing is sent automatically."
                 } else {
                     "Opens a pre-filled issue. Nothing is sent automatically."

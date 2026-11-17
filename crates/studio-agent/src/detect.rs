@@ -143,8 +143,14 @@ pub fn sign_in(provider: Provider) -> std::io::Result<()> {
     if cfg!(windows) {
         open_console(&format!("& '{}' {args}", exe.replace('\x27', "''")))
     } else {
-        open_console(&format!("'{}' {args}", exe.replace('\x27', "'\''")))
+        open_console(&format!("'{}' {args}", sh_quote_inner(&exe)))
     }
+}
+
+/// Escape `s` for use inside single quotes in a POSIX shell: each apostrophe becomes
+/// apostrophe, backslash, apostrophe, apostrophe (close, escaped quote, reopen).
+fn sh_quote_inner(s: &str) -> String {
+    s.replace('\x27', "\x27\\\x27\x27")
 }
 
 fn open_console(script: &str) -> std::io::Result<()> {
@@ -166,5 +172,18 @@ fn open_console(script: &str) -> std::io::Result<()> {
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         Command::new("x-terminal-emulator").args(["-e", "sh", "-c", script]).spawn().map(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sh_quote_inner;
+
+    #[test]
+    fn apostrophes_use_the_shell_idiom() {
+        let want = format!("/home/o{}neil/x", [0x27u8, 0x5c, 0x27, 0x27].iter().map(|b| *b as char).collect::<String>());
+        assert_eq!(sh_quote_inner("/home/o'neil/x"), want);
+        assert_eq!(sh_quote_inner("plain"), "plain");
+        assert_eq!(sh_quote_inner("a'b").len(), 6);
     }
 }

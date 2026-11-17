@@ -2,14 +2,20 @@
 #
 #   script\bundle-windows.ps1                 # portable zip + update manifest in dist\
 #   script\bundle-windows.ps1 -Installer      # also the Inno Setup installer (needs ISCC)
+#   script\bundle-windows.ps1 -Channel beta   # manifest for the beta channel only
+#   script\bundle-windows.ps1 -SkipSign       # build only; sign later (CI keeps the secret out of the build)
 #
 # Updates: the build verifies updates with the public key in packaging\update-key.pub
 # (override with STUDIO_UPDATE_PUBKEY). To sign the manifest set MINISIGN_KEY (path to the
 # secret key) or MINISIGN_SECRET (its contents, as CI does). The zip goes on the vX.Y.Z
-# release and manifest-<channel>.json(.minisig) on the "updates" release.
+# release and manifest-<channel>.json(.minisig) on the "updates" release. A stable build
+# also writes manifest-beta.json so beta-channel users receive stable releases too.
+# -SkipSign never signs (even if a key is set) and builds release-sign, so a later step
+# can run: target\release\release-sign.exe sign dist\manifest-<channel>.json
 param(
     [switch]$Installer,
-    [string]$Channel = "stable",
+    [switch]$SkipSign,
+    [ValidateSet("stable", "beta")][string]$Channel = "stable",
     [string]$Notes = "",
     [string]$BaseUrl = "https://github.com/ItsTatsuya/manim-studio/releases/download"
 )
@@ -49,13 +55,27 @@ $manifest = [ordered]@{
     }
 }
 $manifestPath = Join-Path $dist "manifest-$Channel.json"
+Remove-Item (Join-Path $dist "manifest-*.json*") -ErrorAction SilentlyContinue
 $manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8NoBOM $manifestPath
+$manifestPaths = @($manifestPath)
+if ($Channel -eq "stable") {
+    $betaPath = Join-Path $dist "manifest-beta.json"
+    $manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8NoBOM $betaPath
+    $manifestPaths += $betaPath
+}
 Write-Host "zip:      $zip ($size bytes, sha256 $sha)"
-Write-Host "manifest: $manifestPath"
+Write-Host "manifest: $($manifestPaths -join ', ')"
 
-if ($env:MINISIGN_KEY -or $env:MINISIGN_SECRET) {
-    cargo run -q --release -p release-sign -- sign $manifestPath
-    if ($LASTEXITCODE -ne 0) { throw "signing failed" }
+if ($SkipSign) {
+    # Build the signer here, where no secret is in the environment; a later step runs the binary.
+    cargo build --release -p release-sign
+    if ($LASTEXITCODE -ne 0) { throw "building release-sign failed" }
+    Write-Host "signing skipped"
+} elseif ($env:MINISIGN_KEY -or $env:MINISIGN_SECRET) {
+    foreach ($m in $manifestPaths) {
+        cargo run -q --release -p release-sign -- sign $m
+        if ($LASTEXITCODE -ne 0) { throw "signing $m failed" }
+    }
 } else {
     Write-Warning "MINISIGN_KEY / MINISIGN_SECRET is not set: the manifest is unsigned (apps will refuse it)."
 }

@@ -4,7 +4,7 @@ use crate::model::{Issue, Msg, format_short, format_time};
 use gpui::{
     ColorExt,
     AnyElement, Context, FontWeight, InteractiveElement, IntoElement, ParentElement,
-    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
+    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px, relative,
 };
 use studio_ui::components::{
     Button, Chip, Dot, ProgressBar, Segment, Segmented, Tone, caps, floating,
@@ -471,6 +471,7 @@ impl Workspace {
                     .fill()
                     .on_select(with_value(cx, |this, i: usize, _, cx| {
                         this.right_tab = [RightTab::Assistant, RightTab::Narration, RightTab::Assets][i];
+                        this.probes.get_mut().clear();
                         cx.notify();
                     })),
                 ),
@@ -498,7 +499,7 @@ impl Workspace {
             })
             .unwrap_or_else(|| "Rendering".to_string());
         let show_usage = self.prefs.show_usage;
-        let chat = self.video().chat.clone();
+        let chat = &self.video().chat;
         let busy = self.busy(self.current);
         let empty = chat.is_empty();
         let has_scripts = self.video().has_scripts();
@@ -648,9 +649,8 @@ impl Workspace {
                                     .disabled(self.chat_input.read(cx).text().trim().is_empty())
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let text = this.chat_input.read(cx).text().trim().to_string();
-                                        if !text.is_empty() {
+                                        if !text.is_empty() && this.send_chat(text, cx) {
                                             this.chat_input.update(cx, |i, cx| i.clear(cx));
-                                            this.send_chat(text, cx);
                                         }
                                     }))
                                     .into_any_element()
@@ -759,7 +759,10 @@ impl Workspace {
 
     fn render_assets(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.theme().clone();
-        let files = self.video().dir.as_deref().map(crate::store::assets).unwrap_or_default();
+        let files = match self.video().dir.clone() {
+            Some(dir) => self.probes.borrow_mut().assets.get(dir, |d| std::rc::Rc::new(crate::store::assets(d))),
+            None => Default::default(),
+        };
         let empty = files.is_empty();
         div()
             .flex_1()
@@ -769,7 +772,7 @@ impl Workspace {
             .flex_col()
             .gap(px(6.))
             .when(empty, |d| d.child(faint("No assets yet. Images, SVGs and sounds in the video's assets folder appear here.", cx)))
-            .children(files.into_iter().enumerate().map(|(i, (name, size))| {
+            .children(files.iter().cloned().enumerate().map(|(i, (name, size))| {
                 let lower = name.to_lowercase();
                 let icon = if [".wav", ".mp3", ".ogg", ".flac"].iter().any(|e| lower.ends_with(e)) {
                     IconName::Music
@@ -943,9 +946,21 @@ impl Workspace {
 fn working_line(w: &crate::model::Working, cx: &Context<Workspace>) -> AnyElement {
     let t = cx.theme();
     let secs = w.since.elapsed().as_secs();
+    // Stepped from the elapsed time (the workspace redraws every WORKING_TICK_MS), not
+    // from repeating animations that would redraw the whole window every frame.
+    let step = (w.since.elapsed().as_millis() / u128::from(crate::engine::WORKING_TICK_MS)) as usize;
+    let fill = Tone::Signal.colors(cx).0;
     let bar = match w.progress {
-        Some((done, of)) if of > 0 && done > 0 => ProgressBar::new(done as f32 / of as f32).animated("working-bar"),
-        _ => ProgressBar::indeterminate("working-sweep"),
+        Some((done, of)) if of > 0 && done > 0 => ProgressBar::new(done as f32 / of as f32).animated("working-bar").height(2.).into_any_element(),
+        _ => div()
+            .relative()
+            .w_full()
+            .h(px(2.))
+            .rounded_full()
+            .bg(t.surface_3)
+            .overflow_hidden()
+            .child(div().absolute().top_0().h_full().w(relative(0.35)).rounded_full().bg(fill).left(relative(sweep_left(step))))
+            .into_any_element(),
     };
     div()
         .flex()
@@ -962,15 +977,30 @@ fn working_line(w: &crate::model::Working, cx: &Context<Workspace>) -> AnyElemen
                 .flex()
                 .items_center()
                 .gap(px(10.))
-                .child(studio_ui::components::Pulse::new("working-pulse"))
+                .child(div().flex_none().flex().items_center().gap(px(3.)).children((0..3).map(|i| {
+                    div().size(px(5.)).rounded_full().bg(fill).opacity(pulse_opacity(step, i))
+                })))
                 .child(div().flex_1().min_w_0().truncate().text_color(t.fg).child(format!("{}…", w.label)))
                 .when_some(w.progress.filter(|(_, of)| *of > 0), |d, (done, of)| {
                     d.child(num(format!("{done} of {of}")).text_size(text::SMALL).text_color(t.fg_3))
                 })
                 .child(num(format!("{}:{:02}", secs / 60, secs % 60)).text_size(text::SMALL).text_color(t.fg_3)),
         )
-        .child(bar.height(2.))
+        .child(bar)
         .into_any_element()
+}
+
+/// Steps of the sweep across the track (one cycle is `SWEEP_STEPS` ticks).
+const SWEEP_STEPS: usize = 6;
+
+/// Left edge (fraction of the track) of the sweeping segment, which is 0.35 wide.
+fn sweep_left(step: usize) -> f32 {
+    -0.35 + (step % SWEEP_STEPS) as f32 / (SWEEP_STEPS - 1) as f32 * 1.35
+}
+
+/// Opacity of dot `i` of three: each peaks in turn, one tick apart, then all rest a tick.
+fn pulse_opacity(step: usize, i: usize) -> f32 {
+    if step % 4 == i { 1.0 } else { 0.3 }
 }
 
 fn activity_row(icon: IconName, ok: bool, label: String, meta: String, cx: &Context<Workspace>) -> AnyElement {
@@ -1003,3 +1033,22 @@ fn activity_row(icon: IconName, ok: bool, label: String, meta: String, cx: &Cont
         .into_any_element()
 }
 
+#[cfg(test)]
+mod working_tests {
+    use super::*;
+
+    #[test]
+    fn sweep_covers_the_track_and_repeats() {
+        assert!((sweep_left(0) + 0.35).abs() < 1e-6);
+        assert!((sweep_left(SWEEP_STEPS - 1) - 1.0).abs() < 1e-6);
+        assert_eq!(sweep_left(0), sweep_left(SWEEP_STEPS));
+    }
+
+    #[test]
+    fn dots_peak_in_turn() {
+        for step in 0..8 {
+            let peaks = (0..3).filter(|&i| pulse_opacity(step, i) > 0.9).count();
+            assert_eq!(peaks, usize::from(step % 4 < 3));
+        }
+    }
+}

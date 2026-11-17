@@ -72,7 +72,7 @@ fn reset_in(raw: &str, now: u64) -> Option<String> {
 /// The provider's own words about when a limit resets ("resets 3pm", "try again in 2
 /// days 3 hours"), if it gave any.
 fn reset_phrase(raw: &str) -> Option<String> {
-    let lower = raw.to_lowercase();
+    let lower = raw.to_ascii_lowercase(); // same byte length as `raw`, so `i` is a char boundary
     for key in ["resets ", "try again in ", "try again at "] {
         if let Some(i) = lower.find(key) {
             let rest = &raw[i..];
@@ -271,5 +271,13 @@ mod tests {
         assert!(e.body.contains("It resets 3pm."), "{}", e.body);
         let e = explain(Provider::Codex, "You've hit your usage limit. Upgrade to Pro or try again in 2 days 3 hours.", 0);
         assert!(e.body.contains("try again in 2 days 3 hours"), "{}", e.body);
+    }
+
+    #[test]
+    fn reset_phrase_survives_case_folding_that_changes_length() {
+        // 'İ' lowercases to two chars (three bytes), which used to shift the index.
+        let raw = "İİİ limit reached, resets 3pm. Thanks";
+        assert_eq!(reset_phrase(raw).as_deref(), Some("resets 3pm"));
+        assert_eq!(reset_phrase("İ nothing here"), None);
     }
 }

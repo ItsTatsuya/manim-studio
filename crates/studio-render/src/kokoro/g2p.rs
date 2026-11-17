@@ -40,6 +40,9 @@ pub struct G2p {
     gold: HashMap<String, Entry>,
     silver: HashMap<String, Entry>,
     espeak: Option<super::espeak::Espeak>,
+    /// espeak-ng results by word (including misses), so each unknown word costs one
+    /// process at most.
+    espeak_memo: std::sync::Mutex<HashMap<String, Option<String>>>,
 }
 
 fn load_dict(path: &Path) -> Result<HashMap<String, Entry>> {
@@ -143,6 +146,7 @@ impl G2p {
             gold: load_dict(&dir.join(format!("{p}_gold.json")))?,
             silver: load_dict(&dir.join(format!("{p}_silver.json")))?,
             espeak: super::espeak::find(Some(dir)),
+            espeak_memo: Default::default(),
         })
     }
 
@@ -428,7 +432,20 @@ impl G2p {
 
     /// espeak-ng (GPL) as a separate program, mapped to misaki's alphabet. Optional.
     fn espeak_word(&self, word: &str) -> Option<String> {
-        let mut ps = self.espeak.as_ref()?.ipa(word, self.british)?;
+        let esp = self.espeak.as_ref()?;
+        if let Some(hit) = crate::lock(&self.espeak_memo).get(word) {
+            return hit.clone();
+        }
+        let mapped = esp.ipa(word, self.british).map(|ps| self.espeak_to_misaki(ps));
+        // Only remember answers: a miss may be a timeout under load, worth retrying.
+        if mapped.is_some() {
+            crate::lock(&self.espeak_memo).insert(word.to_string(), mapped.clone());
+        }
+        mapped
+    }
+
+    /// espeak-ng's IPA in misaki's alphabet.
+    fn espeak_to_misaki(&self, mut ps: String) -> String {
         const E2M: [(&str, &str); 19] = [
             ("ʔˌn\u{329}", "ʔn"), ("ʔn\u{329}", "ʔn"), ("a^ɪ", "I"), ("a^ʊ", "W"), ("d^ʒ", "ʤ"), ("e^ɪ", "A"),
             ("t^ʃ", "ʧ"), ("ɔ^ɪ", "Y"), ("ə^l", "ᵊl"), ("ʲo", "jo"), ("ʲə", "jə"), ("ʲ", ""), ("ɚ", "əɹ"),
@@ -456,7 +473,7 @@ impl G2p {
         } else {
             ps = ps.replace("o^ʊ", "O").replace("ɜːɹ", "ɜɹ").replace("ɜː", "ɜɹ").replace("ɪə", "iə").replace('ː', "");
         }
-        Some(ps.replace('o', "ɔ").replace('^', ""))
+        ps.replace('o', "ɔ").replace('^', "")
     }
 }
 

@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use crate::events::EngineEvent;
-use crate::{Backend, Encoder, Output, cache, export};
+use crate::{Backend, Encoder, Output, cache, export, lock};
 
 /// How to start an engine worker process (the app passes its own executable plus
 /// [`crate::worker::ARG`]).
@@ -110,14 +110,39 @@ impl QueueEvent {
 }
 
 #[derive(Default)]
+struct State {
+    /// Jobs pushed and not yet started.
+    queued: HashSet<u64>,
+    /// The job being rendered.
+    running: Option<u64>,
+    /// Jobs whose cancel has been asked for (running ones; queued ones are announced at once).
+    cancelled: HashSet<u64>,
+}
+
+#[derive(Default)]
 struct Shared {
-    cancelled: Mutex<HashSet<u64>>,
+    state: Mutex<State>,
     child: Mutex<Option<(u64, Child)>>,
     paused: AtomicBool,
 }
 
+impl Shared {
+    fn is_cancelled(&self, id: u64) -> bool {
+        lock(&self.state).cancelled.contains(&id)
+    }
+
+    fn kill_child(&self, id: u64) {
+        if let Some((cid, child)) = lock(&self.child).as_mut()
+            && *cid == id
+        {
+            let _ = child.kill();
+        }
+    }
+}
+
 pub struct RenderQueue {
     tx: mpsc::Sender<VideoRender>,
+    etx: async_channel::Sender<QueueEvent>,
     events: async_channel::Receiver<QueueEvent>,
     shared: Arc<Shared>,
 }
@@ -128,39 +153,57 @@ impl RenderQueue {
         let (etx, events) = async_channel::unbounded();
         let shared = Arc::new(Shared::default());
         let s = shared.clone();
+        let events_tx = etx.clone();
         std::thread::Builder::new()
             .name("studio-render-queue".into())
             .spawn(move || {
                 while let Ok(job) = rx.recv() {
-                    while s.paused.load(Ordering::Relaxed) && !s.cancelled.lock().unwrap().contains(&job.id) {
+                    let id = job.id;
+                    while s.paused.load(Ordering::Relaxed) && lock(&s.state).queued.contains(&id) {
                         std::thread::sleep(Duration::from_millis(150));
                     }
-                    let id = job.id;
-                    if s.cancelled.lock().unwrap().remove(&id) {
-                        let _ = etx.send_blocking(QueueEvent::Cancelled { id });
-                        continue;
+                    {
+                        let mut st = lock(&s.state);
+                        if !st.queued.remove(&id) {
+                            // Cancelled while it waited; `cancel` already announced it.
+                            st.cancelled.remove(&id);
+                            continue;
+                        }
+                        st.running = Some(id);
                     }
                     let _ = etx.send_blocking(QueueEvent::Started { id });
-                    let ev = run_job(&worker, &job, &s, &etx);
-                    s.cancelled.lock().unwrap().remove(&id);
+                    // A panic in a render must not take the queue thread with it.
+                    let ev = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_job(&worker, &job, &s, &etx)))
+                        .unwrap_or_else(|_| QueueEvent::Failed { id, scene: None, error: "the render stopped unexpectedly".into() });
+                    {
+                        let mut st = lock(&s.state);
+                        st.running = None;
+                        st.cancelled.remove(&id);
+                    }
                     let _ = etx.send_blocking(ev);
                 }
             })
             .expect("spawning the render queue");
-        RenderQueue { tx, events, shared }
+        RenderQueue { tx, etx: events_tx, events, shared }
     }
 
     pub fn push(&self, job: VideoRender) {
+        lock(&self.shared.state).queued.insert(job.id);
         let _ = self.tx.send(job);
     }
 
-    /// Cancel a waiting or running job (kills its engine process).
+    /// Cancel a waiting or running job. A waiting job is cancelled (and `Cancelled`
+    /// sent) at once; a running one has its engine process killed and its export stopped.
     pub fn cancel(&self, id: u64) {
-        self.shared.cancelled.lock().unwrap().insert(id);
-        if let Some((cid, child)) = self.shared.child.lock().unwrap().as_mut()
-            && *cid == id {
-                let _ = child.kill();
-            }
+        let mut st = lock(&self.shared.state);
+        if st.queued.remove(&id) {
+            drop(st);
+            let _ = self.etx.send_blocking(QueueEvent::Cancelled { id });
+        } else if st.running == Some(id) {
+            st.cancelled.insert(id);
+            drop(st);
+            self.shared.kill_child(id);
+        }
     }
 
     /// Hold jobs that have not started yet (the running one finishes).
@@ -175,13 +218,13 @@ impl RenderQueue {
 
 impl Drop for RenderQueue {
     fn drop(&mut self) {
-        if let Some((_, child)) = self.shared.child.lock().unwrap().as_mut() {
+        if let Some((_, child)) = lock(&self.shared.child).as_mut() {
             let _ = child.kill();
         }
     }
 }
 
-fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Shared, tx: &async_channel::Sender<QueueEvent>) -> QueueEvent {
+fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Arc<Shared>, tx: &async_channel::Sender<QueueEvent>) -> QueueEvent {
     let id = job.id;
     let started = Instant::now();
     let fail = |scene: Option<usize>, error: String| QueueEvent::Failed { id, scene, error };
@@ -206,7 +249,7 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Shared, tx: &async_cha
     let (mut rendered, mut cached, mut duration) = (0, 0, 0.0);
     let mut done_weight = 0.0;
     for (index, scene) in job.scenes.iter().enumerate() {
-        if s.cancelled.lock().unwrap().contains(&id) {
+        if s.is_cancelled(id) {
             return QueueEvent::Cancelled { id };
         }
         let voiced = job.scenes.iter().any(|s| s.narration.is_some());
@@ -218,6 +261,8 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Shared, tx: &async_cha
             (None, true) => "silence".into(),
             (None, false) => String::new(),
         };
+        // The bundled fonts shape every text render, so they are part of the key.
+        let extra = format!("{extra}|fonts:{}", cache::fonts_fingerprint(job.fonts_dir.as_deref()));
         let key = cache::scene_key_with(&scene.path, &job.root, &job.style_json, job.output, &extra);
         let out = cache::scene_video(&job.root, &scene.path, key);
         let hit = out.is_file();
@@ -247,6 +292,7 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Shared, tx: &async_cha
                 Ok(d) => {
                     rendered += 1;
                     let _ = std::fs::write(out.with_extension("seconds"), format!("{d}"));
+                    cache::write_output_label(&out, job.output);
                     starts.push(duration);
                     duration += d;
                     cache::prune(&job.root, &scene.path, &out);
@@ -299,10 +345,31 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Shared, tx: &async_cha
         }
     let finish = burn || job.watermark.is_some();
     let joined = if finish { job.export.with_extension("joined.mp4") } else { job.export.clone() };
-    if let Err(e) = export::join_dissolve(&ffmpeg, &parts, &lengths, job.scenes.iter().any(|s| s.narration.is_some()), &joined) {
-        return fail(None, format!("joining scenes: {e:#}"));
+    let cancelled = || s.is_cancelled(id);
+    // Partial files an interrupted export leaves behind.
+    let cleanup = || {
+        if finish {
+            let _ = std::fs::remove_file(&joined);
+        }
+        for base in [&joined, &job.export] {
+            let _ = std::fs::remove_file(base.with_extension("partial.mp4"));
+            let _ = std::fs::remove_file(base.with_extension("parts.txt"));
+        }
+        let _ = std::fs::remove_dir_all(job.export.with_extension("finish"));
+    };
+    if cancelled() {
+        return QueueEvent::Cancelled { id };
+    }
+    let audio = job.scenes.iter().any(|s| s.narration.is_some());
+    if let Err(e) = export::join_dissolve(&ffmpeg, &parts, &lengths, audio, &joined, &cancelled) {
+        cleanup();
+        return if crate::is_cancelled(&e) { QueueEvent::Cancelled { id } } else { fail(None, format!("joining scenes: {e:#}")) };
     }
     if finish {
+        if cancelled() {
+            cleanup();
+            return QueueEvent::Cancelled { id };
+        }
         let font = job.fonts_dir.as_ref().map(|d| d.join("Inter-SemiBold.ttf")).filter(|p| p.is_file());
         let theme: serde_json::Value = serde_json::from_str(&job.style_json).unwrap_or_default();
         let color = |k: &str| theme["colors"][k].as_str().map(str::to_string);
@@ -319,9 +386,14 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Shared, tx: &async_cha
                 height: job.output.height,
             },
             &job.export,
+            &cancelled,
         );
         let _ = std::fs::remove_file(&joined);
         if let Err(e) = r {
+            cleanup();
+            if crate::is_cancelled(&e) {
+                return QueueEvent::Cancelled { id };
+            }
             return fail(None, format!("{}: {e:#}", if burn { "adding captions" } else { "adding the watermark" }));
         }
     }
@@ -349,7 +421,7 @@ fn render_scene(
     style_file: &Path,
     out: &Path,
     voice: Voice,
-    s: &Shared,
+    s: &Arc<Shared>,
     tx: &async_channel::Sender<QueueEvent>,
     progress: impl Fn(f64) -> f32,
     index: usize,
@@ -361,6 +433,7 @@ fn render_scene(
         out.with_file_name(format!("{stem}-partial.mp4"))
     };
     let _ = std::fs::remove_file(&partial);
+    let _ = std::fs::remove_file(manim::output::partial_path(&partial));
     // Long, high-resolution scenes legitimately run for minutes; only stop real runaways.
     let pixels = (job.output.width as f64 * job.output.height as f64) / (1920.0 * 1080.0);
     let timeout = 600.0_f64.max(pixels * 60.0 * job.output.fps / 30.0 * 4.0);
@@ -409,25 +482,52 @@ fn render_scene(
         Ok(c) => c,
         Err(e) => return Err(SceneError::Failed(format!("starting the engine: {e}"))),
     };
-    tie_to_app(&child);
+    export::tie_to_app(&child);
     let stderr = child.stderr.take();
-    *s.child.lock().unwrap() = Some((id, child));
+    *lock(&s.child) = Some((id, child));
     // A cancel that raced the spawn.
-    if s.cancelled.lock().unwrap().contains(&id)
-        && let Some((_, c)) = s.child.lock().unwrap().as_mut() {
-            let _ = c.kill();
-        }
+    if s.is_cancelled(id) {
+        s.kill_child(id);
+    }
+    // Wall-clock limit: the engine's own `--timeout` covers the script; this catches a
+    // worker that hangs anywhere else (GPU driver, encoder). Dropping `stop` ends it.
+    let (stop, stopped) = mpsc::channel::<()>();
+    let timed_out = Arc::new(AtomicBool::new(false));
+    let watchdog = {
+        let (s, timed_out) = (s.clone(), timed_out.clone());
+        let limit = Duration::from_secs_f64(timeout + WATCHDOG_MARGIN);
+        std::thread::spawn(move || {
+            if let Err(mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(limit) {
+                timed_out.store(true, Ordering::Relaxed);
+                s.kill_child(id);
+            }
+        })
+    };
     let mut error: Option<String> = None;
     let mut tail: Vec<String> = Vec::new();
     let mut duration = 0.0;
     let mut written: Option<PathBuf> = None;
     let mut encoder = String::new();
     if let Some(stderr) = stderr {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+        let mut reader = BufReader::new(stderr);
+        let mut buf = Vec::new();
+        loop {
+            buf.clear();
+            // Bytes, not `lines()`: one non-UTF-8 line must not end the loop.
+            match reader.read_until(b'\n', &mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+            let line = String::from_utf8_lossy(&buf).trim_end_matches(['\r', '\n']).to_string();
             match EngineEvent::parse(&line) {
                 Some(EngineEvent::Start { renderer, output, .. }) => {
                     encoder = encoder_name(&output);
                     let _ = tx.send_blocking(QueueEvent::Engine { id, renderer: renderer_name(&renderer), output: encoder.clone() });
+                }
+                // `--renderer auto` reports its pick once it has measured both.
+                Some(EngineEvent::Renderer { kind, .. }) => {
+                    let renderer = format!("{} (auto)", kind.to_ascii_uppercase());
+                    let _ = tx.send_blocking(QueueEvent::Engine { id, renderer, output: encoder.clone() });
                 }
                 Some(EngineEvent::Error { message, .. }) => {
                     error.get_or_insert(message);
@@ -445,7 +545,7 @@ fn render_scene(
                     }
                 }
                 None => {
-                    // `auto` reports its pick as a log line: "... → using CPU".
+                    // Older engines print the auto pick as a log line: "... → using CPU".
                     if let Some(pick) = line.split("using ").nth(1).filter(|_| line.contains("auto renderer")) {
                         let renderer = format!("{} (auto)", pick.trim());
                         let _ = tx.send_blocking(QueueEvent::Engine { id, renderer, output: encoder.clone() });
@@ -461,32 +561,49 @@ fn render_scene(
             }
         }
     }
-    let taken = s.child.lock().unwrap().take();
+    let taken = lock(&s.child).take();
+    // Wait with the child out of the shared slot, so a cancel can't block on this wait.
     let status = taken.map(|(_, mut c)| c.wait());
-    if s.cancelled.lock().unwrap().contains(&id) {
+    drop(stop);
+    let _ = watchdog.join();
+    // The engine writes `<partial>.partial.mp4` and renames it to `<partial>`; clear both.
+    let leftovers = || {
         let _ = std::fs::remove_file(&partial);
+        let _ = std::fs::remove_file(manim::output::partial_path(&partial));
+    };
+    if s.is_cancelled(id) {
+        leftovers();
         return Err(SceneError::Cancelled);
     }
     let ok = matches!(status, Some(Ok(st)) if st.success());
     let video = written.filter(|p| p.is_file()).unwrap_or_else(|| partial.clone());
     if !ok || !video.is_file() {
         let _ = std::fs::remove_file(&video);
-        let msg = error.unwrap_or_else(|| match status {
-            Some(Ok(st)) if st.success() => "the engine finished but wrote no video".into(),
-            Some(Ok(st)) => match tail.last() {
-                Some(line) => format!("the engine exited with {st}: {line}"),
-                None => format!("the engine exited with {st}"),
-            },
-            Some(Err(e)) => format!("the engine failed: {e}"),
-            None => "the engine stopped".into(),
-        });
+        leftovers();
+        let msg = if timed_out.load(Ordering::Relaxed) {
+            "the render took too long and was stopped".to_string()
+        } else {
+            error.unwrap_or_else(|| match status {
+                Some(Ok(st)) if st.success() => "the engine finished but wrote no video".into(),
+                Some(Ok(st)) => match tail.last() {
+                    Some(line) => format!("the engine exited with {st}: {line}"),
+                    None => format!("the engine exited with {st}"),
+                },
+                Some(Err(e)) => format!("the engine failed: {e}"),
+                None => "the engine stopped".into(),
+            })
+        };
         return Err(SceneError::Failed(msg));
     }
     if let Err(e) = std::fs::rename(&video, out) {
+        leftovers();
         return Err(SceneError::Failed(format!("saving {}: {e}", out.display())));
     }
     Ok(duration)
 }
+
+/// Slack on top of the worker's own `--timeout` before it is killed from outside.
+const WATCHDOG_MARGIN: f64 = 180.0;
 
 /// "CPU (tiny-skia/vello adaptive, 16 threads)" → "CPU"; "auto, calibrating: …" → "Auto".
 fn renderer_name(s: &str) -> String {
@@ -512,39 +629,65 @@ fn encoder_name(s: &str) -> String {
     }
 }
 
-/// Put an engine process in a job object that is killed when the app exits, so a
-/// closed or crashed app never leaves renders running.
-#[cfg(windows)]
-fn tie_to_app(child: &Child) {
-    use std::os::windows::io::AsRawHandle;
-    use std::sync::OnceLock;
-    use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation, SetInformationJobObject,
-    };
-    static JOB: OnceLock<usize> = OnceLock::new();
-    let job = *JOB.get_or_init(|| unsafe {
-        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-        if job.is_null() {
-            return 0;
-        }
-        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        SetInformationJobObject(
-            job,
-            JobObjectExtendedLimitInformation,
-            &info as *const _ as *const _,
-            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-        );
-        // Deliberately never closed: the handle closes when the app exits.
-        job as usize
-    });
-    if job != 0 {
-        unsafe {
-            AssignProcessToJobObject(job as _, child.as_raw_handle() as _);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job(id: u64) -> VideoRender {
+        VideoRender {
+            id,
+            root: std::env::temp_dir().join("studio-queue-test-none"),
+            scenes: vec![],
+            style_json: "{}".into(),
+            output: Output::new(320, 180, 30.0),
+            backend: Backend::Cpu,
+            encoder: Encoder::X264,
+            export: std::env::temp_dir().join("studio-queue-test-none/out.mp4"),
+            fonts_dir: None,
+            captions: Captions::Off,
+            watermark: None,
         }
     }
-}
 
-#[cfg(not(windows))]
-fn tie_to_app(_child: &Child) {}
+    /// A job that has not started is cancelled at once, not when its turn comes.
+    #[test]
+    fn cancelling_a_waiting_job_is_immediate() {
+        let q = RenderQueue::spawn(WorkerCommand { exe: "nonexistent".into(), args: vec![] });
+        q.set_paused(true);
+        q.push(job(1));
+        q.push(job(2));
+        q.cancel(2);
+        let events = q.events();
+        match events.recv_blocking().unwrap() {
+            QueueEvent::Cancelled { id } => assert_eq!(id, 2),
+            other => panic!("{other:?}"),
+        }
+        // Cancelling something unknown is a no-op, and nothing else was announced.
+        q.cancel(99);
+        assert!(events.try_recv().is_err());
+        // Cancelling the head of a paused queue also works, and 2 is skipped when it's reached.
+        q.cancel(1);
+        match events.recv_blocking().unwrap() {
+            QueueEvent::Cancelled { id } => assert_eq!(id, 1),
+            other => panic!("{other:?}"),
+        }
+        q.set_paused(false);
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(events.try_recv().is_err(), "a cancelled job must not be reported twice");
+    }
+
+    #[test]
+    fn a_poisoned_lock_does_not_wedge_the_queue() {
+        let q = RenderQueue::spawn(WorkerCommand { exe: "nonexistent".into(), args: vec![] });
+        let shared = q.shared.clone();
+        let _ = std::thread::spawn(move || {
+            let _held = shared.state.lock().unwrap();
+            panic!("poison it");
+        })
+        .join();
+        q.set_paused(true);
+        q.push(job(5));
+        q.cancel(5);
+        assert!(matches!(q.events().recv_blocking().unwrap(), QueueEvent::Cancelled { id: 5 }));
+    }
+}

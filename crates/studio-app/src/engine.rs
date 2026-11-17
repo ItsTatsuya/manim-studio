@@ -3,10 +3,11 @@
 
 use crate::app::Workspace;
 use crate::model::{Issue, JobStatus, Msg, RenderJob, Still, VideoStatus, VoiceLine, VoicePart};
-use gpui::{AsyncApp, Context, RenderImage, WeakEntity, prelude::FluentBuilder};
+use gpui::{AsyncApp, Context, RenderImage, WeakEntity, Window, prelude::FluentBuilder};
 use smallvec::smallvec;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use studio_render::preview::{OpenScene, Preview, PreviewEvent, ThumbEvent, Thumbnailer};
 use studio_render::queue::{QueueEvent, RenderQueue, SceneSpec, VideoRender, WorkerCommand};
@@ -22,12 +23,20 @@ pub const WM_RANGES: [(f32, f32); 3] = [(0.4, 2.5), (0.1, 1.0), (0.0, 0.12)];
 pub const WM_COLORS: [(&str, Option<&str>); 3] = [("Style", None), ("White", Some("FFFFFF")), ("Black", Some("000000"))];
 const WM_IMAGE_TYPES: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
 
-/// Lay a scene's narration sentences out where its timeline placed them (`narrate(n)`
-/// marks), mixing a new track when that moved anything. True when the track changed.
-fn layout_voice(s: &mut crate::model::Scene, t: &TimelineInfo) -> bool {
-    let Some(v) = s.engine.voice.as_mut() else { return false };
+/// A narration track to mix: the sentences placed where the scene's timeline wants them.
+struct MixPlan {
+    wavs: Vec<PathBuf>,
+    starts: Vec<f64>,
+    dir: PathBuf,
+}
+
+/// Where a scene's narration sentences go on its timeline (`narrate(n)` marks): `Some`
+/// when that differs from the current track, so a new one has to be mixed (off the UI
+/// thread: `Workspace::mix_voice`).
+fn plan_voice_mix(s: &crate::model::Scene, t: &TimelineInfo) -> Option<MixPlan> {
+    let v = s.engine.voice.as_ref()?;
     if v.parts.is_empty() {
-        return false;
+        return None;
     }
     let lines = v.lines();
     let starts = if studio_render::preview::uses_narrate(t) {
@@ -36,19 +45,30 @@ fn layout_voice(s: &mut crate::model::Scene, t: &TimelineInfo) -> bool {
         studio_render::voice::sequential_starts(&lines)
     };
     let same = starts.len() == v.starts.len() && starts.iter().zip(&v.starts).all(|(a, b)| (*a as f32 - b).abs() < 0.01);
-    let Some(dir) = v.wav.parent().map(Path::to_path_buf) else { return false };
+    let dir = v.wav.parent().map(Path::to_path_buf)?;
     if same {
-        return false;
+        return None;
     }
-    let wavs: Vec<PathBuf> = v.parts.iter().map(|p| p.wav.clone()).collect();
-    match studio_render::voice::compose(&wavs, &starts, &dir) {
-        Ok(line) => {
-            v.wav = line.wav;
-            v.seconds = line.seconds as f32;
-            v.starts = starts.iter().map(|s| *s as f32).collect();
-            true
+    Some(MixPlan { wavs: v.parts.iter().map(|p| p.wav.clone()).collect(), starts, dir })
+}
+
+/// Mixed tracks nothing points at any more are deleted once they are this old (a newer
+/// mix may not be in use yet).
+const TRACK_KEEP: Duration = Duration::from_secs(600);
+
+/// Delete `track-*.wav` files in `dir` that are not in `keep` and are older than `TRACK_KEEP`.
+fn prune_tracks(dir: &Path, keep: &[PathBuf]) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        let p = e.path();
+        let name = e.file_name().to_string_lossy().into_owned();
+        if !(name.starts_with("track-") && name.ends_with(".wav")) || keep.contains(&p) {
+            continue;
         }
-        Err(_) => false,
+        let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > TRACK_KEEP);
+        if old {
+            let _ = std::fs::remove_file(&p);
+        }
     }
 }
 
@@ -76,6 +96,9 @@ impl NaturalVoice {
     }
 }
 use studio_ui::IconName;
+
+/// How often the "working" line is redrawn.
+pub const WORKING_TICK_MS: u64 = 250;
 
 /// Live preview resolution and rate (the stage is ~800–1200 device px wide).
 pub const PREVIEW: Output = Output::new(1280, 720, 30.0);
@@ -118,10 +141,18 @@ pub struct Stage {
     pub loading: bool,
     pub load_ms: Option<u32>,
     /// The Code view's file, keyed by path and modification time.
-    pub code: Option<(PathBuf, Option<std::time::SystemTime>, String)>,
+    pub code: Option<(PathBuf, Option<std::time::SystemTime>, std::rc::Rc<str>)>,
+    /// Latest narration mix asked for per (video, scene): older results are dropped.
+    pub mix_latest: std::collections::HashMap<((usize, usize), usize), u64>,
+    pub mix_seq: u64,
+    /// Videos whose thumbnails wait for their narration (it changes scene lengths).
+    pub thumbs_deferred: std::collections::HashSet<(usize, usize)>,
     /// The previous scene's last frame, dissolving out over the next scene during
     /// playback (the same dissolve the export uses), and when it started.
     pub fade_from: Option<(Arc<RenderImage>, std::time::Instant)>,
+    /// Images nothing shows any more (dropped scenes, cleared frames), freed from the
+    /// GPU cache at the next render (`Workspace::flush_dead_images`).
+    pub dead: Vec<Arc<RenderImage>>,
 }
 
 impl Stage {
@@ -384,7 +415,10 @@ impl Workspace {
 
     /// The picked natural-voice model is downloaded.
     pub fn voice_quality_installed(&self) -> bool {
-        studio_render::voice::kokoro_dir().is_some_and(|d| studio_render::kokoro::installed(d, self.voice_quality()))
+        let q = self.prefs.voice_model;
+        self.probes.borrow_mut().kokoro_installed.get(q, |_| {
+            studio_render::voice::kokoro_dir().is_some_and(|d| studio_render::kokoro::installed(d, self.voice_quality()))
+        })
     }
 
     /// Pick the natural-voice model: re-speak with it, downloading it first if needed.
@@ -408,12 +442,14 @@ impl Workspace {
             return;
         }
         self.espeak = NaturalVoice::Downloading(0.);
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.espeak_cancel = cancel.clone();
         cx.notify();
         let (tx, rx) = async_channel::unbounded::<f32>();
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let task = cx.background_executor().spawn(async move {
                 let mut last = 0.0f32;
-                studio_render::kokoro::espeak::install(&dir, move |done, total| {
+                studio_render::kokoro::espeak::install(&dir, &cancel, move |done, total| {
                     let f = done as f32 / total.max(1) as f32;
                     if f - last >= 0.02 || done == total {
                         last = f;
@@ -430,12 +466,15 @@ impl Workspace {
             }
             let result = task.await;
             this.update(cx, |this, cx| {
+                this.probes.get_mut().clear();
                 match result {
                     Ok(()) => {
                         this.espeak = NaturalVoice::Ready;
                         studio_render::voice::reset_kokoro();
                         this.refresh_voice(this.current, cx);
                     }
+                    // Cancelled by the teacher: not a failure.
+                    Err(e) if studio_render::is_cancelled(&e) => this.espeak = NaturalVoice::Missing,
                     Err(e) => this.espeak = NaturalVoice::Failed(format!("{e:#}")),
                 }
                 cx.notify();
@@ -450,10 +489,10 @@ impl Workspace {
         if !self.prefs.narration {
             return "Off".into();
         }
-        let Some(speaker) = self.voice_spec().speaker() else {
+        if !self.probes.borrow_mut().kokoro_usable.get((), |_| studio_render::voice::kokoro_ready()) {
             return "Natural voice not downloaded".into();
-        };
-        let id = speaker.voice;
+        }
+        let id = self.voice_spec().voice_id().to_string();
         let name = studio_render::kokoro::VOICES.iter().find(|(v, _)| *v == id).map_or(id.clone(), |(_, l)| l.to_string());
         format!("{name} · {}", SPEEDS[self.prefs.speed.min(SPEEDS.len() - 1)].0)
     }
@@ -590,12 +629,14 @@ impl Workspace {
             return;
         }
         self.ffmpeg_dl = NaturalVoice::Downloading(0.);
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.ffmpeg_cancel = cancel.clone();
         cx.notify();
         let (tx, rx) = async_channel::unbounded::<f32>();
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let task = cx.background_executor().spawn(async move {
                 let mut last = 0.0f32;
-                studio_render::tools::download_ffmpeg(move |done, total| {
+                studio_render::tools::download_ffmpeg(&cancel, move |done, total| {
                     let f = done as f32 / total.max(1) as f32;
                     if f - last >= 0.01 || done == total {
                         last = f;
@@ -612,11 +653,13 @@ impl Workspace {
             }
             let result = task.await;
             this.update(cx, |this, cx| {
+                this.probes.get_mut().clear();
                 match result {
                     Ok(()) => {
                         this.ffmpeg_dl = NaturalVoice::Ready;
                         this.engine.ffmpeg = true;
                     }
+                    Err(e) if studio_render::is_cancelled(&e) => this.ffmpeg_dl = NaturalVoice::Missing,
                     Err(e) => this.ffmpeg_dl = NaturalVoice::Failed(format!("{e:#}")),
                 }
                 cx.notify();
@@ -628,18 +671,23 @@ impl Workspace {
 
     /// Download Kokoro (model, voices, dictionaries), then re-speak the open video with it.
     pub fn download_natural_voice(&mut self, cx: &mut Context<Self>) {
+        if !studio_render::kokoro::supported() {
+            return;
+        }
         let Some(dir) = studio_render::voice::kokoro_dir().map(Path::to_path_buf) else { return };
         if matches!(self.natural, NaturalVoice::Downloading(_)) {
             return;
         }
         self.natural = NaturalVoice::Downloading(0.);
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.natural_cancel = cancel.clone();
         let quality = self.voice_quality();
         cx.notify();
         let (tx, rx) = async_channel::unbounded::<f32>();
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let task = cx.background_executor().spawn(async move {
                 let mut last = 0.0f32;
-                studio_render::kokoro::download(&dir, quality, move |done, total| {
+                studio_render::kokoro::download(&dir, quality, &cancel, move |done, total| {
                     let f = done as f32 / total.max(1) as f32;
                     if f - last >= 0.01 || done == total {
                         last = f;
@@ -656,6 +704,7 @@ impl Workspace {
             }
             let result = task.await;
             this.update(cx, |this, cx| {
+                this.probes.get_mut().clear();
                 match result {
                     Ok(()) => {
                         this.natural = NaturalVoice::Ready;
@@ -667,6 +716,10 @@ impl Workspace {
                             studio_render::kokoro::remove_other_models(dir, quality);
                         }
                         this.refresh_voice(this.current, cx);
+                    }
+                    Err(e) if studio_render::is_cancelled(&e) => {
+                        // Cancelled by the teacher: back to where it was, no error.
+                        this.natural = if studio_render::voice::kokoro_ready() { NaturalVoice::Ready } else { NaturalVoice::Missing };
                     }
                     Err(e) => {
                         // A failed upgrade still leaves the other model usable.
@@ -685,6 +738,22 @@ impl Workspace {
         .detach();
     }
 
+    /// Stop the natural-voice download (partial files stay, so the next one continues).
+    pub fn cancel_natural_voice(&mut self, cx: &mut Context<Self>) {
+        self.natural_cancel.store(true, Ordering::Relaxed);
+        cx.notify();
+    }
+
+    pub fn cancel_espeak(&mut self, cx: &mut Context<Self>) {
+        self.espeak_cancel.store(true, Ordering::Relaxed);
+        cx.notify();
+    }
+
+    pub fn cancel_ffmpeg(&mut self, cx: &mut Context<Self>) {
+        self.ffmpeg_cancel.store(true, Ordering::Relaxed);
+        cx.notify();
+    }
+
     /// The Kokoro voice id narration uses.
     pub fn voice_spec_id(&self) -> &'static str {
         let spec = self.voice_spec();
@@ -699,10 +768,21 @@ impl Workspace {
     /// then re-run what depends on scene lengths.
     pub fn refresh_voice(&mut self, video: (usize, usize), cx: &mut Context<Self>) {
         let Some(v) = self.projects.get(video.0).and_then(|p| p.videos.get(video.1)) else { return };
-        let Some(dir) = v.dir.clone() else { return };
-        let enabled = self.prefs.narration;
+        let Some(dir) = v.dir.clone() else {
+            self.flush_deferred_thumbs(video);
+            return;
+        };
+        let enabled = self.prefs.narration && studio_render::kokoro::supported();
         let lines: Vec<(usize, String)> =
             v.scenes.iter().enumerate().map(|(i, s)| (i, s.say.trim().to_string())).collect();
+        // Every refresh supersedes the ones before it: their results are dropped.
+        let generation = match self.projects.get_mut(video.0).and_then(|p| p.videos.get_mut(video.1)) {
+            Some(v) => {
+                v.voice_gen = v.voice_gen.wrapping_add(1);
+                v.voice_gen
+            }
+            None => return,
+        };
         if !enabled {
             let mut changed = false;
             if let Some(v) = self.projects.get_mut(video.0).and_then(|p| p.videos.get_mut(video.1)) {
@@ -712,6 +792,8 @@ impl Workspace {
             }
             if changed {
                 self.after_voice_change(video, cx);
+            } else {
+                self.flush_deferred_thumbs(video);
             }
             return;
         }
@@ -725,23 +807,26 @@ impl Workspace {
                         .into_iter()
                         .map(|(i, text)| {
                             if text.is_empty() {
-                                return (i, text, None);
+                                return (i, text, Ok(None));
                             }
                             // Each sentence on its own, so the scene can place it.
-                            let spoken: Option<Vec<VoicePart>> = studio_render::voice::sentences(&text)
+                            let spoken: Result<Vec<VoicePart>, String> = studio_render::voice::sentences(&text)
                                 .into_iter()
                                 .map(|s| {
                                     studio_render::voice::line(&s, &spec, &cache)
-                                        .ok()
                                         .map(|l| VoicePart { wav: l.wav, seconds: l.seconds as f32, text: s })
+                                        .map_err(|e| format!("{e:#}"))
                                 })
                                 .collect();
-                            let line = spoken.filter(|p| !p.is_empty()).and_then(|parts| {
+                            let line = spoken.and_then(|parts| {
+                                if parts.is_empty() {
+                                    return Ok(None);
+                                }
                                 let lines: Vec<f64> = parts.iter().map(|p| p.seconds as f64).collect();
                                 let starts = studio_render::voice::sequential_starts(&lines);
                                 let wavs: Vec<PathBuf> = parts.iter().map(|p| p.wav.clone()).collect();
-                                let track = studio_render::voice::compose(&wavs, &starts, &cache).ok()?;
-                                Some((track, parts, starts))
+                                let track = studio_render::voice::compose(&wavs, &starts, &cache).map_err(|e| format!("{e:#}"))?;
+                                Ok(Some((track, parts, starts)))
                             });
                             (i, text, line)
                         })
@@ -750,12 +835,24 @@ impl Workspace {
                 .await;
             this.update(cx, |this, cx| {
                 let mut changed = false;
+                let mut first_error: Option<(usize, String)> = None;
                 if let Some(v) = this.projects.get_mut(video.0).and_then(|p| p.videos.get_mut(video.1)) {
+                    // A newer refresh (other voice, speed, order) owns the result now.
+                    if v.voice_gen != generation {
+                        return;
+                    }
                     for (i, text, line) in spoken {
                         let Some(s) = v.scenes.get_mut(i) else { continue };
                         if s.say.trim() != text {
                             continue;
                         }
+                        let line = match line {
+                            Ok(l) => l,
+                            Err(e) => {
+                                first_error.get_or_insert((i, e));
+                                continue;
+                            }
+                        };
                         let new = line.map(|(l, parts, starts)| VoiceLine {
                             wav: l.wav,
                             seconds: l.seconds as f32,
@@ -771,6 +868,16 @@ impl Workspace {
                 }
                 if changed {
                     this.after_voice_change(video, cx);
+                } else {
+                    this.flush_deferred_thumbs(video);
+                }
+                // Say so when speech fails (not while the voice just isn't downloaded:
+                // that has its own prompt).
+                if let Some((i, e)) = first_error
+                    && studio_render::voice::kokoro_ready()
+                {
+                    this.notice = Some(format!("Couldn't speak scene {}'s narration: {}", i + 1, studio_render::short_error(&e)));
+                    cx.notify();
                 }
             })
             .ok();
@@ -805,8 +912,107 @@ impl Workspace {
         .detach();
     }
 
+    /// Mix a scene's narration track in the background, then swap it in. A newer mix for
+    /// the scene, or a newer `refresh_voice` of the video, supersedes this one.
+    fn mix_voice(&mut self, video: (usize, usize), scene: usize, plan: MixPlan, cx: &mut Context<Self>) {
+        let Some(generation) = self.projects.get(video.0).and_then(|p| p.videos.get(video.1)).map(|v| v.voice_gen) else { return };
+        self.stage.mix_seq += 1;
+        let seq = self.stage.mix_seq;
+        self.stage.mix_latest.insert((video, scene), seq);
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let MixPlan { wavs, starts, dir } = plan;
+            let (wavs2, starts2) = (wavs.clone(), starts.clone());
+            let line = cx
+                .background_executor()
+                .spawn(async move { studio_render::voice::compose(&wavs2, &starts2, &dir).map(|l| (l, dir)) })
+                .await;
+            let (line, dir) = match line {
+                Ok(l) => l,
+                Err(e) => {
+                    // Don't leave a pending entry behind (it would block pruning) and say why.
+                    this.update(cx, |this, cx| {
+                        if this.stage.mix_latest.get(&(video, scene)) == Some(&seq) {
+                            this.stage.mix_latest.remove(&(video, scene));
+                            this.notice = Some(format!("Couldn't mix the narration for scene {}: {e:#}", scene + 1));
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            let mut keep: Option<Vec<PathBuf>> = None;
+            this.update(cx, |this, cx| {
+                if this.stage.mix_latest.get(&(video, scene)) != Some(&seq) {
+                    return;
+                }
+                this.stage.mix_latest.remove(&(video, scene));
+                let Some(v) = this.projects.get_mut(video.0).and_then(|p| p.videos.get_mut(video.1)) else { return };
+                if v.voice_gen != generation {
+                    return;
+                }
+                if let Some(vl) = v.scenes.get_mut(scene).and_then(|s| s.engine.voice.as_mut())
+                    // Still the same sentences (the voice may have been re-spoken meanwhile).
+                    && vl.parts.iter().map(|p| &p.wav).eq(wavs.iter())
+                {
+                    vl.wav = line.wav;
+                    vl.seconds = line.seconds as f32;
+                    vl.starts = starts.iter().map(|s| *s as f32).collect();
+                    if this.playing && video == this.current && scene == this.scene {
+                        this.sync_audio(true);
+                    }
+                    cx.notify();
+                }
+                // Other mixes of this video still in flight will apply tracks this list
+                // doesn't know yet: prune only when none are pending.
+                if !this.stage.mix_latest.keys().any(|(v, _)| *v == video) {
+                    keep = Some(this.projects.iter().flat_map(|p| &p.videos).flat_map(|v| &v.scenes).filter_map(|s| s.engine.voice.as_ref().map(|v| v.wav.clone())).collect());
+                }
+            })
+            .ok();
+            // Old mixes pile up as the narration is edited: drop the ones nothing uses
+            // (only when the in-use list is known).
+            if let Some(keep) = keep {
+                cx.background_executor().spawn(async move { prune_tracks(&dir, &keep) }).detach();
+            }
+        })
+        .detach();
+    }
+
+    /// Narration is about to be spoken for `video` (it is on, a voice is installed, and some
+    /// scene has a line but no voice yet).
+    fn voice_pending(&self, video: (usize, usize)) -> bool {
+        self.prefs.narration
+            && studio_render::kokoro::supported()
+            && studio_render::voice::kokoro_ready()
+            && self
+                .projects
+                .get(video.0)
+                .and_then(|p| p.videos.get(video.1))
+                .is_some_and(|v| v.scenes.iter().any(|s| !s.say.trim().is_empty() && s.engine.voice.is_none()))
+    }
+
+    /// Thumbnails for a video that was just opened. Scene lengths depend on narration, and
+    /// a voice that arrives re-measures every scene, so when one is about to be spoken the
+    /// thumbnails wait for it (`after_voice_change`) instead of running every scene twice.
+    pub fn refresh_thumbs_after_voice(&mut self, video: (usize, usize)) {
+        if self.voice_pending(video) {
+            self.stage.thumbs_deferred.insert(video);
+        } else {
+            self.refresh_thumbs_for(video);
+        }
+    }
+
+    /// The voice turned out not to change anything: the deferred thumbnails go ahead now.
+    fn flush_deferred_thumbs(&mut self, video: (usize, usize)) {
+        if self.stage.thumbs_deferred.remove(&video) {
+            self.refresh_thumbs_for(video);
+        }
+    }
+
     /// Scene lengths depend on narration: reload the stage and re-measure scenes.
     fn after_voice_change(&mut self, video: (usize, usize), cx: &mut Context<Self>) {
+        self.stage.thumbs_deferred.remove(&video);
         if video == self.current {
             self.stage.open = None;
             self.sync_preview();
@@ -824,7 +1030,7 @@ impl Workspace {
             if self.stage.open.take().is_some() {
                 self.engine.preview.close();
             }
-            self.stage.frame = None;
+            self.clear_stage_frame();
             self.stage.error = None;
             self.stage.timeline = None;
             return;
@@ -869,13 +1075,14 @@ impl Workspace {
     }
 
     /// A scene script's text for the Code view (re-read when the file changes).
-    pub fn code_text(&mut self, path: &Path) -> String {
-        let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    pub fn code_text(&mut self, path: &Path) -> std::rc::Rc<str> {
+        let mtime = self.probes.borrow_mut().code_mtime.get(path.to_path_buf(), |p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
         if let Some((p, m, text)) = &self.stage.code
             && p == path && *m == mtime {
                 return text.clone();
             }
-        let text = std::fs::read_to_string(path).unwrap_or_else(|e| format!("// could not read {}: {e}", path.display()));
+        let text: std::rc::Rc<str> =
+            std::fs::read_to_string(path).unwrap_or_else(|e| format!("// could not read {}: {e}", path.display())).into();
         self.stage.code = Some((path.to_path_buf(), mtime, text.clone()));
         text
     }
@@ -928,6 +1135,42 @@ impl Workspace {
         } else if self.style_hover.is_some_and(|(s, _)| s == style) {
             self.hover_style(None, cx);
         }
+    }
+
+    /// Whether the open video shows a live "working" line.
+    fn working_visible(&self) -> bool {
+        self.projects
+            .get(self.current.0)
+            .and_then(|p| p.videos.get(self.current.1))
+            .is_some_and(|v| v.chat.iter().any(|m| matches!(m, Msg::Working(_))))
+    }
+
+    /// Redraws a few times a second while the open video's "working" line is showing: its
+    /// clock and stepped animation follow elapsed time, instead of repeating animations
+    /// that re-render the whole window every frame.
+    pub(crate) fn ensure_working_ticker(&mut self, cx: &mut Context<Self>) {
+        if self.working_ticker.is_some() || !self.working_visible() {
+            return;
+        }
+        self.working_ticker = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(WORKING_TICK_MS)).await;
+                let keep = this
+                    .update(cx, |this, cx| {
+                        let on = this.working_visible();
+                        if on {
+                            cx.notify();
+                        } else {
+                            this.working_ticker = None;
+                        }
+                        on
+                    })
+                    .unwrap_or(false);
+                if !keep {
+                    break;
+                }
+            }
+        }));
     }
 
     /// Redraws at the clip's frame rate while a style is hovered.
@@ -991,6 +1234,28 @@ impl Workspace {
         }
     }
 
+    /// Remove the stage frame, queueing its image to be freed.
+    pub fn clear_stage_frame(&mut self) {
+        if let Some(old) = self.stage.frame.take()
+            && !self.stage.fade_from.as_ref().is_some_and(|(f, _)| Arc::ptr_eq(f, &old))
+        {
+            self.stage.dead.push(old);
+        }
+    }
+
+    /// Free the images queued in `stage.dead` (call with a context, e.g. while rendering).
+    pub fn flush_dead_images(&mut self, window: &mut Window) {
+        // `cx.drop_image` can't reach this window: it is taken out of the app while rendering.
+        for img in std::mem::take(&mut self.stage.dead) {
+            _ = window.drop_image(img);
+        }
+    }
+
+    /// Queue every thumbnail of `scenes` to be freed (the scenes are going away).
+    pub fn retire_scenes(&mut self, scenes: Vec<crate::model::Scene>) {
+        self.stage.dead.extend(scenes.into_iter().filter_map(|mut s| s.engine.thumb.take().map(|t| t.0)));
+    }
+
     /// Free the dissolving frame once its dissolve is over.
     pub fn end_fade_if_done(&mut self, cx: &mut Context<Self>) {
         if self.stage.fade_from.is_some()
@@ -1011,14 +1276,16 @@ impl Workspace {
                 self.stage.loading = false;
                 self.stage.error = None;
                 self.stage.load_ms = Some(elapsed.as_millis() as u32);
+                let mut mix = None;
                 if let Some(s) = self.projects.get_mut(video.0).and_then(|p| p.videos.get_mut(video.1)).and_then(|v| v.scenes.get_mut(scene)) {
                     s.engine.duration = Some(timeline.duration as f32);
                     s.engine.key_time = Some(studio_render::preview::thumbnail_time(&timeline) as f32);
                     s.engine.issue = issue_for(&timeline);
                     s.engine.checked = true;
-                    if layout_voice(s, &timeline) && self.playing {
-                        self.sync_audio(true);
-                    }
+                    mix = plan_voice_mix(s, &timeline);
+                }
+                if let Some(plan) = mix {
+                    self.mix_voice(video, scene, plan, cx);
                 }
                 // A reload after an edit: the thumbnail is stale too.
                 if reloaded
@@ -1043,7 +1310,10 @@ impl Workspace {
             }
             PreviewEvent::Frame { generation, frame, .. } if generation == self.stage.generation => {
                 self.set_stage_frame(Some(to_image(frame)), cx);
-                cx.notify();
+                // While playing, the ticker redraws every 33 ms and shows this frame then.
+                if !self.ticking() {
+                    cx.notify();
+                }
             }
             _ => {}
         }
@@ -1086,9 +1356,10 @@ impl Workspace {
         let Some(s) = self.projects.get_mut(pi).and_then(|p| p.videos.get_mut(vi)).and_then(|v| v.scenes.get_mut(si)) else {
             return;
         };
+        let mut mix = None;
         let old = match ev {
             ThumbEvent::Ready { frame, timeline, .. } => {
-                layout_voice(s, &timeline);
+                mix = plan_voice_mix(s, &timeline);
                 s.engine.duration = Some(timeline.duration as f32);
                 s.engine.key_time = Some(studio_render::preview::thumbnail_time(&timeline) as f32);
                 s.engine.issue = issue_for(&timeline);
@@ -1105,6 +1376,9 @@ impl Workspace {
         };
         if let Some(Still(old)) = old {
             cx.drop_image(old, None);
+        }
+        if let Some(plan) = mix {
+            self.mix_voice((pi, vi), si, plan, cx);
         }
         // Real durations replace planned ones: keep the playhead at the same moment of
         // the current scene (or its key moment, the first time it is known).
@@ -1123,8 +1397,13 @@ impl Workspace {
 
     /// Queue the current video for a final render.
     pub fn start_render(&mut self, cx: &mut Context<Self>) {
-        let (pi, vi) = self.current;
-        let video = self.video().clone();
+        self.start_render_for(self.current, cx);
+    }
+
+    /// Queue `target` (not necessarily the open video) for a final render.
+    pub fn start_render_for(&mut self, target: (usize, usize), cx: &mut Context<Self>) {
+        let (pi, vi) = target;
+        let Some(video) = self.projects.get(pi).and_then(|p| p.videos.get(vi)).cloned() else { return };
         let Some(root) = video.dir.clone() else {
             let Some(chat) = self.chat_of((pi, vi)) else { return };
             chat.push(Msg::Activity {
@@ -1137,7 +1416,9 @@ impl Workspace {
             return;
         };
         if self.jobs.iter().any(|j| j.video == (pi, vi) && j.status.active()) {
-            self.screen = crate::app::Screen::Renders;
+            if (pi, vi) == self.current {
+                self.screen = crate::app::Screen::Renders;
+            }
             cx.notify();
             return;
         }

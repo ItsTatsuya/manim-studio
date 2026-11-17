@@ -12,7 +12,7 @@ impl Workspace {
     pub fn render_storyboard(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.theme().clone();
         let compact = theme::is_compact(window);
-        let video = self.video().clone();
+        let video = self.video();
         let busy = video.busy.clone();
         let planning = matches!(busy, Some(crate::model::Busy::Planning) | Some(crate::model::Busy::Revising));
         let beats: Vec<_> = video.scenes.iter().enumerate().map(|(i, s)| {
@@ -87,11 +87,11 @@ impl Workspace {
         // The plan never arrived (assistant error, plan run out, sign-in…): say why, and
         // offer to try again instead of leaving an empty page.
         let failed = (!planning && beats.is_empty() && video.storyboard.is_none() && video.request.is_some()).then(|| {
-            let card = match Workspace::last_problem(&video) {
+            let card = match Workspace::last_problem(video) {
                 Some((i, provider, raw)) => self.problem_card(i, provider, &raw, true, cx),
                 // Saved by an older version, or the plan came back unreadable.
                 None => {
-                    let reason = self.last_error(&video).unwrap_or_else(|| "The assistant stopped before the storyboard was written.".into());
+                    let reason = self.last_error(video).unwrap_or_else(|| "The assistant stopped before the storyboard was written.".into());
                     div()
                         .flex()
                         .flex_col()
@@ -201,9 +201,8 @@ impl Workspace {
                                     .disabled(self.revise_input.read(cx).text().trim().is_empty())
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let text = this.revise_input.read(cx).text().trim().to_string();
-                                        if !text.is_empty() {
+                                        if !text.is_empty() && this.revise_storyboard(text, cx) {
                                             this.revise_input.update(cx, |i, cx| i.clear(cx));
-                                            this.revise_storyboard(text, cx);
                                         }
                                     })),
                             ),

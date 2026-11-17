@@ -1,9 +1,12 @@
 //! Join scene videos into the lesson video.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+
 
 /// Spawn without flashing a console window on Windows.
 pub(crate) fn quiet(cmd: &mut Command) -> &mut Command {
@@ -16,21 +19,100 @@ pub(crate) fn quiet(cmd: &mut Command) -> &mut Command {
     cmd
 }
 
-fn run(ffmpeg: &Path, args: &[&std::ffi::OsStr]) -> Result<()> {
-    let out = quiet(Command::new(ffmpeg).args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped()))
-        .output()
-        .with_context(|| format!("running {}", ffmpeg.display()))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        let last = err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("ffmpeg failed");
-        bail!("{last}");
+use crate::{Cancelled, is_cancelled};
+
+/// Run `cmd` to completion with stdin/stdout closed and stderr collected (its tail). The
+/// process is tied to the app (it dies if the app does) and is killed as soon as
+/// `cancelled()` turns true, which is polled every 40 ms.
+fn run_child(cmd: &mut Command, cancelled: &dyn Fn() -> bool) -> Result<(std::process::ExitStatus, String)> {
+    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
+    let mut child = quiet(cmd).spawn().with_context(|| format!("running {}", cmd.get_program().to_string_lossy()))?;
+    tie_to_app(&child);
+    let mut stderr = child.stderr.take();
+    // Drain stderr on a thread so a chatty ffmpeg can't fill the pipe and stall.
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(e) = stderr.as_mut() {
+            let _ = e.take(1 << 20).read_to_end(&mut buf);
+            let _ = std::io::copy(e, &mut std::io::sink());
+        }
+        String::from_utf8_lossy(&buf).into_owned()
+    });
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) if cancelled() => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return Err(Cancelled.into());
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(40)),
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return Err(e.into());
+            }
+        }
+    };
+    Ok((status, reader.join().unwrap_or_default()))
+}
+
+/// The last non-empty line of ffmpeg's stderr.
+fn last_line(err: &str) -> &str {
+    err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("ffmpeg failed")
+}
+
+fn run(ffmpeg: &Path, args: &[&std::ffi::OsStr], cancelled: &dyn Fn() -> bool) -> Result<()> {
+    let (status, err) = run_child(Command::new(ffmpeg).args(args), cancelled)?;
+    if !status.success() {
+        bail!("{}", last_line(&err));
     }
     Ok(())
 }
 
+/// Put a child process in a job object that is killed when the app exits, so a closed
+/// or crashed app never leaves renders or exports running.
+#[cfg(windows)]
+pub(crate) fn tie_to_app(child: &Child) {
+    use std::os::windows::io::AsRawHandle;
+    use std::sync::OnceLock;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation, SetInformationJobObject,
+    };
+    static JOB: OnceLock<usize> = OnceLock::new();
+    let job = *JOB.get_or_init(|| unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return 0;
+        }
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        );
+        // Deliberately never closed: the handle closes when the app exits.
+        job as usize
+    });
+    if job != 0 {
+        unsafe {
+            AssignProcessToJobObject(job as _, child.as_raw_handle() as _);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn tie_to_app(_child: &Child) {}
+
 /// Concatenate `parts` (same size and frame rate) into `out`. Streams are copied when
-/// they line up; otherwise the parts are re-encoded once with x264.
-pub fn concat(ffmpeg: &Path, parts: &[PathBuf], out: &Path) -> Result<()> {
+/// they line up; otherwise the parts are re-encoded once with x264. `cancelled` is polled
+/// while ffmpeg runs; when it turns true ffmpeg is killed and [`Cancelled`] returned.
+pub fn concat(ffmpeg: &Path, parts: &[PathBuf], out: &Path, cancelled: &dyn Fn() -> bool) -> Result<()> {
     if parts.is_empty() {
         bail!("nothing to export");
     }
@@ -64,7 +146,10 @@ pub fn concat(ffmpeg: &Path, parts: &[PathBuf], out: &Path) -> Result<()> {
     ];
     let mut copy = base.clone();
     copy.extend::<[&std::ffi::OsStr; 5]>(["-c".as_ref(), "copy".as_ref(), "-movflags".as_ref(), "+faststart".as_ref(), tmp.as_os_str()]);
-    let result = run(ffmpeg, &copy).or_else(|_| {
+    let result = run(ffmpeg, &copy, cancelled).or_else(|e| {
+        if is_cancelled(&e) {
+            return Err(e);
+        }
         let mut enc = base.clone();
         enc.extend::<[&std::ffi::OsStr; 11]>([
             "-c:v".as_ref(),
@@ -79,9 +164,12 @@ pub fn concat(ffmpeg: &Path, parts: &[PathBuf], out: &Path) -> Result<()> {
             "+faststart".as_ref(),
             tmp.as_os_str(),
         ]);
-        run(ffmpeg, &enc)
+        run(ffmpeg, &enc, cancelled)
     });
     let _ = std::fs::remove_file(&list);
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
     result?;
     std::fs::rename(&tmp, out).with_context(|| format!("writing {}", out.display()))?;
     Ok(())
@@ -166,7 +254,7 @@ pub fn rgb(hex: Option<&str>, fallback: &str) -> String {
 }
 
 /// Re-encode `video` with captions and/or a watermark drawn on it.
-pub fn finish(ffmpeg: &Path, video: &Path, f: &Finish, out: &Path) -> Result<()> {
+pub fn finish(ffmpeg: &Path, video: &Path, f: &Finish, out: &Path, cancelled: &dyn Fn() -> bool) -> Result<()> {
     // Filter graphs need escaped paths; copy everything into a scratch folder and run
     // ffmpeg there so every name is plain.
     let work = out.with_extension("finish");
@@ -244,19 +332,19 @@ pub fn finish(ffmpeg: &Path, video: &Path, f: &Finish, out: &Path) -> Result<()>
         }
         cmd.args(["-filter_complex", &graph.join(";"), "-map", "[v]", "-map", "0:a?"])
             .args(["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart"])
-            .arg(&tmp)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped());
-        let st = quiet(&mut cmd).output()?;
-        if !st.status.success() {
-            let err = String::from_utf8_lossy(&st.stderr);
-            bail!("{}", err.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("ffmpeg failed"));
+            .arg(&tmp);
+        let (status, err) = run_child(&mut cmd, cancelled)?;
+        if !status.success() {
+            let _ = std::fs::remove_file(&tmp);
+            bail!("{}", last_line(&err));
         }
         std::fs::rename(&tmp, out)?;
         Ok(())
     })();
     let _ = std::fs::remove_dir_all(&work);
+    if result.is_err() {
+        let _ = std::fs::remove_file(out.with_extension("partial.mp4"));
+    }
     result
 }
 
@@ -276,10 +364,17 @@ pub fn dissolve_for(durations: &[f64]) -> f64 {
 /// into the next, and each scene's audio starts where its picture does (the narration
 /// tail covers the overlap, so voices never collide). Falls back to a plain join if the
 /// filter graph fails.
-pub fn join_dissolve(ffmpeg: &Path, parts: &[PathBuf], durations: &[f64], audio: bool, out: &Path) -> Result<()> {
+pub fn join_dissolve(
+    ffmpeg: &Path,
+    parts: &[PathBuf],
+    durations: &[f64],
+    audio: bool,
+    out: &Path,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<()> {
     let fade = dissolve_for(durations);
     if parts.len() < 2 || durations.len() != parts.len() || fade < 0.05 {
-        return concat(ffmpeg, parts, out);
+        return concat(ffmpeg, parts, out, cancelled);
     }
     if let Some(dir) = out.parent() {
         std::fs::create_dir_all(dir)?;
@@ -315,14 +410,17 @@ pub fn join_dissolve(ffmpeg: &Path, parts: &[PathBuf], durations: &[f64], audio:
         cmd.args(["-map", "[a]", "-c:a", "aac", "-b:a", "192k"]);
     }
     cmd.args(["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart"])
-        .arg(&tmp)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-    let st = quiet(&mut cmd).output()?;
-    if !st.status.success() {
+        .arg(&tmp);
+    let (status, _) = match run_child(&mut cmd, cancelled) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+    };
+    if !status.success() {
         let _ = std::fs::remove_file(&tmp);
-        return concat(ffmpeg, parts, out);
+        return concat(ffmpeg, parts, out, cancelled);
     }
     std::fs::rename(&tmp, out).with_context(|| format!("writing {}", out.display()))?;
     Ok(())
@@ -348,7 +446,7 @@ mod tests {
             parts.push(p);
         }
         let out = dir.join("joined.mp4");
-        join_dissolve(&ff, &parts, &[2.0, 2.0, 2.0], true, &out).unwrap();
+        join_dissolve(&ff, &parts, &[2.0, 2.0, 2.0], true, &out, &|| false).unwrap();
         let probe = ff.with_file_name(if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" });
         if probe.is_file() {
             let o = Command::new(&probe).args(["-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "csv=p=0"]).arg(&out).output().unwrap();
@@ -392,7 +490,7 @@ mod tests {
             let wm = Watermark { mark, at, size: 0.08, opacity: 0.6, margin: 0.035, color: (k == 2).then(|| "FF0000".into()), shadow: k != 2 };
             let out = dir.join(format!("out{k}.mp4"));
             let f = Finish { captions, watermark: Some(&wm), font: font.as_deref(), text_rgb: "FFFFFF", shadow_rgb: "000000", width: 640, height: 360 };
-            finish(&ff, &clip, &f, &out).unwrap_or_else(|e| panic!("mark {k}: {e:#}"));
+            finish(&ff, &clip, &f, &out, &|| false).unwrap_or_else(|e| panic!("mark {k}: {e:#}"));
             assert!(std::fs::metadata(&out).unwrap().len() > 1000);
         }
         let _ = std::fs::remove_dir_all(&dir);

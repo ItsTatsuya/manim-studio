@@ -194,7 +194,9 @@ impl Workspace {
 
     /// Why indices can't shift right now, if they can't.
     fn structure_locked(&self) -> Option<&'static str> {
-        if !self.running.is_empty() {
+        // `busy` stays set after a turn ends while its scenes are checked, and while
+        // documents are read before planning: indices must not shift under those either.
+        if !self.running.is_empty() || self.projects.iter().flat_map(|p| &p.videos).any(|v| v.busy.is_some()) {
             Some("Wait for the assistant to finish before deleting or moving videos.")
         } else if self.jobs.iter().any(|j| j.status.active()) {
             Some("Wait for renders to finish (or cancel them in Renders) before deleting or moving videos.")
@@ -256,7 +258,8 @@ impl Workspace {
                     cx.notify();
                     return;
                 }
-                self.projects[pi].videos.remove(vi);
+                let gone = self.projects[pi].videos.remove(vi);
+                self.retire_scenes(gone.scenes);
                 self.remap(|(p, v)| match (p == pi, v.cmp(&vi)) {
                     (true, std::cmp::Ordering::Equal) => None,
                     (true, std::cmp::Ordering::Greater) => Some((p, v - 1)),
@@ -270,7 +273,10 @@ impl Workspace {
                     cx.notify();
                     return;
                 }
-                self.projects.remove(pi);
+                let gone = self.projects.remove(pi);
+                for v in gone.videos {
+                    self.retire_scenes(v.scenes);
+                }
                 if !self.prefs.folder_order.is_empty() {
                     self.prefs.folder_order.retain(|d| *d != dir);
                     self.save_prefs();
@@ -307,7 +313,8 @@ impl Workspace {
             cx.notify();
             return;
         };
-        self.projects[pi].videos.remove(vi);
+        let old = self.projects[pi].videos.remove(vi);
+        self.retire_scenes(old.scenes);
         self.projects[to].videos.push(video);
         self.projects[to].expanded = true;
         let new = (to, self.projects[to].videos.len() - 1);
@@ -328,7 +335,7 @@ impl Workspace {
             self.stage.open = None;
             self.sync_preview();
         }
-        self.refresh_thumbs_for(new);
+        self.refresh_thumbs_after_voice(new);
         self.refresh_voice(new, cx);
         cx.notify();
     }
@@ -371,12 +378,17 @@ impl Workspace {
         // Results still in flight were asked for at the old positions.
         self.thumb_gen = self.thumb_gen.wrapping_add(1);
         self.stage.open = None;
+        // A removed video's job rows go too; their cover images are freed at the next render.
+        let dead = &mut self.stage.dead;
         self.jobs.retain_mut(|j| match f(j.video) {
             Some(v) => {
                 j.video = v;
                 true
             }
-            None => false,
+            None => {
+                dead.extend(j.thumb.take().map(|t| t.0));
+                false
+            }
         });
         self.rename = None;
         match f(self.current) {
@@ -390,7 +402,7 @@ impl Workspace {
                     .enumerate()
                     .find_map(|(p, pr)| (!pr.videos.is_empty()).then_some((p, 0)));
                 self.stage.open = None;
-                self.stage.frame = None;
+                self.clear_stage_frame();
                 self.playing = false;
                 if let Some(a) = &mut self.audio {
                     a.stop();

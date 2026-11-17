@@ -393,6 +393,9 @@ pub struct Video {
     pub request: Option<String>,
     /// The next chat turn continues the last conversation (after a budget pause).
     pub resume_next: bool,
+    /// Bumped by every narration refresh; a speech result is applied only if it still
+    /// belongs to the latest one (voice, speed and scene order may have changed since).
+    pub voice_gen: u64,
 }
 
 impl Video {
@@ -415,6 +418,7 @@ impl Video {
             busy: None,
             request: None,
             resume_next: false,
+            voice_gen: 0,
         })
     }
 

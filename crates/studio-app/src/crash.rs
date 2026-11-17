@@ -15,6 +15,13 @@ fn dir() -> Option<PathBuf> {
 pub fn install() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        // A panic inside a guarded engine or PDF call is caught and reported to the
+        // teacher as an ordinary error (the scene or document is "broken", the app is
+        // fine). It is not a crash, so it gets no crash report.
+        if is_caught_elsewhere(studio_render::in_engine_guard(), studio_docs::in_pdf_guard()) {
+            previous(info);
+            return;
+        }
         let message = info
             .payload()
             .downcast_ref::<&str>()
@@ -36,6 +43,21 @@ pub fn install() {
         }
         previous(info);
     }));
+}
+
+/// Whether a panic happened inside a guard that will catch it.
+fn is_caught_elsewhere(in_engine: bool, in_pdf: bool) -> bool {
+    in_engine || in_pdf
+}
+
+/// The GitHub release page of this version (its notes).
+pub fn release_url() -> String {
+    format!("https://github.com/ItsTatsuya/manim-studio/releases/tag/v{}", env!("CARGO_PKG_VERSION"))
+}
+
+/// Where the bundled font licenses (OFL) live in the source.
+pub fn licenses_url() -> &'static str {
+    "https://github.com/ItsTatsuya/manim-studio/tree/main/crates/studio-ui/assets/fonts"
 }
 
 /// The newest crash report, if any.
@@ -87,4 +109,16 @@ pub fn open_url(url: &str) {
     let _ = std::process::Command::new("open").arg(url).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
     let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn guarded_panics_are_not_crashes() {
+        assert!(is_caught_elsewhere(true, false));
+        assert!(is_caught_elsewhere(false, true));
+        assert!(!is_caught_elsewhere(false, false));
+    }
 }

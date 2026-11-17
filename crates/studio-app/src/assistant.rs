@@ -25,8 +25,67 @@ pub enum TurnKind {
     Revise,
     Build,
     Edit,
-    /// Repair scene index `scene`, attempt `k`.
-    Repair { scene: usize, k: u8 },
+    /// Repair scene index `scene`, attempt `k`. `build`: the repairs follow a build (so
+    /// when they finish, the studio opens and the render can start).
+    Repair { scene: usize, k: u8, build: bool },
+}
+
+impl TurnKind {
+    /// A build, or the repairs that follow one.
+    fn is_build(&self) -> bool {
+        matches!(self, TurnKind::Build | TurnKind::Repair { build: true, .. })
+    }
+}
+
+/// Move what the engine already knows (script is the same file) from the old scenes to
+/// the freshly paired ones: thumbnail, timings, check result, narration if the line is
+/// unchanged. Returns the images of the old scenes that were not carried over, to free.
+fn carry_engine(fresh: &mut [crate::model::Scene], old: Vec<crate::model::Scene>) -> Vec<std::sync::Arc<gpui::RenderImage>> {
+    let mut leftover = Vec::new();
+    let mut old = old.into_iter();
+    for new in fresh.iter_mut() {
+        let Some(mut o) = old.next() else { break };
+        if new.engine.file.is_some() && new.engine.file == o.engine.file {
+            new.engine.thumb = o.engine.thumb.take();
+            new.engine.duration = o.engine.duration;
+            new.engine.key_time = o.engine.key_time;
+            new.engine.issue = o.engine.issue.take();
+            new.engine.checked = o.engine.checked;
+            if o.say.trim() == new.say.trim() {
+                new.engine.voice = o.engine.voice.take();
+            }
+        }
+        leftover.extend(o.engine.thumb.take().map(|t| t.0));
+    }
+    leftover.extend(old.filter_map(|mut o| o.engine.thumb.take().map(|t| t.0)));
+    leftover
+}
+
+/// Modification time and size of the scene scripts (`scenes/` and `lib/`), keyed by path.
+type FileStamps = std::collections::BTreeMap<PathBuf, (Option<std::time::SystemTime>, u64)>;
+
+/// A cheap stat of the files a turn may edit. Codex edits through shell commands that
+/// emit no file events, so what changed is found by comparing these.
+fn snapshot_scripts(dir: &Path) -> FileStamps {
+    let mut out = FileStamps::new();
+    for sub in ["scenes", "lib"] {
+        let Ok(entries) = std::fs::read_dir(dir.join(sub)) else { continue };
+        for e in entries.flatten() {
+            if let Ok(m) = e.metadata()
+                && m.is_file()
+            {
+                out.insert(e.path(), (m.modified().ok(), m.len()));
+            }
+        }
+    }
+    out
+}
+
+/// Files added, removed or modified between two snapshots.
+fn changed_between(before: &FileStamps, after: &FileStamps) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = after.iter().filter(|(p, st)| before.get(*p) != Some(*st)).map(|(p, _)| p.clone()).collect();
+    out.extend(before.keys().filter(|p| !after.contains_key(*p)).cloned());
+    out
 }
 
 /// A running assistant turn for a video.
@@ -47,6 +106,8 @@ pub struct Running {
     started: Instant,
     text: String,
     changed: Vec<PathBuf>,
+    /// The scripts as they were when the turn started.
+    before: FileStamps,
     provider: Provider,
     /// Latest token report per model response (Claude), for the per-turn budget.
     usage: Vec<(String, Tokens)>,
@@ -81,16 +142,28 @@ impl Workspace {
 
     /// Look for the CLIs and their sign-in state in the background (no tokens spent).
     pub fn detect_providers(&mut self, cx: &mut Context<Self>) {
+        // One detection at a time: the one in flight reports what is installed now.
+        if self.detecting {
+            return;
+        }
+        self.detecting = true;
         for p in &mut self.providers {
             p.checking = true;
         }
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let found = cx
                 .background_executor()
-                .spawn(async { [Provider::Claude, Provider::OpenAi].map(|p| (p, detect::status(p.agent()))) })
+                .spawn(async {
+                    // A panic in the probe must not leave the "checking" flags set forever.
+                    std::panic::catch_unwind(|| [Provider::Claude, Provider::OpenAi].map(|p| (p, detect::status(p.agent())))).ok()
+                })
                 .await;
             this.update(cx, |this, cx| {
-                for (p, st) in found {
+                this.detecting = false;
+                for s in &mut this.providers {
+                    s.checking = false;
+                }
+                for (p, st) in found.into_iter().flatten() {
                     if let Some(s) = this.providers.iter_mut().find(|s| s.provider == p) {
                         s.checking = false;
                         s.installed = st.path.is_some();
@@ -128,13 +201,13 @@ impl Workspace {
 
     /// Re-detect every few seconds for a while (after an install or sign-in window opens).
     fn poll_providers(&mut self, cx: &mut Context<Self>) {
-        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+        // One loop at a time: a new Install or Sign-in click replaces the old one.
+        self.provider_poll = Some(cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             for _ in 0..40 {
                 cx.background_executor().timer(std::time::Duration::from_secs(4)).await;
                 let Ok(()) = this.update(cx, |this, cx| this.detect_providers(cx)) else { return };
             }
-        })
-        .detach();
+        }));
     }
 
     /// The assistant to use: the default if signed in, else another signed-in one when
@@ -167,14 +240,24 @@ impl Workspace {
                 s.week_resets_at = rl.week_resets_at;
             }
         }
-        self.prefs.remember_usage(p, &rl);
-        self.save_prefs();
+        // Rate-limit events arrive constantly: only a change is worth a write.
+        if self.prefs.remember_usage(p, &rl) {
+            self.save_prefs();
+        }
     }
 
     // ------------------------------------------------------------------ turns
 
+    /// The assistant is working on `video`: a turn is running, or one just ended and its
+    /// scenes are being checked (`video.busy` stays set until the work is finished).
     pub fn busy(&self, video: (usize, usize)) -> bool {
         self.running.iter().any(|r| r.video == video)
+            || self.projects.get(video.0).and_then(|p| p.videos.get(video.1)).is_some_and(|v| v.busy.is_some())
+    }
+
+    /// Detection of the assistant CLIs is still running.
+    pub fn checking_providers(&self) -> bool {
+        self.providers.iter().any(|p| p.checking)
     }
 
     /// What "Auto" reasoning means for builds and edits. Sonnet at low effort used fewer
@@ -188,6 +271,15 @@ impl Workspace {
 
     fn video_mut(&mut self, v: (usize, usize)) -> Option<&mut crate::model::Video> {
         self.projects.get_mut(v.0).and_then(|p| p.videos.get_mut(v.1))
+    }
+
+    fn working_label(&self, v: (usize, usize)) -> Option<String> {
+        self.projects.get(v.0).and_then(|p| p.videos.get(v.1)).and_then(|video| {
+            video.chat.iter().find_map(|m| match m {
+                Msg::Working(w) => Some(w.label.clone()),
+                _ => None,
+            })
+        })
     }
 
     fn set_working(&mut self, v: (usize, usize), label: Option<String>) {
@@ -226,11 +318,31 @@ impl Workspace {
         }
     }
 
-    fn fail_early(&mut self, v: (usize, usize), text: String, cx: &mut Context<Self>) {
+    /// A render of `v` is queued or running (it owns the video's status meanwhile).
+    fn render_active(&self, v: (usize, usize)) -> bool {
+        self.jobs.iter().any(|j| j.video == v && j.status.active())
+    }
+
+    /// A build turn that didn't produce scenes: leave "Building". Only for turns that set
+    /// that status, and never while a render of the video is running (it owns the status).
+    fn reset_building(&mut self, v: (usize, usize), build: bool) {
+        if !build || self.render_active(v) {
+            return;
+        }
+        if let Some(video) = self.video_mut(v)
+            && video.status == VideoStatus::Building
+        {
+            video.status = if video.scenes.iter().any(|s| s.engine.file.is_some()) { VideoStatus::Failed } else { VideoStatus::Draft };
+        }
+    }
+
+    fn fail_early(&mut self, v: (usize, usize), build: bool, text: String, cx: &mut Context<Self>) {
+        self.set_working(v, None);
         self.push_msg(v, Msg::Activity { icon: IconName::Info, ok: false, text, meta: String::new() });
         if let Some(video) = self.video_mut(v) {
             video.busy = None;
         }
+        self.reset_building(v, build);
         cx.notify();
     }
 
@@ -239,13 +351,12 @@ impl Workspace {
     fn fail_problem(&mut self, v: (usize, usize), provider: Provider, raw: String, retry: Option<RetrySpec>, cx: &mut Context<Self>) {
         self.set_working(v, None);
         self.push_msg(v, Msg::Problem { provider, raw });
+        let build = retry.as_ref().is_some_and(|r| r.kind.is_build());
         let dir = self.video_mut(v).and_then(|video| {
             video.busy = None;
-            if video.status == VideoStatus::Building {
-                video.status = if video.scenes.iter().any(|s| s.engine.file.is_some()) { VideoStatus::Failed } else { VideoStatus::Draft };
-            }
             video.dir.clone()
         });
+        self.reset_building(v, build);
         if let (Some(dir), Some(retry)) = (dir, retry) {
             self.retries.insert(dir, retry);
         }
@@ -273,7 +384,7 @@ impl Workspace {
                 TurnKind::Revise => Busy::Revising,
                 TurnKind::Build => Busy::Building,
                 TurnKind::Edit => Busy::Editing,
-                TurnKind::Repair { scene, k } => Busy::Fixing { scene: scene + 1, k, of: k },
+                TurnKind::Repair { scene, k, .. } => Busy::Fixing { scene: scene + 1, k, of: k },
             });
             if spec.kind == TurnKind::Build {
                 v.status = VideoStatus::Building;
@@ -305,17 +416,48 @@ impl Workspace {
         effort: Option<Effort>,
         cx: &mut Context<Self>,
     ) {
+        let build = kind.is_build();
         let Some((provider, exe)) = self.pick_provider() else {
-            self.fail_early(video, "No assistant is signed in. Open Settings → Assistants to connect Claude or ChatGPT.".into(), cx);
+            if self.checking_providers() {
+                // Detection is still running (just after launch): wait for it instead of
+                // saying nothing is connected. The caller's label comes back afterwards.
+                let previous = self.working_label(video);
+                if !planning {
+                    self.set_working(video, Some("Checking assistants".into()));
+                }
+                cx.notify();
+                cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                    for _ in 0..100 {
+                        cx.background_executor().timer(std::time::Duration::from_millis(200)).await;
+                        if this.update(cx, |this, _| !this.checking_providers()).unwrap_or(true) {
+                            break;
+                        }
+                    }
+                    this.update(cx, |this, cx| {
+                        if !planning {
+                            this.set_working(video, previous);
+                        }
+                        if this.checking_providers() {
+                            this.fail_early(video, build, "Still checking which assistants are connected. Try again in a moment.".into(), cx);
+                        } else {
+                            this.start_turn(video, kind, prompt_text, planning, effort, cx);
+                        }
+                    })
+                    .ok();
+                })
+                .detach();
+                return;
+            }
+            self.fail_early(video, build, "No assistant is signed in. Open Settings → Assistants to connect Claude or ChatGPT.".into(), cx);
             self.notice = Some("Connect an assistant first: Settings → Assistants & usage.".into());
             return;
         };
         let Some(dir) = self.projects.get(video.0).and_then(|p| p.videos.get(video.1)).and_then(|v| v.dir.clone()) else {
-            return;
+            return self.fail_early(video, build, "This video has no folder yet.".into(), cx);
         };
         let (build_file, plan_file) = match system_files(&dir) {
             Ok(f) => f,
-            Err(e) => return self.fail_early(video, format!("Couldn't prepare the video folder: {e}"), cx),
+            Err(e) => return self.fail_early(video, build, format!("Couldn't prepare the video folder: {e}"), cx),
         };
         let tier = if planning { self.prefs.planning_tier } else { self.prefs.build_tier };
         let mut effort = effort;
@@ -338,6 +480,7 @@ impl Workspace {
         };
         let retry = RetrySpec { kind: kind.clone(), prompt: prompt_text.clone(), planning, effort };
         self.retries.remove(&dir);
+        let before = snapshot_scripts(&dir);
         let req = TurnRequest {
             provider: provider.agent(),
             exe,
@@ -358,6 +501,9 @@ impl Workspace {
             Err(e) => return self.fail_problem(video, provider, format!("Couldn't start {}: {e:#}", provider.cli()), Some(retry), cx),
         };
         let events = turn.events.clone();
+        // Events are routed by the turn's own id: a video can have a new turn right after
+        // the last one (a repair follows its build), and the id never repeats.
+        let turn_id = turn.id();
         self.running.push(Running {
             video,
             kind,
@@ -366,16 +512,28 @@ impl Workspace {
             started: Instant::now(),
             text: String::new(),
             changed: vec![],
+            before,
             provider,
             usage: vec![],
             over_budget: false,
         });
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut done = false;
             while let Ok(ev) = events.recv().await {
-                let last = matches!(ev, AgentEvent::Done { .. });
-                if this.update(cx, |this, cx| this.on_agent_event(video, ev, cx)).is_err() || last {
+                done = matches!(ev, AgentEvent::Done { .. });
+                if this.update(cx, |this, cx| this.on_agent_event(turn_id, ev, cx)).is_err() || done {
                     break;
                 }
+            }
+            if !done {
+                // The channel closed without a `Done`: never leave the video busy forever.
+                let ev = AgentEvent::Done {
+                    session: None,
+                    tokens: Tokens::default(),
+                    cost_usd: None,
+                    error: Some("the assistant stopped unexpectedly".into()),
+                };
+                this.update(cx, |this, cx| this.on_agent_event(turn_id, ev, cx)).ok();
             }
         })
         .detach();
@@ -401,8 +559,9 @@ impl Workspace {
         cx.notify();
     }
 
-    fn on_agent_event(&mut self, video: (usize, usize), ev: AgentEvent, cx: &mut Context<Self>) {
-        let Some(ix) = self.running.iter().position(|r| r.video == video) else { return };
+    fn on_agent_event(&mut self, turn_id: u64, ev: AgentEvent, cx: &mut Context<Self>) {
+        let Some(ix) = self.running.iter().position(|r| r.turn.id() == turn_id) else { return };
+        let video = self.running[ix].video;
         let provider = self.running[ix].provider;
         let kind = self.running[ix].kind.clone();
         let quiet = matches!(kind, TurnKind::Plan | TurnKind::Revise);
@@ -515,10 +674,8 @@ impl Workspace {
             }
             if let Some(v) = self.video_mut(video) {
                 v.busy = None;
-                if v.status == VideoStatus::Building {
-                    v.status = if v.scenes.iter().any(|s| s.engine.file.is_some()) { VideoStatus::Failed } else { VideoStatus::Draft };
-                }
             }
+            self.reset_building(video, r.kind.is_build());
             self.persist(video);
             cx.notify();
             return;
@@ -533,8 +690,24 @@ impl Workspace {
                     Ok(sb) => {
                         v.title = sb.title.clone();
                         v.grade = sb.grade.clone();
-                        v.scenes = sb.scenes.iter().enumerate().map(|(i, b)| crate::model::Scene::from_beat(i, b)).collect();
+                        // A revised plan keeps the scripts, notes, thumbnails and voices of the
+                        // scenes that are still there (the folder's files, in order).
+                        let old = std::mem::take(&mut v.scenes);
+                        v.scenes = match v.dir.clone() {
+                            Some(dir) => {
+                                let notes: Vec<Option<String>> = old.iter().map(|s| s.note.clone()).collect();
+                                store::scenes_for(&dir, Some(&sb), &notes)
+                            }
+                            None => sb.scenes.iter().enumerate().map(|(i, b)| crate::model::Scene::from_beat(i, b)).collect(),
+                        };
+                        let leftover = carry_engine(&mut v.scenes, old);
+                        let scene_count = v.scenes.len();
                         v.storyboard = Some(sb);
+                        self.stage.dead.extend(leftover);
+                        if video == self.current && self.scene >= scene_count {
+                            self.scene = scene_count.saturating_sub(1);
+                        }
+                        let v = &mut self.projects[video.0].videos[video.1];
                         v.updated = store::now();
                         refresh_voice = true;
                         if let Some(u) = usage {
@@ -561,7 +734,16 @@ impl Workspace {
                     self.push_msg(video, Msg::Usage(u));
                 }
                 self.rescan_scenes(video);
-                self.check_scenes(video, r.kind, r.changed, cx);
+                // Edits that sent no file event (shell commands) show up in the stat.
+                let mut changed = r.changed;
+                if let Some(dir) = self.projects[video.0].videos[video.1].dir.clone() {
+                    for p in changed_between(&r.before, &snapshot_scripts(&dir)) {
+                        if !changed.contains(&p) {
+                            changed.push(p);
+                        }
+                    }
+                }
+                self.check_scenes(video, r.kind, changed, cx);
             }
         }
         cx.notify();
@@ -574,14 +756,10 @@ impl Workspace {
         let notes: Vec<Option<String>> = v.scenes.iter().map(|s| s.note.clone()).collect();
         let mut fresh = store::scenes_for(&dir, v.storyboard.as_ref(), &notes);
         // Keep what the engine already knows about unchanged scenes.
-        for (new, old) in fresh.iter_mut().zip(v.scenes.iter()) {
-            if new.engine.file == old.engine.file {
-                new.engine.thumb = old.engine.thumb.clone();
-                new.engine.duration = old.engine.duration;
-                new.engine.key_time = old.engine.key_time;
-            }
-        }
+        let leftover = carry_engine(&mut fresh, std::mem::take(&mut v.scenes));
         v.scenes = fresh;
+        self.stage.dead.extend(leftover);
+        let v = &self.projects[video.0].videos[video.1];
         if video == self.current && self.scene >= v.scenes.len() {
             self.scene = v.scenes.len().saturating_sub(1);
         }
@@ -591,15 +769,24 @@ impl Workspace {
     /// a change to lib/), then repair failures up to the configured number of tries.
     fn check_scenes(&mut self, video: (usize, usize), kind: TurnKind, changed: Vec<PathBuf>, cx: &mut Context<Self>) {
         let v = &self.projects[video.0].videos[video.1];
-        let Some(dir) = v.dir.clone() else { return };
-        let all = matches!(kind, TurnKind::Build) || changed.iter().any(|p| !p.starts_with(dir.join("scenes")));
+        let Some(dir) = v.dir.clone() else {
+            if let Some(v) = self.video_mut(video) {
+                v.busy = None;
+            }
+            return;
+        };
+        let scenes_dir = dir.join("scenes");
+        let all = matches!(kind, TurnKind::Build) || changed.iter().any(|p| !p.starts_with(&scenes_dir));
+        // Canonicalized once, not once per (scene x changed file).
+        let changed_canon: Vec<Option<PathBuf>> = if all { Vec::new() } else { changed.iter().map(|c| c.canonicalize().ok()).collect() };
         let targets: Vec<(usize, OpenScene)> = v
             .scenes
             .iter()
             .enumerate()
             .filter(|(_, s)| {
-                s.engine.file.as_ref().is_some_and(|f| {
-                    all || changed.iter().any(|c| c.canonicalize().ok() == f.canonicalize().ok())
+                s.engine.file.as_ref().is_some_and(|f| all || {
+                    let f = f.canonicalize().ok();
+                    changed_canon.contains(&f)
                 })
             })
             .filter_map(|(i, s)| {
@@ -618,7 +805,9 @@ impl Workspace {
             })
             .collect();
         if targets.is_empty() {
-            self.finish_assistant_work(video, kind, true, cx);
+            // Nothing changed on disk (a reply with no edits): leave the stage and the
+            // thumbnails alone.
+            self.finish_assistant_work_with(video, kind, true, !changed.is_empty(), cx);
             return;
         }
         self.set_working(video, Some(format!("Checking {} scene{}", targets.len(), if targets.len() == 1 { "" } else { "s" })));
@@ -678,7 +867,7 @@ impl Workspace {
         // Repair every failing scene in one turn, each with its diagnostic and the lines involved.
         let tries = self.prefs.repair_tries;
         let attempt = match kind {
-            TurnKind::Repair { k, .. } => k + 1,
+            TurnKind::Repair { k, .. } => k.saturating_add(1),
             _ => 1,
         };
         if let Some(&(scene, ..)) = failures.first() {
@@ -703,7 +892,7 @@ impl Workspace {
                     v.busy = Some(Busy::Fixing { scene: scene + 1, k: attempt, of: tries });
                 }
                 self.set_working(video, Some(format!("Fixing {what} · try {attempt} of {tries}")));
-                self.start_turn(video, TurnKind::Repair { scene, k: attempt }, prompt::repair_all(&list), false, effort, cx);
+                self.start_turn(video, TurnKind::Repair { scene, k: attempt, build: kind.is_build() }, prompt::repair_all(&list), false, effort, cx);
                 return;
             }
             // Out of tries: one plain sentence instead of a row per check.
@@ -724,32 +913,50 @@ impl Workspace {
     }
 
     fn finish_assistant_work(&mut self, video: (usize, usize), kind: TurnKind, ok: bool, cx: &mut Context<Self>) {
+        self.finish_assistant_work_with(video, kind, ok, true, cx);
+    }
+
+    /// `reload`: the turn touched files, so the stage and the thumbnails are stale (a build
+    /// always reloads).
+    fn finish_assistant_work_with(&mut self, video: (usize, usize), kind: TurnKind, ok: bool, reload: bool, cx: &mut Context<Self>) {
         self.set_working(video, None);
         let was_build = {
             let v = &mut self.projects[video.0].videos[video.1];
-            let build = v.status == VideoStatus::Building || matches!(kind, TurnKind::Build);
+            // By what the turn was for, not the video's status: a render sets Building too.
+            let build = kind.is_build();
             v.busy = None;
             v.updated = store::now();
-            if v.scenes.iter().any(|s| s.engine.file.is_some()) {
-                v.status = if ok { VideoStatus::Ready } else { VideoStatus::Failed };
-            }
             build
         };
+        let has_scripts = self.projects[video.0].videos[video.1].scenes.iter().any(|s| s.engine.file.is_some());
+        // A render of this video owns its status until it ends.
+        if !self.render_active(video) {
+            if has_scripts {
+                self.projects[video.0].videos[video.1].status = if ok { VideoStatus::Ready } else { VideoStatus::Failed };
+            } else {
+                // A build that wrote no scenes isn't still building.
+                self.reset_building(video, was_build);
+            }
+        }
         self.persist(video);
+        let reload = reload || was_build;
+        // The script on screen may have changed.
+        self.probes.get_mut().clear();
         if video == self.current {
-            if was_build {
+            if was_build && has_scripts {
                 self.mode = Mode::Studio;
                 self.scene = 0;
             }
-            self.stage.open = None;
-            self.sync_preview();
+            if reload {
+                self.stage.open = None;
+                self.sync_preview();
+            }
         }
-        self.refresh_thumbs_for(video);
-        if ok && self.prefs.auto_render && was_build {
-            let cur = self.current;
-            self.current = video;
-            self.start_render(cx);
-            self.current = cur;
+        if reload {
+            self.refresh_thumbs_for(video);
+        }
+        if ok && self.prefs.auto_render && was_build && has_scripts {
+            self.start_render_for(video, cx);
         }
         cx.notify();
     }
@@ -765,11 +972,16 @@ impl Workspace {
 
     /// Home composer: create a video and plan its storyboard.
     pub fn start_plan(&mut self, request: String, cx: &mut Context<Self>) {
-        let request = request.trim().to_string();
-        if request.is_empty() {
+        let mut request = request.trim().to_string();
+        // Documents alone are a request: plan the lesson from them.
+        if request.is_empty() && self.attachments.is_empty() {
             return;
         }
-        if self.pick_provider().is_none() {
+        if request.is_empty() {
+            request = "Make a lesson from the attached documents.".into();
+        }
+        // While detection is still running the turn waits for it (see `start_turn`).
+        if self.pick_provider().is_none() && !self.checking_providers() {
             self.notice = Some("Connect an assistant first: Settings → Assistants & usage.".into());
             self.settings_page = crate::app::SettingsPage::Assistants;
             self.go(Screen::Settings, cx);
@@ -788,7 +1000,10 @@ impl Workspace {
             }
         };
         self.home_project = None;
-        let title: String = request.split_whitespace().take(6).collect::<Vec<_>>().join(" ");
+        let title: String = match self.attachments.first().and_then(|d| d.file_stem()) {
+            Some(stem) if request == "Make a lesson from the attached documents." => stem.to_string_lossy().into_owned(),
+            _ => request.split_whitespace().take(6).collect::<Vec<_>>().join(" "),
+        };
         let Some(mut video) = store::new_video(&self.projects[pi], &title, &request) else {
             self.notice = Some("Couldn't create the video folder.".into());
             cx.notify();
@@ -886,7 +1101,7 @@ impl Workspace {
         if self.busy(video) {
             return;
         }
-        if self.pick_provider().is_none() {
+        if self.pick_provider().is_none() && !self.checking_providers() {
             self.notice = Some("Connect an assistant first: Settings → Assistants & usage.".into());
             self.settings_page = crate::app::SettingsPage::Assistants;
             self.go(Screen::Settings, cx);
@@ -938,18 +1153,20 @@ impl Workspace {
         None
     }
 
-    /// Storyboard revise box.
-    pub fn revise_storyboard(&mut self, note: String, cx: &mut Context<Self>) {
+    /// Storyboard revise box. True when the note was taken (the box can be cleared); false
+    /// when the assistant is busy or there is nothing to revise, so the text must stay.
+    pub fn revise_storyboard(&mut self, note: String, cx: &mut Context<Self>) -> bool {
         let video = self.current;
-        let Some(sb) = self.video().storyboard.clone() else { return };
+        let Some(sb) = self.video().storyboard.clone() else { return false };
         if note.trim().is_empty() || self.busy(video) {
-            return;
+            return false;
         }
         if let Some(v) = self.video_mut(video) {
             v.busy = Some(Busy::Revising);
         }
         let effort = self.prefs.planning_reasoning.effort(Some(Effort::Low));
         self.start_turn(video, TurnKind::Revise, prompt::revise(&sb, &note), true, effort, cx);
+        true
     }
 
     /// Approve & build: write the scenes for the storyboard.
@@ -978,18 +1195,20 @@ impl Workspace {
         self.start_turn(video, TurnKind::Build, prompt::build(&sb), false, effort, cx);
     }
 
-    /// The Studio chat.
-    pub fn send_chat(&mut self, text: String, cx: &mut Context<Self>) {
+    /// The Studio chat. True when the message was taken (the box can be cleared); false
+    /// when the assistant is busy (or the text is empty), so what was typed stays.
+    pub fn send_chat(&mut self, text: String, cx: &mut Context<Self>) -> bool {
         let video = self.current;
         let text = text.trim().to_string();
         if text.is_empty() || self.busy(video) {
-            return;
+            return false;
         }
         if let Some(v) = self.video_mut(video) { v.chat.retain(|m| !matches!(m, Msg::Usage(_))) }
         self.push_msg(video, Msg::User(text.clone()));
         let v = self.video();
         if v.dir.is_none() {
-            return self.fail_early(video, "This video has no folder yet.".into(), cx);
+            self.fail_early(video, true, "This video has no folder yet.".into(), cx);
+            return true;
         }
         let scope = v.scenes.get(self.scene).and_then(|s| {
             let f = s.engine.file.as_ref()?;
@@ -1004,5 +1223,31 @@ impl Workspace {
         self.set_working(video, Some("Thinking".into()));
         let effort = self.prefs.build_reasoning.effort(self.auto_build_effort());
         self.start_turn(video, TurnKind::Edit, p, false, effort, cx);
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn script_changes_are_found_by_stat() {
+        let dir = std::env::temp_dir().join(format!("studio-snap-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("scenes")).unwrap();
+        std::fs::write(dir.join("scenes/a.py"), "one").unwrap();
+        std::fs::write(dir.join("scenes/b.py"), "two").unwrap();
+        let before = snapshot_scripts(&dir);
+        assert!(changed_between(&before, &snapshot_scripts(&dir)).is_empty());
+        // Size differs even if the clock didn't tick.
+        std::fs::write(dir.join("scenes/a.py"), "one more").unwrap();
+        std::fs::write(dir.join("scenes/c.py"), "new").unwrap();
+        std::fs::remove_file(dir.join("scenes/b.py")).unwrap();
+        let mut changed = changed_between(&before, &snapshot_scripts(&dir));
+        changed.sort();
+        let names: Vec<_> = changed.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, ["a.py", "b.py", "c.py"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

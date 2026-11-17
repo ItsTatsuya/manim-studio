@@ -45,38 +45,95 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
+    env:
+      TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+      - name: Check the tag matches the version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:TAG -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') { throw "tag '$env:TAG' is not vX.Y.Z or vX.Y.Z-suffix" }
+          $m = Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1
+          if (-not $m) { throw "no version found in Cargo.toml" }
+          $version = $m.Matches[0].Groups[1].Value
+          if ($env:TAG -ne "v$version") { throw "tag $env:TAG does not match the Cargo.toml version $version (expected v$version)" }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Inno Setup
         run: choco install innosetup -y --no-progress
-      - name: Bundle and sign
+      - name: Bundle (no secrets in this step)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # A suffixed tag (v1.2.0-beta.1) is the beta channel; a plain one is stable (and refreshes beta too).
+          $channel = if ($env:TAG.Contains('-')) { 'beta' } else { 'stable' }
+          ./script/bundle-windows.ps1 -Installer -SkipSign -Channel $channel -Notes $env:TAG
+      - name: Sign manifests
+        # Only this step sees the key, and it only runs the already-built signer.
         env:
           MINISIGN_SECRET: ${{ secrets.MINISIGN_SECRET }}
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           if (-not $env:MINISIGN_SECRET) { throw "The MINISIGN_SECRET secret is not set" }
-          ./script/bundle-windows.ps1 -Installer -Notes "${{ github.ref_name }}"
+          $manifests = @(Get-ChildItem dist/manifest-*.json)
+          if ($manifests.Count -eq 0) { throw "no manifests in dist" }
+          foreach ($m in $manifests) {
+            ./target/release/release-sign.exe sign $m.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signing $($m.Name) failed" }
+            if (-not (Test-Path "$($m.FullName).minisig")) { throw "$($m.Name).minisig was not written" }
+          }
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $tag = "${{ github.ref_name }}"
+          $tag = $env:TAG
+          $title = "Manim Studio $($tag.TrimStart('v'))"
           $assets = @((Get-Item dist/*.zip).FullName, (Get-Item dist/*-setup.exe).FullName)
+          $manifests = @(Get-ChildItem dist/manifest-*.json*).FullName
+          if ($manifests.Count -lt 2) { throw "expected signed manifests in dist" }
           # The release (with its downloads) first: the manifest must never point at a missing zip.
-          if ($tag.Contains('-')) {
-            gh release create $tag @assets --prerelease --latest=false --title "Manim Studio $($tag.TrimStart('v'))" --generate-notes
+          # Re-running the job for the same tag reuses the release and replaces its files.
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            $flags = if ($tag.Contains('-')) { @('--prerelease', '--latest=false') } else { @('--latest') }
+            gh release create $tag @assets @flags --title $title --generate-notes
+            if ($LASTEXITCODE -ne 0) { throw "creating the $tag release failed" }
           } else {
-            gh release create $tag @assets --latest --title "Manim Studio $($tag.TrimStart('v'))" --generate-notes
+            gh release upload $tag @assets --clobber
+            if ($LASTEXITCODE -ne 0) { throw "uploading the $tag downloads failed" }
           }
-          if ($LASTEXITCODE -ne 0) { throw "creating the $tag release failed" }
           gh release view updates *> $null
           if ($LASTEXITCODE -ne 0) {
             gh release create updates --prerelease --latest=false --title "Update manifests" --notes "Signed manifests the app checks for updates. Don't download these."
             if ($LASTEXITCODE -ne 0) { throw "creating the updates release failed" }
           }
-          gh release upload updates dist/manifest-stable.json dist/manifest-stable.json.minisig --clobber
-          if ($LASTEXITCODE -ne 0) { throw "uploading the update manifest failed" }
+          # Manifest and signature are separate files, so an app that checks in the instant
+          # between the two uploads sees a signature mismatch and simply retries on its next
+          # check (it never installs anything unverified). Stable tags upload manifest-stable
+          # and manifest-beta; beta tags only manifest-beta.
+          # Never replace a live manifest with an older version: a stable hotfix (or a re-run
+          # of an old tag) must not pull the beta channel back from a newer beta.
+          $live = Join-Path $env:RUNNER_TEMP "live-manifests"
+          New-Item -ItemType Directory -Force $live | Out-Null
+          $upload = @()
+          foreach ($json in @(Get-ChildItem dist/manifest-*.json)) {
+            $mine = [System.Management.Automation.SemanticVersion]((Get-Content $json.FullName -Raw | ConvertFrom-Json).version)
+            gh release download updates -p $json.Name -D $live --clobber *> $null
+            $livePath = Join-Path $live $json.Name
+            if ($LASTEXITCODE -eq 0 -and (Test-Path $livePath)) {
+              $theirs = [System.Management.Automation.SemanticVersion]((Get-Content $livePath -Raw | ConvertFrom-Json).version)
+              if ($theirs -gt $mine) {
+                Write-Host "Keeping the live $($json.Name) ($theirs is newer than $mine)"
+                continue
+              }
+            }
+            $upload += $json.FullName, "$($json.FullName).minisig"
+          }
+          if ($upload.Count -gt 0) {
+            gh release upload updates @upload --clobber
+            if ($LASTEXITCODE -ne 0) { throw "uploading the update manifests failed" }
+          }

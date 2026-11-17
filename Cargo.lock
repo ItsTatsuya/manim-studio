@@ -1061,7 +1061,7 @@ checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width 0.1.14",
+ "unicode-width 0.2.3",
 ]
 
 [[package]]
@@ -2106,9 +2106,7 @@ version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "457e789b3d1202543297a350643cf459f836cade38934e7a4cf6a39e7cde2905"
 dependencies = [
- "fontconfig-parser",
  "log",
- "memmap2",
  "slotmap",
  "tinyvec",
  "ttf-parser",
@@ -2366,16 +2364,6 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi 6.0.0",
-]
-
-[[package]]
-name = "gif"
-version = "0.13.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ae047235e33e2829703574b54fdec96bfbad892062d97fed2f76022287de61b"
-dependencies = [
- "color_quant",
- "weezl",
 ]
 
 [[package]]
@@ -3557,7 +3545,7 @@ dependencies = [
  "byteorder-lite",
  "color_quant",
  "exr",
- "gif 0.14.2",
+ "gif",
  "image-webp",
  "moxcms",
  "num-traits",
@@ -4106,17 +4094,17 @@ dependencies = [
 [[package]]
 name = "manim"
 version = "0.1.0"
-source = "git+https://github.com/ItsTatsuya/manim-rust?rev=752eb2020600e9c67b2c8d5258731524a2bf1b80#752eb2020600e9c67b2c8d5258731524a2bf1b80"
+source = "git+https://github.com/ItsTatsuya/manim-rust?rev=a5ef7d8b53a50f753098477fa3ea87748253079b#a5ef7d8b53a50f753098477fa3ea87748253079b"
 dependencies = [
  "anyhow",
  "bytemuck",
- "fontdb 0.23.0",
- "gif 0.13.3",
+ "fontdb 0.24.0",
+ "gif",
  "glam 0.29.3",
  "image",
  "lyon",
  "oxc",
- "png 0.17.16",
+ "png 0.18.1",
  "pollster 0.4.0",
  "rayon",
  "rquickjs",
@@ -6388,7 +6376,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67e3803f97b999e80cbf7c6ecdd07a8102204d92e1633cf48783720c521196bd"
 dependencies = [
  "bytemuck",
- "gif 0.14.2",
+ "gif",
  "image-webp",
  "log",
  "pico-args",
@@ -7673,7 +7661,6 @@ dependencies = [
  "bytemuck",
  "cfg-if",
  "log",
- "png 0.17.16",
  "tiny-skia-path 0.11.4",
 ]
 
@@ -9220,7 +9207,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

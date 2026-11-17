@@ -17,7 +17,7 @@ impl Workspace {
     /// Go to onboarding step `step`; arriving at the voice step starts its download.
     pub fn enter_onboarding_step(&mut self, step: usize, cx: &mut Context<Self>) {
         self.onboarding_step = step.min(STEPS - 1);
-        if self.onboarding_step == VOICE_STEP && self.natural == crate::engine::NaturalVoice::Missing {
+        if self.onboarding_step == VOICE_STEP && self.natural == crate::engine::NaturalVoice::Missing && studio_render::kokoro::supported() {
             self.download_natural_voice(cx);
         }
         cx.notify();
@@ -38,7 +38,8 @@ impl Workspace {
             4 => studio_ui::assets::Art::Quiz,
             _ => studio_ui::assets::Art::Circle,
         };
-        let voice_ready = self.natural == crate::engine::NaturalVoice::Ready;
+        // Where the natural voice can't run, narration is off and setup goes on without it.
+        let voice_ready = self.natural == crate::engine::NaturalVoice::Ready || !studio_render::kokoro::supported();
         let can_continue = match step {
             1 => self.providers.iter().any(|p| p.signed_in),
             // Narration needs the natural voice: no way past this step until it's on disk.
@@ -107,7 +108,7 @@ impl Workspace {
                         // Skipping still has to stop at the voice download.
                         d.when(step != VOICE_STEP, |d| {
                             d.child(Button::new("onb-skip", "Skip setup").ghost().on_click(click(cx, |this, _, cx| {
-                                if this.natural == crate::engine::NaturalVoice::Ready {
+                                if this.natural == crate::engine::NaturalVoice::Ready || !studio_render::kokoro::supported() {
                                     this.finish_onboarding(cx);
                                 } else {
                                     this.enter_onboarding_step(VOICE_STEP, cx);
@@ -436,7 +437,16 @@ impl Workspace {
                         .into_any_element(),
                 ),
             ),
-            NaturalVoice::Downloading(f) => (format!("Downloading · {:.0} of {:.0} MB", f * total_mb, total_mb), None),
+            _ if !studio_render::kokoro::supported() => (studio_render::kokoro::UNSUPPORTED.to_string(), None),
+            NaturalVoice::Downloading(f) => (
+                format!("Downloading · {:.0} of {:.0} MB", f * total_mb, total_mb),
+                Some(
+                    Button::new("onb-voice-cancel", "Cancel")
+                        .ghost()
+                        .on_click(click(cx, |this, _, cx| this.cancel_natural_voice(cx)))
+                        .into_any_element(),
+                ),
+            ),
             NaturalVoice::Missing => (
                 format!("One-time download · {total_mb:.0} MB"),
                 Some(
@@ -464,6 +474,7 @@ impl Workspace {
             _ => (None, false),
         };
         let note = match &self.natural {
+            _ if !studio_render::kokoro::supported() => "Narration is off for now. Everything else works; you can continue.",
             NaturalVoice::Ready => "Ready. You can pick another voice and speed later in Settings → Voice & captions.",
             NaturalVoice::Failed(_) => "Check your internet connection and try again. Studio needs the voice to narrate videos.",
             _ => "Studio needs the voice to narrate videos, so setup continues once it's downloaded. It only happens once.",

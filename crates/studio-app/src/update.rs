@@ -24,6 +24,12 @@ fn base_url() -> String {
 }
 const CHANNELS: [&str; 2] = ["stable", "beta"];
 
+/// A manifest at or below the version the teacher rolled back from is not offered again.
+/// (Versions compare semver-aware, so `1.1.0-beta.2` is below `1.1.0`.)
+pub fn is_skipped(offered: &str, skipped: Option<&str>) -> bool {
+    skipped.is_some_and(|s| studio_updater::compare(offered, s) != std::cmp::Ordering::Greater)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum UpdateState {
     /// This build has no signing key.
@@ -50,7 +56,11 @@ fn install_dir() -> Option<PathBuf> {
 pub fn apply_pending_at_start() -> bool {
     let (Some(stage), Some(dir)) = (staging(), install_dir()) else { return false };
     studio_updater::clean(&dir);
-    let Some((_, staged)) = studio_updater::pending(&stage, VERSION) else { return false };
+    let Some((version, staged)) = studio_updater::pending(&stage, VERSION) else { return false };
+    // Rolled back from this version: don't swap it straight back in.
+    if is_skipped(&version, crate::prefs::Prefs::load().skipped_version.as_deref()) {
+        return false;
+    }
     if studio_updater::apply(&staged, &dir).is_err() {
         return false;
     }
@@ -79,17 +89,19 @@ impl Workspace {
         }
         let Some(stage) = staging() else { return };
         self.update = UpdateState::Checking;
-        self.prefs.last_update_check = Some(crate::store::now());
-        self.save_prefs();
         let channel = self.update_channel();
+        let skipped = self.prefs.skipped_version.clone();
         cx.notify();
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let base = base_url();
             let checked = cx.background_executor().spawn(async move { studio_updater::check(&base, channel, key, VERSION) }).await;
+            // The day's check counts only once the whole thing worked (nothing newer, or the
+            // update is staged); a failed check or download is tried again at the next start.
             let manifest = match checked {
-                Ok(Some(m)) => m,
-                Ok(None) => {
+                Ok(Some(m)) if !is_skipped(&m.version, skipped.as_deref()) => m,
+                Ok(_) => {
                     this.update(cx, |this, cx| {
+                        this.stamp_update_check();
                         this.update = UpdateState::UpToDate;
                         cx.notify();
                     })
@@ -116,6 +128,7 @@ impl Workspace {
             this.update(cx, |this, cx| {
                 match staged {
                     Ok(_) => {
+                        this.stamp_update_check();
                         this.update = UpdateState::Ready { version, notes };
                         this.toast = true;
                     }
@@ -128,6 +141,11 @@ impl Workspace {
         .detach();
     }
 
+    fn stamp_update_check(&mut self) {
+        self.prefs.last_update_check = Some(crate::store::now());
+        self.save_prefs();
+    }
+
     /// Daily background check after startup (quietly; errors only show in Settings).
     pub fn schedule_update_check(&mut self, cx: &mut Context<Self>) {
         if PUBLIC_KEY.is_none() {
@@ -135,7 +153,8 @@ impl Workspace {
             return;
         }
         if let (Some(stage), true) = (staging(), true)
-            && let Some((version, _)) = studio_updater::pending(&stage, VERSION) {
+            && let Some((version, _)) = studio_updater::pending(&stage, VERSION)
+            && !is_skipped(&version, self.prefs.skipped_version.as_deref()) {
                 self.update = UpdateState::Ready { version, notes: String::new() };
                 return;
             }
@@ -155,18 +174,35 @@ impl Workspace {
     /// Install the staged update now: swap files, start the new version, quit.
     pub fn restart_to_update(&mut self, cx: &mut Context<Self>) {
         let (Some(stage), Some(dir)) = (staging(), install_dir()) else { return };
-        let Some((_, staged)) = studio_updater::pending(&stage, VERSION) else { return };
+        let Some((_, staged)) = studio_updater::pending(&stage, VERSION) else {
+            self.update = UpdateState::Error("The downloaded update is no longer there. Check for updates again.".into());
+            self.notice = Some("Couldn't restart to update: the downloaded update is missing. Check for updates again in Settings.".into());
+            cx.notify();
+            return;
+        };
         match studio_updater::apply(&staged, &dir) {
             Ok(()) => {
                 if relaunch() {
                     cx.quit();
+                } else {
+                    // The files are swapped; only the restart failed.
+                    let why = "The update is installed, but Studio couldn't restart itself. Close it and open it again.";
+                    self.update = UpdateState::Error(why.into());
+                    self.notice = Some(format!("Couldn't restart: {why}"));
+                    cx.notify();
                 }
             }
             Err(e) => {
                 self.update = UpdateState::Error(format!("{e:#}"));
+                self.notice = Some(format!("Couldn't install the update: {e:#}"));
                 cx.notify();
             }
         }
+    }
+
+    /// `can_roll_back`, cached for rendering.
+    pub fn can_roll_back_cached(&self) -> bool {
+        self.probes.borrow_mut().can_roll_back.get((), |_| self.can_roll_back())
     }
 
     pub fn can_roll_back(&self) -> bool {
@@ -176,10 +212,24 @@ impl Workspace {
     /// Go back to the previous version and restart.
     pub fn roll_back(&mut self, cx: &mut Context<Self>) {
         let Some(dir) = install_dir() else { return };
+        // An older version may not understand newer chat files and could save over them:
+        // keep a copy of each beside it first.
+        for v in self.projects.iter().flat_map(|p| &p.videos) {
+            if let Some(chat) = v.dir.as_ref().map(|d| d.join("chat.json")).filter(|c| c.is_file()) {
+                crate::store::back_up_copy(&chat);
+            }
+        }
         match studio_updater::roll_back(&dir) {
             Ok(()) => {
+                // Don't offer the version we just left (or older) again.
+                self.prefs.skipped_version = Some(VERSION.to_string());
+                self.probes.get_mut().clear();
+                self.save_prefs();
                 if relaunch() {
                     cx.quit();
+                } else {
+                    self.notice = Some("Couldn't restart after rolling back. Close Studio and open it again.".into());
+                    cx.notify();
                 }
             }
             Err(e) => {
@@ -187,5 +237,26 @@ impl Workspace {
                 cx.notify();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_skipped;
+
+    #[test]
+    fn rolled_back_version_and_older_are_skipped() {
+        assert!(is_skipped("1.1.0", Some("1.1.0")));
+        assert!(is_skipped("1.0.9", Some("1.1.0")));
+        assert!(is_skipped("1.1.0-beta.2", Some("1.1.0")));
+        assert!(is_skipped("0.10.0", Some("0.10.0")));
+    }
+
+    #[test]
+    fn newer_versions_and_no_skip_are_offered() {
+        assert!(!is_skipped("1.1.1", Some("1.1.0")));
+        assert!(!is_skipped("1.1.0", Some("1.1.0-beta.1")));
+        assert!(!is_skipped("0.10.0", Some("0.9.3")));
+        assert!(!is_skipped("1.1.0", None));
     }
 }

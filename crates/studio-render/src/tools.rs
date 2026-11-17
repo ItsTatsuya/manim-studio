@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::sync::atomic::AtomicBool;
 
 use anyhow::Result;
 
@@ -58,8 +59,9 @@ pub fn ffmpeg_download_size() -> u64 {
     FFMPEG.compressed + LICENSE.compressed
 }
 
-/// Download ffmpeg (and its licence) for this computer. `progress(done, total)`.
-pub fn download_ffmpeg(mut progress: impl FnMut(u64, u64)) -> Result<()> {
+/// Download ffmpeg (and its licence) for this computer. `progress(done, total)`. Setting
+/// `cancel` stops it with [`crate::Cancelled`] (see [`crate::is_cancelled`]).
+pub fn download_ffmpeg(cancel: &AtomicBool, mut progress: impl FnMut(u64, u64)) -> Result<()> {
     let Some(dir) = ffmpeg_dir() else { anyhow::bail!("no data folder for ffmpeg") };
     if !cfg!(windows) {
         anyhow::bail!("install ffmpeg with your package manager");
@@ -72,7 +74,7 @@ pub fn download_ffmpeg(mut progress: impl FnMut(u64, u64)) -> Result<()> {
             done += entry.compressed;
             continue;
         }
-        entry.download(dest, |n| {
+        entry.download(dest, cancel, |n: u64| {
             done = (done + n).min(total);
             progress(done, total);
         })?;
@@ -88,7 +90,7 @@ mod tests {
     fn downloads_ffmpeg() {
         let Some(d) = std::env::var_os("FFMPEG_DOWNLOAD") else { return };
         super::set_dir(std::path::PathBuf::from(d));
-        super::download_ffmpeg(|done, total| assert!(done <= total)).unwrap();
+        super::download_ffmpeg(&std::sync::atomic::AtomicBool::new(false), |done, total| assert!(done <= total)).unwrap();
         let exe = super::ffmpeg().expect("downloaded");
         let out = std::process::Command::new(&exe).args(["-hide_banner", "-encoders"]).output().unwrap();
         assert!(String::from_utf8_lossy(&out.stdout).contains("libx264"));

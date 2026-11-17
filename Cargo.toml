@@ -19,7 +19,7 @@ directories = "6.0"
 unicode-segmentation = "1.12"
 anyhow = "1.0"
 # The engine, pinned. Bump deliberately: scene scripts and the theme format follow it.
-manim = { git = "https://github.com/ItsTatsuya/manim-rust", rev = "752eb2020600e9c67b2c8d5258731524a2bf1b80" }
+manim = { git = "https://github.com/ItsTatsuya/manim-rust", rev = "a5ef7d8b53a50f753098477fa3ea87748253079b" }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
@@ -40,5 +40,5 @@ debug = false
 opt-level = 3
 lto = "thin"
 codegen-units = 1
-panic = "abort"
+panic = "unwind"
 strip = "symbols"

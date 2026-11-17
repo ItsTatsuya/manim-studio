@@ -79,6 +79,15 @@ pub enum EngineEvent {
     Warning {
         message: String,
     },
+    /// `--renderer auto` finished calibrating and picked one (`kind` is `"gpu"` or `"cpu"`).
+    Renderer {
+        renderer: String,
+        kind: String,
+        #[serde(default)]
+        cpu_ms_per_frame: f64,
+        #[serde(default)]
+        gpu_ms_per_frame: f64,
+    },
 }
 
 impl EngineEvent {
@@ -115,6 +124,8 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(e, EngineEvent::Done { frames: 120, .. }));
+        let e = EngineEvent::parse(r#"{"event":"renderer","renderer":"CPU (tiny-skia)","kind":"cpu","cpu_ms_per_frame":3.5,"gpu_ms_per_frame":9.25}"#).unwrap();
+        assert_eq!(e, EngineEvent::Renderer { renderer: "CPU (tiny-skia)".into(), kind: "cpu".into(), cpu_ms_per_frame: 3.5, gpu_ms_per_frame: 9.25 });
         assert!(EngineEvent::parse("hello from log()").is_none());
         assert!(EngineEvent::parse(r#"{"event":"something_new"}"#).is_none());
     }

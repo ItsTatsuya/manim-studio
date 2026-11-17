@@ -11,6 +11,7 @@ mod manage;
 mod model;
 mod palette;
 mod prefs;
+mod probes;
 mod shortcuts;
 mod store;
 mod update;

@@ -134,8 +134,105 @@ pub fn load_video_dir(dir: &Path) -> Option<Video> {
     load_video(dir)
 }
 
+/// Write `bytes` to `path` through a sibling temp file, so a crash or a second instance
+/// never leaves half a file behind.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".tmp");
+    let tmp = path.with_file_name(name);
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
+}
+
+/// Backups kept per file.
+const BACKUPS_KEPT: usize = 5;
+
+/// `chat.json` at `secs` -> `chat.json.1700000000.bak`.
+fn backup_name(file: &str, secs: u64) -> String {
+    format!("{file}.{secs}.bak")
+}
+
+/// The timestamp in a backup's name (`file.<secs>.bak`), if `name` is a backup of `file`.
+fn backup_secs(file: &str, name: &str) -> Option<u64> {
+    name.strip_prefix(file)?.strip_prefix('.')?.strip_suffix(".bak")?.parse().ok()
+}
+
+/// Of the sibling file names, the backups of `file` to delete so only the newest `keep` stay.
+fn stale_backups(file: &str, names: &[String], keep: usize) -> Vec<String> {
+    let mut found: Vec<(u64, &String)> = names.iter().filter_map(|n| Some((backup_secs(file, n)?, n))).collect();
+    found.sort();
+    let drop = found.len().saturating_sub(keep);
+    found.into_iter().take(drop).map(|(_, n)| n.clone()).collect()
+}
+
+/// Keep a timestamped copy of `path` (`<name>.<unix-secs>.bak`), or move it aside with
+/// `move_it`, so a later save (which writes over the file) doesn't destroy what the teacher
+/// had. At most [`BACKUPS_KEPT`] backups of a file stay; a copy identical to the newest
+/// backup isn't made again.
+fn backup(path: &Path, move_it: bool) {
+    let Some(file) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else { return };
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+        .unwrap_or_default();
+    let newest = names.iter().filter_map(|n| Some((backup_secs(&file, n)?, n))).max().map(|(_, n)| dir.join(n));
+    let same_as_newest = newest.is_some_and(|n| matches!((std::fs::read(&n), std::fs::read(path)), (Ok(a), Ok(b)) if a == b));
+    // Never write over an existing backup (two backups in one second, or a clock that
+    // went backwards): step the stamp until the name is free.
+    let mut secs = now();
+    while dir.join(backup_name(&file, secs)).exists() {
+        secs += 1;
+    }
+    let name = backup_name(&file, secs);
+    let bak = dir.join(&name);
+    if same_as_newest {
+        if move_it {
+            let _ = std::fs::remove_file(path);
+        }
+    } else if move_it {
+        if std::fs::rename(path, &bak).is_err() {
+            let _ = std::fs::copy(path, &bak);
+        }
+    } else {
+        let _ = std::fs::copy(path, &bak);
+    }
+    if bak.exists() && !names.contains(&name) {
+        names.push(name.clone());
+    }
+    // The backup just made is never pruned, even if its stamp sorts oldest.
+    for old in stale_backups(&file, &names, BACKUPS_KEPT) {
+        if old != name {
+            let _ = std::fs::remove_file(dir.join(old));
+        }
+    }
+}
+
+/// Keep a copy of a file we couldn't read (see [`backup`]).
+pub fn back_up_unreadable(path: &Path) {
+    backup(path, false);
+}
+
+/// Keep a copy of a file that is about to be written by something that may not understand it.
+pub fn back_up_copy(path: &Path) {
+    backup(path, false);
+}
+
+/// Move a file we can't read at all out of the way (see [`backup`]).
+pub fn move_aside(path: &Path) {
+    backup(path, true);
+}
+
 fn load_video(dir: &Path) -> Option<Video> {
-    let f: VideoFile = serde_json::from_slice(&std::fs::read(dir.join("video.json")).ok()?).ok()?;
+    let bytes = std::fs::read(dir.join("video.json")).ok()?;
+    let f: VideoFile = match serde_json::from_slice(&bytes) {
+        Ok(f) => f,
+        Err(_) => {
+            back_up_unreadable(&dir.join("video.json"));
+            return None;
+        }
+    };
     let title = if f.title.is_empty() { humanize(&dir.file_name()?.to_string_lossy()) } else { f.title.clone() };
     let scenes = scenes_for(dir, f.storyboard.as_ref(), &f.notes);
     let session = match (f.provider.as_deref().and_then(Provider::from_key), f.session) {
@@ -166,6 +263,7 @@ fn load_video(dir: &Path) -> Option<Video> {
         busy: None,
         request: f.request,
         resume_next: false,
+        voice_gen: 0,
     })
 }
 
@@ -186,16 +284,38 @@ pub fn save_video(v: &Video) {
         notes: v.scenes.iter().map(|s| s.note.clone()).collect(),
     };
     if let Ok(json) = serde_json::to_vec_pretty(&f) {
-        let tmp = dir.join("video.json.tmp");
-        if std::fs::write(&tmp, json).is_ok() {
-            let _ = std::fs::rename(tmp, dir.join("video.json"));
-        }
+        let _ = write_atomic(&dir.join("video.json"), &json);
     }
 }
 
+/// Chat records from a `chat.json`, one by one: a record this version doesn't know
+/// (written by a newer one) is skipped instead of discarding the whole conversation.
+/// Returns the records and how many were skipped, or `None` when the file isn't a JSON list.
+fn parse_chat(bytes: &[u8]) -> Option<(Vec<ChatRecord>, usize)> {
+    let values: Vec<serde_json::Value> = serde_json::from_slice(bytes).ok()?;
+    let total = values.len();
+    let records: Vec<ChatRecord> = values.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect();
+    let skipped = total - records.len();
+    Some((records, skipped))
+}
+
 fn load_chat(dir: &Path) -> Vec<Msg> {
-    let Ok(bytes) = std::fs::read(dir.join("chat.json")) else { return vec![] };
-    let records: Vec<ChatRecord> = serde_json::from_slice(&bytes).unwrap_or_default();
+    let path = dir.join("chat.json");
+    let Ok(bytes) = std::fs::read(&path) else { return vec![] };
+    let records = match parse_chat(&bytes) {
+        Some((records, skipped)) => {
+            if skipped > 0 {
+                // The next save writes only what this version understands.
+                back_up_unreadable(&path);
+            }
+            records
+        }
+        None => {
+            // Not readable at all: move it aside rather than let the next save replace it.
+            move_aside(&path);
+            return vec![];
+        }
+    };
     records
         .into_iter()
         .map(|r| match r {
@@ -239,7 +359,7 @@ pub fn save_chat(v: &Video) {
         })
         .collect();
     if let Ok(json) = serde_json::to_vec_pretty(&records) {
-        let _ = std::fs::write(dir.join("chat.json"), json);
+        let _ = write_atomic(&dir.join("chat.json"), &json);
     }
 }
 
@@ -279,10 +399,13 @@ pub fn load() -> Vec<Project> {
         .map(|e| e.path())
         .filter(|p| p.is_dir())
         .map(|dir| {
-            let f: ProjectFile = std::fs::read(dir.join("project.json"))
-                .ok()
-                .and_then(|b| serde_json::from_slice(&b).ok())
-                .unwrap_or_default();
+            let f: ProjectFile = match std::fs::read(dir.join("project.json")) {
+                Ok(b) => serde_json::from_slice(&b).unwrap_or_else(|_| {
+                    back_up_unreadable(&dir.join("project.json"));
+                    ProjectFile::default()
+                }),
+                Err(_) => ProjectFile::default(),
+            };
             let name = if f.name.is_empty() { humanize(&dir.file_name().unwrap_or_default().to_string_lossy()) } else { f.name };
             let mut videos: Vec<Video> = std::fs::read_dir(&dir)
                 .into_iter()
@@ -324,7 +447,7 @@ pub fn apply_folder_order(projects: &mut [Project], order: &[PathBuf]) {
 pub fn save_project(p: &Project) {
     let f = ProjectFile { name: p.name.clone(), no_watermark: p.no_watermark };
     if let Ok(b) = serde_json::to_vec_pretty(&f) {
-        let _ = std::fs::write(p.dir.join("project.json"), b);
+        let _ = write_atomic(&p.dir.join("project.json"), &b);
     }
 }
 
@@ -360,6 +483,7 @@ pub fn new_video(project: &Project, title: &str, request: &str) -> Option<Video>
         busy: None,
         request: Some(request.into()),
         resume_next: false,
+        voice_gen: 0,
     };
     save_video(&v);
     Some(v)
@@ -418,4 +542,73 @@ pub fn fresh_project_name(projects: &[Project]) -> String {
         i += 1;
     }
     name
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn backup_names_are_timestamped_and_pruned_to_the_newest() {
+        assert_eq!(super::backup_name("chat.json", 1700000000), "chat.json.1700000000.bak");
+        let names: Vec<String> = ["chat.json", "chat.json.5.bak", "chat.json.30.bak", "chat.json.4.bak", "chat.json.bak", "video.json.1.bak", "chat.json.x.bak"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        // Numeric order, not text order: 30 is newer than 5.
+        assert_eq!(super::stale_backups("chat.json", &names, 2), vec!["chat.json.4.bak".to_string()]);
+        assert!(super::stale_backups("chat.json", &names, 3).is_empty());
+        assert_eq!(super::stale_backups("chat.json", &names, 0).len(), 3);
+    }
+
+    #[test]
+    fn backups_rotate_on_disk() {
+        let dir = std::env::temp_dir().join(format!("studio-bak-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("chat.json");
+        let count = || std::fs::read_dir(&dir).unwrap().filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().ends_with(".bak")).count();
+        for n in 1..=8u64 {
+            std::fs::write(dir.join(format!("chat.json.{n}.bak")), n.to_string()).unwrap();
+        }
+        std::fs::write(&f, "unreadable").unwrap();
+        super::back_up_unreadable(&f);
+        assert_eq!(count(), 5);
+        assert!(f.exists());
+        // The same content isn't copied twice.
+        super::back_up_unreadable(&f);
+        assert_eq!(count(), 5);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    use super::*;
+
+    #[test]
+    fn chat_parse_skips_unknown_records() {
+        let json = br#"[
+            {"kind":"user","text":"hi"},
+            {"kind":"hologram","payload":1},
+            {"kind":"assistant","text":"hello"},
+            {"kind":"usage"}
+        ]"#;
+        let (records, skipped) = parse_chat(json).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(skipped, 2);
+    }
+
+    #[test]
+    fn chat_parse_rejects_non_lists() {
+        assert!(parse_chat(b"{ not json").is_none());
+        assert!(parse_chat(br#"{"kind":"user"}"#).is_none());
+    }
+
+    #[test]
+    fn atomic_write_replaces_and_leaves_no_temp() {
+        let dir = std::env::temp_dir().join(format!("studio-atomic-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("chat.json");
+        write_atomic(&f, b"one").unwrap();
+        write_atomic(&f, b"two").unwrap();
+        assert_eq!(std::fs::read(&f).unwrap(), b"two");
+        assert!(!dir.join("chat.json.tmp").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

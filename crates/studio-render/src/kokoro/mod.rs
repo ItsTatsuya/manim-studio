@@ -7,17 +7,27 @@ pub mod espeak;
 mod g2p;
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 
 use anyhow::{Context, Result, bail};
-use sha2::{Digest, Sha256};
 
 pub use g2p::G2p;
 
 pub const SAMPLE_RATE: u32 = 24_000;
 /// Kokoro's context: 512 tokens including the two pads.
 const MAX_TOKENS: usize = 510;
+
+/// The natural voice runs on ONNX Runtime, and only the Windows x64 build of it is pinned
+/// (URL, offsets, SHA-256). Elsewhere [`installed`] and [`usable`] are always false and
+/// [`download`] and [`Kokoro::load`] refuse with [`UNSUPPORTED`]; the app should hide the
+/// download and show that reason.
+pub const fn supported() -> bool {
+    cfg!(all(windows, target_arch = "x86_64"))
+}
+
+/// Why the natural voice is missing on a platform where [`supported`] is false.
+pub const UNSUPPORTED: &str = "The natural voice isn't available on this platform yet (it needs the Windows build of ONNX Runtime).";
 
 const HF: &str = "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/1939ad2a8e416c0acfeecc08a694d14ef25f2231";
 const MISAKI: &str = "https://raw.githubusercontent.com/hexgrad/misaki/fba1236595f2d2bf21d414ba6e57d25256afada3/misaki/data";
@@ -115,6 +125,9 @@ pub fn total_size(quality: Quality) -> u64 {
 }
 
 pub fn download_size(dir: &Path, quality: Quality) -> u64 {
+    if !supported() {
+        return 0;
+    }
     let runtime = if runtime::present(dir) { 0 } else { runtime::DOWNLOAD };
     ASSETS.iter().chain([quality.model()]).filter(|a| !present(dir, a)).map(|a| a.size).sum::<u64>() + runtime
 }
@@ -122,13 +135,13 @@ pub fn download_size(dir: &Path, quality: Quality) -> u64 {
 /// Everything `quality` needs is downloaded (sizes are checked; hashes were checked on
 /// download).
 pub fn installed(dir: &Path, quality: Quality) -> bool {
-    runtime::present(dir) && ASSETS.iter().chain([quality.model()]).all(|a| present(dir, a))
+    supported() && runtime::present(dir) && ASSETS.iter().chain([quality.model()]).all(|a| present(dir, a))
 }
 
 /// Everything but the runtime is here: a voice downloaded before the runtime moved out
 /// of the program. Fetching it is a quick (~6 MB) top-up.
 pub fn needs_runtime_only(dir: &Path, quality: Quality) -> bool {
-    !runtime::present(dir) && ASSETS.iter().chain([quality.model()]).all(|a| present(dir, a))
+    supported() && !runtime::present(dir) && ASSETS.iter().chain([quality.model()]).all(|a| present(dir, a))
 }
 
 /// The quality to speak with: `wanted` if downloaded, else the other one if that is.
@@ -155,7 +168,14 @@ pub fn remove_other_models(dir: &Path, keep: Quality) -> u64 {
 }
 
 /// Download what `quality` is missing. `progress(done_bytes, total_bytes)`.
-pub fn download(dir: &Path, quality: Quality, mut progress: impl FnMut(u64, u64)) -> Result<()> {
+///
+/// Downloads time out after 30 s without data, resume from a leftover `.part` when the
+/// server allows it, and stop with [`crate::Cancelled`] (see [`crate::is_cancelled`])
+/// once `cancel` is set; the partial files stay so the next attempt continues.
+pub fn download(dir: &Path, quality: Quality, cancel: &AtomicBool, mut progress: impl FnMut(u64, u64)) -> Result<()> {
+    if !supported() {
+        bail!("{UNSUPPORTED}");
+    }
     std::fs::create_dir_all(dir)?;
     let runtime_left = if runtime::present(dir) { 0 } else { runtime::DOWNLOAD };
     let total: u64 = ASSETS.iter().chain([quality.model()]).map(|a| a.size).sum::<u64>() + runtime_left;
@@ -168,34 +188,15 @@ pub fn download(dir: &Path, quality: Quality, mut progress: impl FnMut(u64, u64)
             continue;
         }
         let url = format!("{}/{}", a.base, a.path);
-        let resp = ureq::get(&url).call().with_context(|| format!("downloading {}", a.name))?;
-        let mut reader = resp.into_reader();
-        let part = dir.join(format!("{}.part", a.name));
-        let mut file = std::fs::File::create(&part)?;
-        let mut hasher = Sha256::new();
-        let mut buf = vec![0u8; 1 << 16];
-        loop {
-            let n = reader.read(&mut buf)?;
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buf[..n]);
-            file.write_all(&buf[..n])?;
-            done += n as u64;
-            progress(done, total);
-        }
-        drop(file);
-        let got = format!("{:x}", hasher.finalize());
-        if got != a.sha256 {
-            let _ = std::fs::remove_file(&part);
-            bail!("{} failed its checksum", a.name);
-        }
-        std::fs::rename(&part, &path)?;
+        crate::fetch::download_file(&url, &path, a.size, a.sha256, cancel, |n| {
+            done += n;
+            progress(done.min(total), total);
+        })?;
     }
     if runtime_left > 0 {
-        runtime::download(dir, |n| {
+        runtime::download(dir, cancel, |n| {
             done += n;
-            progress(done, total);
+            progress(done.min(total), total);
         })?;
     }
     Ok(())
@@ -224,8 +225,8 @@ mod runtime {
         DLL.present(&dir.join(FILE))
     }
 
-    pub fn download(dir: &Path, progress: impl FnMut(u64)) -> Result<()> {
-        DLL.download(&dir.join(FILE), progress).context("downloading the voice runtime")
+    pub fn download(dir: &Path, cancel: &AtomicBool, progress: impl FnMut(u64)) -> Result<()> {
+        DLL.download(&dir.join(FILE), cancel, progress).context("downloading the voice runtime")
     }
 }
 
@@ -253,6 +254,9 @@ pub struct Kokoro {
 
 impl Kokoro {
     pub fn load(dir: &Path, quality: Quality) -> Result<Self> {
+        if !supported() {
+            bail!("{UNSUPPORTED}");
+        }
         if !installed(dir, quality) {
             bail!("the natural voice isn't downloaded yet");
         }
@@ -451,7 +455,7 @@ mod tests {
         let d = PathBuf::from(d);
         std::fs::create_dir_all(&d).unwrap();
         let mut got = 0;
-        runtime::download(&d, |n| got += n).unwrap();
+        runtime::download(&d, &AtomicBool::new(false), |n| got += n).unwrap();
         assert!(runtime::present(&d) && got > 0);
     }
 
@@ -461,7 +465,7 @@ mod tests {
         let Some(d) = std::env::var_os("KOKORO_DOWNLOAD") else { return };
         let d = PathBuf::from(d);
         let mut calls = 0;
-        download(&d, Quality::Standard, |done, total| {
+        download(&d, Quality::Standard, &AtomicBool::new(false), |done, total| {
             calls += 1;
             assert!(done <= total);
         })

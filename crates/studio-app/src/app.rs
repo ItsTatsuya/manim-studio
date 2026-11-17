@@ -217,6 +217,8 @@ pub struct Workspace {
     /// The house style under the pointer in a picker, and since when.
     pub style_hover: Option<(usize, Instant)>,
     pub(crate) style_ticker: Option<Task<()>>,
+    /// Redraws the open video's "working" line a few times a second (its clock and dots).
+    pub(crate) working_ticker: Option<Task<()>>,
     /// Bumped when videos move, so thumbnails asked for at old positions are dropped.
     pub thumb_gen: u64,
     pub engine: Engine,
@@ -236,8 +238,20 @@ pub struct Workspace {
     /// ffmpeg's first-run download (Ready when it was already on this computer).
     pub ffmpeg_dl: crate::engine::NaturalVoice,
     pub update: crate::update::UpdateState,
+    /// Cancel flags of the running downloads (a new one per download).
+    pub natural_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub espeak_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub ffmpeg_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     focus: FocusHandle,
     ticker: Option<Task<()>>,
+    /// The Install / Sign-in re-detection loop (a new click replaces it).
+    pub(crate) provider_poll: Option<Task<()>>,
+    /// A provider detection is in flight.
+    pub(crate) detecting: bool,
+    /// The pending (debounced) save of the watermark text.
+    watermark_save: Option<Task<()>>,
+    /// Cached disk probes for rendering (see `probes.rs`).
+    pub probes: std::cell::RefCell<crate::probes::Probes>,
     _subs: Vec<Subscription>,
 }
 
@@ -251,6 +265,8 @@ impl Workspace {
             )
             .font_size(px(15.), px(24.))
             .lines(2, 10)
+            // Documents alone can start a plan: Enter works with no text.
+            .submit_empty(true)
         });
         let chat_input = cx.new(|cx| {
             TextInput::new("Ask for a change. Use @ to pick a scene.", window, cx).lines(2, 8)
@@ -267,7 +283,8 @@ impl Workspace {
         let palette_input = cx.new(|cx| TextInput::new("Type a command or a video name", window, cx).lines(1, 1));
         let rename_input = cx.new(|cx| TextInput::new("Name", window, cx).lines(1, 1));
         let length_input = cx.new(|cx| TextInput::new("e.g. 3:30", window, cx).lines(1, 1));
-        let narration_input = cx.new(|cx| TextInput::new("What the narrator says in this scene", window, cx).lines(2, 8));
+        // Enter on an empty line saves it empty (a scene without narration).
+        let narration_input = cx.new(|cx| TextInput::new("What the narrator says in this scene", window, cx).lines(2, 8).submit_empty(true));
         let watermark_input = cx.new(|cx| {
             let mut i = TextInput::new("e.g. Ms. Rao · Grade 8 Science", window, cx).lines(1, 1);
             i.set_text(prefs.watermark.text.clone(), cx);
@@ -285,11 +302,24 @@ impl Workspace {
             cx.observe(&home_input, |_, _, cx| cx.notify()),
             cx.observe(&chat_input, |_, _, cx| cx.notify()),
             cx.observe(&revise_input, |_, _, cx| cx.notify()),
-            // The watermark text is saved as it is typed.
+            // The watermark text is saved shortly after typing pauses (and when the field
+            // loses focus), not on every keystroke.
             cx.observe(&watermark_input, |this, input, cx| {
                 let text = input.read(cx).text().to_string();
                 if text != this.prefs.watermark.text {
                     this.prefs.watermark.text = text;
+                    this.watermark_save = Some(cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                        cx.background_executor().timer(Duration::from_millis(600)).await;
+                        this.update(cx, |this, _| {
+                            this.watermark_save = None;
+                            this.save_prefs();
+                        })
+                        .ok();
+                    }));
+                }
+            }),
+            cx.subscribe_in(&watermark_input, window, |this, _, _: &studio_ui::components::Blurred, _, _| {
+                if this.watermark_save.take().is_some() {
                     this.save_prefs();
                 }
             }),
@@ -301,9 +331,10 @@ impl Workspace {
                 this.start_plan(text.clone(), cx)
             }),
             cx.subscribe_in(&chat_input, window, |this, input, Submitted(text), _, cx| {
-                let text = text.clone();
-                input.update(cx, |i, cx| i.clear(cx));
-                this.send_chat(text, cx)
+                // Only a message that was taken leaves the box (not while the assistant is busy).
+                if this.send_chat(text.clone(), cx) {
+                    input.update(cx, |i, cx| i.clear(cx));
+                }
             }),
             cx.subscribe_in(&rename_input, window, |this, _, _: &Submitted, _, cx| this.commit_rename(cx)),
             cx.subscribe_in(&length_input, window, |this, _, _: &Submitted, _, cx| this.commit_length(cx)),
@@ -314,9 +345,9 @@ impl Workspace {
                 this.save_narration_line(text, cx)
             }),
             cx.subscribe_in(&revise_input, window, |this, input, Submitted(text), _, cx| {
-                let text = text.clone();
-                input.update(cx, |i, cx| i.clear(cx));
-                this.revise_storyboard(text, cx)
+                if this.revise_storyboard(text.clone(), cx) {
+                    input.update(cx, |i, cx| i.clear(cx));
+                }
             }),
         ];
         let screen = if prefs.onboarded { Screen::Video } else { Screen::Onboarding };
@@ -350,6 +381,11 @@ impl Workspace {
             })
             .to_vec();
         let default_provider = Provider::from_key(&prefs.default_provider).unwrap_or(Provider::Claude);
+        let mut prefs = prefs;
+        // No natural voice on this platform: narration stays off.
+        if !studio_render::kokoro::supported() {
+            prefs.narration = false;
+        }
         let mut this = Self {
             prefs,
             screen,
@@ -407,6 +443,7 @@ impl Workspace {
             style_clips: Vec::new(),
             style_hover: None,
             style_ticker: None,
+            working_ticker: None,
             thumb_gen: 0,
             engine,
             stage: Stage::default(),
@@ -423,8 +460,15 @@ impl Workspace {
             espeak: crate::engine::NaturalVoice::Missing,
             ffmpeg_dl: crate::engine::NaturalVoice::Missing,
             update: crate::update::UpdateState::Idle,
+            natural_cancel: Default::default(),
+            espeak_cancel: Default::default(),
+            ffmpeg_cancel: Default::default(),
             focus: cx.focus_handle(),
             ticker: None,
+            provider_poll: None,
+            detecting: false,
+            watermark_save: None,
+            probes: Default::default(),
             _subs: subs,
         };
         // Give the window a focused element so global shortcuts dispatch
@@ -439,7 +483,9 @@ impl Workspace {
         this.natural = crate::engine::NaturalVoice::detect(this.voice_quality());
         // A voice downloaded before ONNX Runtime moved out of the program only lacks the
         // runtime DLL: top it up quietly (~6 MB) instead of asking for a download.
-        if studio_render::voice::kokoro_dir().is_some_and(|d| studio_render::kokoro::needs_runtime_only(d, this.voice_quality())) {
+        if studio_render::kokoro::supported()
+            && studio_render::voice::kokoro_dir().is_some_and(|d| studio_render::kokoro::needs_runtime_only(d, this.voice_quality()))
+        {
             this.download_natural_voice(cx);
         }
         if studio_render::voice::espeak().is_some() {
@@ -449,7 +495,7 @@ impl Workspace {
         this.playhead = this.video().scene_start(this.scene);
         this.listen_to_engine(cx);
         this.sync_preview();
-        this.refresh_thumbs();
+        this.refresh_thumbs_after_voice(this.current);
         this.request_style_previews();
         this.detect_providers(cx);
         this.refresh_voice(this.current, cx);
@@ -556,6 +602,7 @@ impl Workspace {
         // With no videos left, the composer stands in for the video screen.
         let screen = if screen == Screen::Video && !self.has_video() { Screen::Home } else { screen };
         self.screen = screen;
+        self.probes.get_mut().clear();
         self.open_menu = None;
         self.row_menu = None;
         cx.notify();
@@ -584,7 +631,7 @@ impl Workspace {
         self.mode = if self.video().status == VideoStatus::Draft { Mode::Storyboard } else { Mode::Studio };
         self.sync_preview();
         if changed {
-            self.refresh_thumbs();
+            self.refresh_thumbs_after_voice(self.current);
             self.refresh_voice(self.current, cx);
         }
         self.go(Screen::Video, cx);
@@ -678,6 +725,11 @@ impl Workspace {
 
     /// A frame-rate timer drives playback and stops itself when playback stops.
     /// (Render progress arrives as engine events, not ticks.)
+    /// The playback ticker is running (it redraws every 33 ms by itself).
+    pub(crate) fn ticking(&self) -> bool {
+        self.playing && self.ticker.is_some()
+    }
+
     fn ensure_ticker(&mut self, cx: &mut Context<Self>) {
         if self.ticker.is_some() || !self.playing {
             return;
@@ -820,6 +872,7 @@ impl Workspace {
             return;
         }
         self.mode = mode;
+        self.probes.get_mut().clear();
         if mode == Mode::Studio {
             self.sync_preview();
         }
@@ -947,6 +1000,15 @@ impl Workspace {
             .ok();
         })
         .detach();
+    }
+}
+
+impl Drop for Workspace {
+    /// Closing the app stops downloads in flight (their partial files are kept).
+    fn drop(&mut self) {
+        for flag in [&self.natural_cancel, &self.espeak_cancel, &self.ffmpeg_cancel] {
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 }
 
@@ -1096,6 +1158,8 @@ pub fn scene_image(scene: &model::Scene, cx: &App) -> AnyElement {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.track_notice(cx);
+        self.flush_dead_images(window);
+        self.ensure_working_ticker(cx);
         let t = cx.theme().clone();
         let content: AnyElement = match self.screen {
             Screen::Onboarding => self.render_onboarding(window, cx),

@@ -16,12 +16,23 @@ fn is_asset(p: &Path) -> bool {
     p.extension().and_then(|e| e.to_str()).is_some_and(|e| ASSET_EXTS.contains(&e.to_ascii_lowercase().as_str()))
 }
 
+/// The two files hold the same bytes. Sizes are compared first, so differing files are
+/// told apart without reading either.
+fn same_contents(a: &Path, b: &Path) -> bool {
+    if let (Ok(x), Ok(y)) = (std::fs::metadata(a), std::fs::metadata(b))
+        && x.len() != y.len()
+    {
+        return false;
+    }
+    std::fs::read(a).ok() == std::fs::read(b).ok()
+}
+
 /// Copy `src` into `dir`, renaming on a clash. Returns the new path.
 pub fn copy_into(src: &Path, dir: &Path) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
     let name = src.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into());
     let mut dest = dir.join(&name);
-    if dest.exists() && std::fs::read(&dest).ok() != std::fs::read(src).ok() {
+    if dest.exists() && !same_contents(&dest, src) {
         let (stem, ext) = match name.rsplit_once('.') {
             Some((s, e)) => (s.to_string(), format!(".{e}")),
             None => (name.clone(), String::new()),
@@ -97,6 +108,7 @@ impl Workspace {
                 chat.push(Msg::Activity { icon: IconName::Image, ok: true, text: format!("Added assets/{name}"), meta: String::new() });
             }
         }
+        self.probes.get_mut().clear();
         if !added.is_empty() {
             self.persist(video);
         }
@@ -109,5 +121,25 @@ impl Workspace {
             return vec![];
         };
         crate::store::assets(&dir).into_iter().map(|(n, _)| format!("assets/{n}")).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn same_contents_checks_size_then_bytes() {
+        let dir = std::env::temp_dir().join(format!("studio-attach-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b, c, d) = (dir.join("a"), dir.join("b"), dir.join("c"), dir.join("d"));
+        std::fs::write(&a, b"hello").unwrap();
+        std::fs::write(&b, b"hello").unwrap();
+        std::fs::write(&c, b"hellp").unwrap();
+        std::fs::write(&d, b"hello!").unwrap();
+        assert!(same_contents(&a, &b));
+        assert!(!same_contents(&a, &c));
+        assert!(!same_contents(&a, &d));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

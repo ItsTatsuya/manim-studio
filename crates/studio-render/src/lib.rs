@@ -32,8 +32,9 @@ pub mod worker;
 pub use manim;
 pub use manim::scene::TimelineInfo;
 
-/// The engine revision this build is pinned to (part of every cache key).
-pub const ENGINE_REV: &str = "manim-rust@3deae09";
+/// The engine revision this build is pinned to (part of every cache key). Derived by
+/// `build.rs` from the `manim` entry in the workspace `Cargo.lock`, so it can't go stale.
+pub const ENGINE_REV: &str = env!("STUDIO_ENGINE_REV");
 
 /// TypeScript declarations of the scene API (for editors and the assistant's context).
 pub const TYPES: &str = manim::script::TYPES;
@@ -146,3 +147,120 @@ pub fn error_line(message: &str) -> Option<u32> {
     let i = message.find(".ts:")?;
     message[i + 4..].chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().ok()
 }
+
+// ---------------------------------------------------------------------- engine guard
+
+thread_local! {
+    static ENGINE_GUARD: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// True while the calling thread is inside one of Studio's guarded engine calls (scene
+/// load, frame, thumbnail, clip and check). The engine runs untrusted scripts and can
+/// panic; those panics are caught and reported as ordinary errors, so an app-wide panic
+/// hook should treat a panic raised while this is true as recovered rather than a crash.
+/// The hook runs on the panicking thread before unwinding, so a thread-local is enough.
+pub fn in_engine_guard() -> bool {
+    ENGINE_GUARD.with(|g| g.get() > 0)
+}
+
+/// The error a caught engine panic becomes. After one, the `ScriptHost` that panicked
+/// must be dropped and rebuilt (it keeps its state in thread-locals).
+#[derive(Debug)]
+pub struct EnginePanic(pub String);
+
+impl std::fmt::Display for EnginePanic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the engine hit an internal error ({})", self.0)
+    }
+}
+
+impl std::error::Error for EnginePanic {}
+
+/// Whether `e` came from a caught engine panic.
+pub fn is_engine_panic(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<EnginePanic>().is_some()
+}
+
+struct GuardDepth;
+
+impl GuardDepth {
+    fn enter() -> Self {
+        ENGINE_GUARD.with(|g| g.set(g.get() + 1));
+        GuardDepth
+    }
+}
+
+impl Drop for GuardDepth {
+    fn drop(&mut self) {
+        ENGINE_GUARD.with(|g| g.set(g.get().saturating_sub(1)));
+    }
+}
+
+/// Run an engine call, turning a panic into an [`EnginePanic`] error and marking the
+/// thread as [`in_engine_guard`] meanwhile.
+pub(crate) fn guard<T>(f: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
+    let _depth = GuardDepth::enter();
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(r) => r,
+        Err(payload) => {
+            let msg = payload
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "panic".into());
+            Err(EnginePanic(msg.lines().next().unwrap_or("panic").chars().take(160).collect()).into())
+        }
+    }
+}
+
+/// The error a cancelled export step or download returns (its `cancel` flag or callback
+/// said stop). Not a failure: callers show "cancelled", not an error.
+#[derive(Debug)]
+pub struct Cancelled;
+
+impl std::fmt::Display for Cancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "cancelled")
+    }
+}
+
+impl std::error::Error for Cancelled {}
+
+/// Whether `e` is [`Cancelled`].
+pub fn is_cancelled(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<Cancelled>().is_some()
+}
+
+/// Lock a mutex, ignoring poisoning. With `panic = "unwind"` a panic on another thread
+/// can poison long-lived shared state; the data these locks guard stays valid, so the
+/// next user simply carries on.
+pub(crate) fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn engine_rev_follows_the_lockfile() {
+        assert!(ENGINE_REV.starts_with("manim-rust@"));
+        let sha = &ENGINE_REV["manim-rust@".len()..];
+        assert!(!sha.is_empty() && sha != "3deae09" && sha != "unknown", "{ENGINE_REV}");
+    }
+
+    #[test]
+    fn guard_catches_panics_and_sets_the_flag() {
+        assert!(!in_engine_guard());
+        let r: anyhow::Result<()> = guard(|| {
+            assert!(in_engine_guard());
+            panic!("boom");
+        });
+        let e = r.unwrap_err();
+        assert!(is_engine_panic(&e) && e.to_string().contains("boom"), "{e}");
+        assert!(!in_engine_guard());
+        assert!(guard(|| guard(|| Ok(in_engine_guard()))).unwrap());
+        assert!(!in_engine_guard());
+    }
+}
+

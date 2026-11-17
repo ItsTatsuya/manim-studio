@@ -97,6 +97,9 @@ pub struct Prefs {
     pub captions: usize,
     /// Last update check (Unix seconds).
     pub last_update_check: Option<u64>,
+    /// Set when the teacher rolls back: that version, and anything older, isn't offered
+    /// again (a newer one is).
+    pub skipped_version: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -151,6 +154,7 @@ impl Default for Prefs {
             voice_model: 0,
             captions: 1,
             last_update_check: None,
+            skipped_version: None,
         }
     }
 }
@@ -194,14 +198,18 @@ impl Prefs {
         self.usage.iter().find(|u| u.provider == p.key())
     }
 
-    pub fn remember_usage(&mut self, p: crate::model::Provider, rl: &studio_agent::events::RateLimits) {
+    /// Fold a rate-limit report in. True when it changed what is remembered.
+    pub fn remember_usage(&mut self, p: crate::model::Provider, rl: &studio_agent::events::RateLimits) -> bool {
+        let mut new = false;
         let rec = match self.usage.iter_mut().find(|u| u.provider == p.key()) {
             Some(r) => r,
             None => {
+                new = true;
                 self.usage.push(UsageRecord { provider: p.key().into(), ..Default::default() });
                 self.usage.last_mut().unwrap()
             }
         };
+        let before = (rec.window, rec.week, rec.resets_at, rec.week_resets_at);
         if rl.window.is_some() {
             rec.window = rl.window;
         }
@@ -214,19 +222,28 @@ impl Prefs {
         if rl.week_resets_at.is_some() {
             rec.week_resets_at = rl.week_resets_at;
         }
+        before != (rec.window, rec.week, rec.resets_at, rec.week_resets_at) || new
     }
 
     pub fn load() -> Self {
-        path()
-            .and_then(|p| std::fs::read(p).ok())
-            .and_then(|b| serde_json::from_slice::<Prefs>(&b).ok())
-            .unwrap_or_default()
-            .sanitized()
+        let Some(p) = path() else { return Self::default() };
+        let Ok(bytes) = std::fs::read(&p) else { return Self::default() };
+        match serde_json::from_slice::<Prefs>(&bytes) {
+            Ok(prefs) => prefs.sanitized(),
+            Err(_) => {
+                // Keep what was there; the first save would write defaults over it.
+                crate::store::back_up_unreadable(&p);
+                Self::default()
+            }
+        }
     }
 
     /// Indexes into fixed lists clamped, so a hand-edited or older file can't panic.
-    fn sanitized(mut self) -> Self {
+    pub(crate) fn sanitized(mut self) -> Self {
         self.house_style = self.house_style.min(studio_render::style::STYLES.len() - 1);
+        self.repair_tries = self.repair_tries.min(MAX_REPAIR_TRIES);
+        self.update_channel = self.update_channel.min(1);
+        self.volume = if self.volume.is_finite() { self.volume.clamp(0., 1.) } else { 1. };
         self
     }
 
@@ -237,10 +254,33 @@ impl Prefs {
             let _ = std::fs::create_dir_all(dir);
         }
         if let Ok(json) = serde_json::to_vec_pretty(self) {
-            let tmp = p.with_extension("json.tmp");
-            if std::fs::write(&tmp, json).is_ok() {
-                let _ = std::fs::rename(tmp, p);
-            }
+            let _ = crate::store::write_atomic(&p, &json);
         }
+    }
+}
+
+/// The most repair rounds an edited settings file may ask for.
+pub const MAX_REPAIR_TRIES: u8 = 10;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitizing_clamps_wild_values() {
+        let p: Prefs = serde_json::from_str(r#"{ "repair_tries": 255, "house_style": 99, "update_channel": 7, "volume": 9.0 }"#).unwrap();
+        let p = p.sanitized();
+        assert_eq!(p.repair_tries, MAX_REPAIR_TRIES);
+        assert_eq!(p.house_style, studio_render::style::STYLES.len() - 1);
+        assert_eq!(p.update_channel, 1);
+        assert_eq!(p.volume, 1.0);
+    }
+
+    #[test]
+    fn defaults_survive_sanitizing_and_missing_fields_default() {
+        let p: Prefs = serde_json::from_str("{}").unwrap();
+        let p = p.sanitized();
+        assert_eq!(p.repair_tries, 3);
+        assert_eq!(p.skipped_version, None);
     }
 }

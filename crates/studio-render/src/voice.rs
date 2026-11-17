@@ -72,7 +72,7 @@ pub fn espeak() -> Option<crate::kokoro::espeak::Espeak> {
 
 /// Drop the loaded model so the next line reloads it (e.g. to pick up espeak-ng).
 pub fn reset_kokoro() {
-    *KOKORO.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *crate::lock(&KOKORO) = None;
 }
 
 impl VoiceSpec {
@@ -114,14 +114,22 @@ pub fn synthesize(text: &str, spec: &VoiceSpec, out: &Path) -> Result<f64> {
     }
     let tmp = out.with_extension("partial.wav");
     let _ = std::fs::remove_file(&tmp);
+    if !crate::kokoro::supported() {
+        bail!("{}", crate::kokoro::UNSUPPORTED);
+    }
     let Speaker { voice, quality } = spec.speaker().context(NOT_DOWNLOADED)?;
     let dir = kokoro_dir().context("no voice folder")?;
-    let mut slot = KOKORO.lock().unwrap_or_else(|e| e.into_inner());
+    let mut slot = crate::lock(&KOKORO);
     if slot.as_ref().is_none_or(|k| k.quality != quality) {
         *slot = None;
-        *slot = Some(crate::kokoro::Kokoro::load(dir, quality)?);
+        *slot = Some(crate::guard(|| crate::kokoro::Kokoro::load(dir, quality))?);
     }
-    let samples = slot.as_mut().expect("loaded").speak(text, &voice, spec.rate)?;
+    // A panic inside the model leaves it in an unknown state: drop it so the next line reloads.
+    let spoken = crate::guard(|| slot.as_mut().expect("loaded").speak(text, &voice, spec.rate));
+    if spoken.as_ref().err().is_some_and(crate::is_engine_panic) {
+        *slot = None;
+    }
+    let samples = spoken?;
     drop(slot);
     crate::kokoro::write_wav(&tmp, &samples)?;
     let secs = wav_seconds(&tmp)?;
@@ -178,6 +186,24 @@ pub const SENTENCE_GAP: f64 = 0.3;
 
 /// A narration line split into sentences (short fragments join the sentence before).
 pub fn sentences(text: &str) -> Vec<String> {
+    let out = split_sentences(text);
+    let mut merged: Vec<String> = Vec::new();
+    for s in out {
+        match merged.last_mut() {
+            Some(prev) if s.split_whitespace().count() < 3 => {
+                prev.push(' ');
+                prev.push_str(&s);
+            }
+            _ => merged.push(s),
+        }
+    }
+    merged
+}
+
+/// Split at `.`, `!` or `?` that is followed by whitespace or the end of the text, so
+/// "3.14" stays whole. Every piece is trimmed and non-empty. Shared by [`sentences`] and
+/// the caption cues, so both agree on where a sentence ends.
+fn split_sentences(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut cur = String::new();
     let chars: Vec<char> = text.chars().collect();
@@ -195,17 +221,7 @@ pub fn sentences(text: &str) -> Vec<String> {
     if !cur.trim().is_empty() {
         out.push(cur.trim().to_string());
     }
-    let mut merged: Vec<String> = Vec::new();
-    for s in out {
-        match merged.last_mut() {
-            Some(prev) if s.split_whitespace().count() < 3 => {
-                prev.push(' ');
-                prev.push_str(&s);
-            }
-            _ => merged.push(s),
-        }
-    }
-    merged
+    out
 }
 
 /// Sentences one after another from 0 with `SENTENCE_GAP` between them.
@@ -222,10 +238,20 @@ pub fn sequential_starts(lines: &[f64]) -> Vec<f64> {
 }
 
 /// Mono samples of a 16-bit PCM (or 32-bit float) WAV, resampled to 24 kHz.
+/// The most 24 kHz samples a narration track may hold (one hour): a damaged header or a
+/// wild start time must not ask for gigabytes.
+const MAX_SAMPLES: usize = 24_000 * 3600;
+
 fn read_wav(path: &Path) -> Result<Vec<f32>> {
     let b = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    parse_wav(&b).with_context(|| format!("reading {}", path.display()))
+}
+
+/// [`read_wav`] on the file's bytes. Errors on a bad header: sample rate 0, no channels
+/// or an absurd length.
+fn parse_wav(b: &[u8]) -> Result<Vec<f32>> {
     if b.len() < 12 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
-        bail!("{} is not a WAV file", path.display());
+        bail!("not a WAV file");
     }
     let (mut fmt, mut channels, mut rate, mut bits) = (1u16, 1u16, 24_000u32, 16u16);
     let mut i = 12;
@@ -236,7 +262,7 @@ fn read_wav(path: &Path) -> Result<Vec<f32>> {
         let body = &b[i + 8..(i + 8 + size).min(b.len())];
         if id == b"fmt " && body.len() >= 16 {
             fmt = u16::from_le_bytes([body[0], body[1]]);
-            channels = u16::from_le_bytes([body[2], body[3]]).max(1);
+            channels = u16::from_le_bytes([body[2], body[3]]);
             rate = u32::from_le_bytes([body[4], body[5], body[6], body[7]]);
             bits = u16::from_le_bytes([body[14], body[15]]);
         } else if id == b"data" {
@@ -244,6 +270,9 @@ fn read_wav(path: &Path) -> Result<Vec<f32>> {
             break;
         }
         i += 8 + size + (size & 1);
+    }
+    if rate == 0 || channels == 0 {
+        bail!("the WAV header is damaged (sample rate {rate}, {channels} channels)");
     }
     let frame = channels as usize * (bits as usize / 8).max(1);
     let mono: Vec<f32> = data
@@ -266,6 +295,9 @@ fn read_wav(path: &Path) -> Result<Vec<f32>> {
     }
     let ratio = rate as f64 / crate::kokoro::SAMPLE_RATE as f64;
     let n = (mono.len() as f64 / ratio) as usize;
+    if n > MAX_SAMPLES {
+        bail!("the audio is too long");
+    }
     Ok((0..n)
         .map(|k| {
             let x = k as f64 * ratio;
@@ -291,6 +323,11 @@ pub fn compose(parts: &[PathBuf], starts: &[f64], cache_dir: &Path) -> Result<Li
     if wav.is_file()
         && let Ok(seconds) = wav_seconds(&wav)
     {
+        // A cache hit counts as fresh: the app prunes old tracks by age, and this one is
+        // about to be applied.
+        if let Ok(f) = std::fs::File::options().write(true).open(&wav) {
+            let _ = f.set_modified(std::time::SystemTime::now());
+        }
         return Ok(Line { wav, seconds });
     }
     std::fs::create_dir_all(cache_dir)?;
@@ -299,8 +336,12 @@ pub fn compose(parts: &[PathBuf], starts: &[f64], cache_dir: &Path) -> Result<Li
     for (p, s) in parts.iter().zip(starts) {
         let samples = read_wav(p)?;
         let at = (s.max(0.0) * rate) as usize;
-        if out.len() < at + samples.len() {
-            out.resize(at + samples.len(), 0.0);
+        let end = at.saturating_add(samples.len());
+        if end > MAX_SAMPLES {
+            bail!("the narration track would be too long");
+        }
+        if out.len() < end {
+            out.resize(end, 0.0);
         }
         for (k, v) in samples.iter().enumerate() {
             out[at + k] += v;
@@ -330,21 +371,7 @@ pub struct Cue {
 /// Split a scene's narration into sentence cues spread over `seconds` by word count,
 /// starting at `offset`.
 pub fn cues(text: &str, offset: f64, seconds: f64) -> Vec<Cue> {
-    let mut sentences: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    for ch in text.chars() {
-        cur.push(ch);
-        if matches!(ch, '.' | '!' | '?') {
-            let s = cur.trim().to_string();
-            if !s.is_empty() {
-                sentences.push(s);
-            }
-            cur.clear();
-        }
-    }
-    if !cur.trim().is_empty() {
-        sentences.push(cur.trim().to_string());
-    }
+    let sentences = split_sentences(text);
     // Long sentences split at commas so a cue stays readable (~12 words).
     let mut parts: Vec<String> = Vec::new();
     for s in sentences {
@@ -422,6 +449,44 @@ mod tests {
         assert!((c.last().unwrap().end - 16.0).abs() < 1e-9);
         assert_eq!(srt_time(3725.5), "01:02:05,500");
         assert!(srt(&c).starts_with("1\n00:00:10,000 --> "));
+    }
+
+    #[test]
+    fn captions_keep_decimals_whole() {
+        let c = cues("Pi is about 3.14 here. It never ends!", 0.0, 4.0);
+        assert_eq!(c.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["Pi is about 3.14 here.", "It never ends!"]);
+        let c = cues("Take 2.5 and 0.75", 0.0, 2.0);
+        assert_eq!(c.len(), 1);
+    }
+
+    fn wav_bytes(rate: u32, channels: u16, samples: usize) -> Vec<u8> {
+        let data = vec![0u8; samples * 2 * channels as usize];
+        let mut b = Vec::new();
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&channels.to_le_bytes());
+        b.extend_from_slice(&rate.to_le_bytes());
+        b.extend_from_slice(&(rate * 2 * channels as u32).to_le_bytes());
+        b.extend_from_slice(&(2 * channels).to_le_bytes());
+        b.extend_from_slice(&16u16.to_le_bytes());
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        b.extend_from_slice(&data);
+        b
+    }
+
+    #[test]
+    fn damaged_wav_headers_are_refused() {
+        assert!(parse_wav(&wav_bytes(0, 1, 100)).is_err(), "sample rate 0");
+        assert!(parse_wav(&wav_bytes(8000, 0, 100)).is_err(), "no channels");
+        assert!(parse_wav(b"RIFF").is_err());
+        // A tiny rate stretches the audio past the limit.
+        assert!(parse_wav(&wav_bytes(1, 1, 200_000)).is_err());
+        // Ordinary files still resample: 1 s at 8 kHz becomes 1 s at 24 kHz.
+        assert_eq!(parse_wav(&wav_bytes(8000, 1, 8000)).unwrap().len(), 24_000);
     }
 
     #[test]

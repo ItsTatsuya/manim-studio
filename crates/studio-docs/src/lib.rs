@@ -2,6 +2,7 @@
 //! Markdown and plain text. The text is condensed once by the planning model into
 //! source notes that later turns reuse (DESIGN.md §6.4), so this crate only extracts.
 
+use std::cell::Cell;
 use std::io::Read;
 use std::path::Path;
 
@@ -10,21 +11,82 @@ use anyhow::{Context, Result, bail};
 /// File extensions we can read.
 pub const SUPPORTED: &[&str] = &["pdf", "docx", "pptx", "md", "markdown", "txt"];
 
+/// Largest PDF we will hand to the parser.
+const MAX_PDF_BYTES: u64 = 100 * 1024 * 1024;
+/// Largest .md / .txt file we will read.
+const MAX_TEXT_BYTES: u64 = 20 * 1024 * 1024;
+/// Largest single XML part (a .docx body, one .pptx slide) after inflating.
+const MAX_XML_BYTES: u64 = 50 * 1024 * 1024;
+/// Largest total of XML read out of one archive.
+const MAX_ARCHIVE_XML_BYTES: u64 = 150 * 1024 * 1024;
+
 pub fn supported(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()).is_some_and(|e| SUPPORTED.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+thread_local! {
+    static IN_PDF_GUARD: Cell<bool> = const { Cell::new(false) };
+}
+
+/// True while the calling thread is inside the guarded PDF parser. The parser panics on
+/// malformed files; the panic is caught and turned into an error, so an app-wide crash
+/// hook should treat a panic raised while this is true as recovered, not as a crash. The
+/// hook runs on the panicking thread before unwinding, which is why a thread-local works.
+pub fn in_pdf_guard() -> bool {
+    IN_PDF_GUARD.with(Cell::get)
+}
+
+/// Restores the flag on drop, so it is reset on unwind too.
+struct PdfGuard(bool);
+
+impl PdfGuard {
+    fn enter() -> Self {
+        PdfGuard(IN_PDF_GUARD.with(|g| g.replace(true)))
+    }
+}
+
+impl Drop for PdfGuard {
+    fn drop(&mut self) {
+        IN_PDF_GUARD.with(|g| g.set(self.0));
+    }
 }
 
 /// The document's text, tidied (runs of blank lines collapsed).
 pub fn extract(path: &Path) -> Result<String> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     let text = match ext.as_str() {
-        "md" | "markdown" | "txt" => std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?,
+        "md" | "markdown" | "txt" => plain(path)?,
         "docx" => docx(path)?,
         "pptx" => pptx(path)?,
-        "pdf" => pdf_extract::extract_text(path).map_err(|e| anyhow::anyhow!("reading the PDF: {e}"))?,
+        "pdf" => pdf(path)?,
         _ => bail!("{} isn't a supported document (PDF, DOCX, PPTX, MD, TXT)", path.display()),
     };
     Ok(tidy(&text))
+}
+
+fn check_size(path: &Path, max: u64, what: &str) -> Result<()> {
+    let len = std::fs::metadata(path).with_context(|| format!("reading {}", path.display()))?.len();
+    if len > max {
+        bail!("{} is too large to read ({} MB; the limit for {what} is {} MB)", path.display(), len / 1_000_000, max / 1_000_000);
+    }
+    Ok(())
+}
+
+fn plain(path: &Path) -> Result<String> {
+    check_size(path, MAX_TEXT_BYTES, "text files")?;
+    let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// pdf-extract panics on many malformed files, so the parse is caught and reported.
+fn pdf(path: &Path) -> Result<String> {
+    check_size(path, MAX_PDF_BYTES, "PDFs")?;
+    let _guard = PdfGuard::enter();
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| pdf_extract::extract_text(path))) {
+        Ok(Ok(text)) => Ok(text),
+        Ok(Err(e)) => bail!("couldn't read this PDF ({e})"),
+        Err(_) => bail!("couldn't read this PDF (it may be damaged or use an unsupported feature)"),
+    }
 }
 
 /// Cap text at about `max` characters, cutting at a paragraph when possible.
@@ -59,51 +121,47 @@ fn tidy(text: &str) -> String {
     out.trim().to_string()
 }
 
-fn zip_entry(archive: &mut zip::ZipArchive<std::fs::File>, name: &str) -> Result<String> {
-    let mut f = archive.by_name(name)?;
-    let mut s = String::new();
-    f.read_to_string(&mut s)?;
-    Ok(s)
+/// One XML part, refusing to inflate more than `MAX_XML_BYTES` (zip bombs). `budget` is
+/// what the whole archive may still inflate.
+fn zip_entry(archive: &mut zip::ZipArchive<std::fs::File>, name: &str, budget: &mut u64) -> Result<String> {
+    let f = archive.by_name(name)?;
+    let limit = MAX_XML_BYTES.min(*budget);
+    let mut bytes = Vec::new();
+    f.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        bail!("{name} is too large to read (this document looks damaged or unsafe)");
+    }
+    *budget -= bytes.len() as u64;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn unescape(s: &str) -> String {
     s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
 }
 
-/// Text inside `<{tag}>…</{tag}>` runs, with a newline at each `</{para}>`.
+/// Text inside `<{tag}>…</{tag}>` runs, with a newline at each `</{para}>`. One pass over
+/// the markup: every tag is looked at once.
 fn xml_text(xml: &str, tag: &str, para: &str) -> String {
-    let open = format!("<{tag}");
     let close = format!("</{tag}>");
-    let para_close = format!("</{para}>");
     let mut out = String::new();
     let mut i = 0;
-    while i < xml.len() {
-        let next_text = xml[i..].find(&open).map(|p| p + i);
-        let next_para = xml[i..].find(&para_close).map(|p| p + i);
-        match (next_text, next_para) {
-            (Some(t), p) if p.is_none_or(|p| t < p) => {
-                // Skip tags like <a:tab> that only share the prefix.
-                let after = &xml[t + open.len()..];
-                if !after.starts_with('>') && !after.starts_with(' ') {
-                    i = t + open.len();
-                    continue;
-                }
-                let Some(gt) = xml[t..].find('>') else { break };
-                let start = t + gt + 1;
-                if xml[t..start].ends_with("/>") {
-                    i = start;
-                    continue;
-                }
-                let Some(end) = xml[start..].find(&close) else { break };
-                out.push_str(&unescape(&xml[start..start + end]));
-                i = start + end + close.len();
-            }
-            (_, Some(p)) => {
+    while let Some(rel) = xml[i..].find('<') {
+        let t = i + rel;
+        let Some(gt) = xml[t..].find('>') else { break };
+        let end = t + gt + 1;
+        let inner = &xml[t + 1..end - 1];
+        if let Some(closing) = inner.strip_prefix('/') {
+            if closing.trim() == para {
                 out.push('\n');
-                i = p + para_close.len();
             }
-            _ => break,
+        } else if !inner.ends_with('/') && inner.split(|c: char| c.is_whitespace() || c == '/').next() == Some(tag) {
+            // A run: its text goes to the closing tag, which is skipped in one step.
+            let Some(len) = xml[end..].find(&close) else { break };
+            out.push_str(&unescape(&xml[end..end + len]));
+            i = end + len + close.len();
+            continue;
         }
+        i = end;
     }
     out
 }
@@ -111,7 +169,8 @@ fn xml_text(xml: &str, tag: &str, para: &str) -> String {
 fn docx(path: &Path) -> Result<String> {
     let f = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
     let mut z = zip::ZipArchive::new(f).context("not a Word document")?;
-    let xml = zip_entry(&mut z, "word/document.xml")?;
+    let mut budget = MAX_ARCHIVE_XML_BYTES;
+    let xml = zip_entry(&mut z, "word/document.xml", &mut budget)?;
     Ok(xml_text(&xml, "w:t", "w:p"))
 }
 
@@ -127,8 +186,9 @@ fn pptx(path: &Path) -> Result<String> {
         .collect();
     slides.sort();
     let mut out = String::new();
+    let mut budget = MAX_ARCHIVE_XML_BYTES;
     for (n, name) in slides {
-        let xml = zip_entry(&mut z, &name)?;
+        let xml = zip_entry(&mut z, &name, &mut budget)?;
         out.push_str(&format!("Slide {n}\n{}\n\n", xml_text(&xml, "a:t", "a:p")));
     }
     Ok(out)
@@ -142,6 +202,49 @@ mod tests {
     fn reads_word_xml() {
         let xml = r#"<w:body><w:p><w:r><w:t>Area of</w:t></w:r><w:r><w:t xml:space="preserve"> a circle</w:t></w:r></w:p><w:p><w:r><w:tab/><w:t>A = &amp;pi;r²</w:t></w:r></w:p></w:body>"#;
         assert_eq!(xml_text(xml, "w:t", "w:p"), "Area of a circle\nA = &pi;r²\n");
+    }
+
+    #[test]
+    fn xml_text_handles_many_runs_and_lookalike_tags() {
+        let mut xml = String::from("<w:p>");
+        for _ in 0..20_000 {
+            xml.push_str("<w:r><w:t>ab</w:t></w:r><w:tab/><w:t/>");
+        }
+        xml.push_str("</w:p><w:p><w:t>end</w:t></w:p>");
+        let t = xml_text(&xml, "w:t", "w:p");
+        assert_eq!(t.len(), 20_000 * 2 + 1 + 3 + 1);
+        assert!(t.ends_with("end\n"));
+    }
+
+    #[test]
+    fn broken_pdfs_error_instead_of_panicking() {
+        let dir = std::env::temp_dir().join(format!("studio-pdf-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("bad.pdf");
+        std::fs::write(&p, b"%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 99 0 R >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF").unwrap();
+        let e = extract(&p).unwrap_err().to_string();
+        assert!(e.contains("couldn't read this PDF"), "{e}");
+        assert!(!in_pdf_guard());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn oversized_xml_is_refused() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("studio-bomb-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("bomb.docx");
+        let mut w = zip::ZipWriter::new(std::fs::File::create(&p).unwrap());
+        let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        w.start_file("word/document.xml", opts).unwrap();
+        let chunk = vec![b' '; 1 << 20];
+        for _ in 0..52 {
+            w.write_all(&chunk).unwrap();
+        }
+        w.finish().unwrap();
+        let e = extract(&p).unwrap_err().to_string();
+        assert!(e.contains("too large"), "{e}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

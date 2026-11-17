@@ -21,14 +21,43 @@ impl Default for Fnv {
 }
 
 impl Fnv {
-    pub fn write(&mut self, bytes: &[u8]) {
+    fn mix(&mut self, bytes: &[u8]) {
         for b in bytes {
             self.0 ^= *b as u64;
             self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
         }
+    }
+
+    fn mix_len(&mut self, len: u64) {
         // Length-delimit fields so ("ab","c") and ("a","bc") differ.
-        self.0 ^= bytes.len() as u64;
+        self.0 ^= len;
         self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
+    }
+
+    pub fn write(&mut self, bytes: &[u8]) {
+        self.mix(bytes);
+        self.mix_len(bytes.len() as u64);
+    }
+
+    /// Same as `write(&std::fs::read(path))`, but streamed so a big asset is never held in
+    /// memory. An unreadable file counts as empty.
+    pub fn write_file(&mut self, path: &Path) {
+        use std::io::Read;
+        let Ok(mut f) = std::fs::File::open(path) else { return self.write(&[]) };
+        let mut buf = vec![0u8; 1 << 16];
+        let mut total = 0u64;
+        loop {
+            match f.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    self.mix(&buf[..n]);
+                    total += n as u64;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => break,
+            }
+        }
+        self.mix_len(total);
     }
 
     pub fn finish(self) -> u64 {
@@ -133,12 +162,14 @@ pub fn scene_key_with(script: &Path, root: &Path, theme_json: &str, output: Outp
     h.write(b"pipeline-3");
     h.write(extra.as_bytes());
     h.write(theme_json.as_bytes());
+    // The encoder is not keyed on purpose (see `fonts_fingerprint`); the bundled fonts are,
+    // by the caller, through `extra`.
     h.write(format!("{}x{}@{}", output.width, output.height, output.fps).as_bytes());
     let root_c = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     for dep in dependencies(script, root) {
         let rel = dep.strip_prefix(&root_c).unwrap_or(&dep);
         h.write(rel.to_string_lossy().replace('\\', "/").as_bytes());
-        h.write(&std::fs::read(&dep).unwrap_or_default());
+        h.write_file(&dep);
     }
     h.finish()
 }
@@ -149,19 +180,73 @@ pub fn scene_video(video_dir: &Path, script: &Path, key: u64) -> PathBuf {
     video_dir.join(".cache").join("scenes").join(format!("{stem}-{key:016x}.mp4"))
 }
 
-/// Remove cached renders of `script` other than `keep` (old versions of the scene).
+/// A fingerprint of the bundled fonts' names and sizes (not their contents): text renders
+/// with them, so changing a font changes the pixels. Part of the scene key via `extra`.
+///
+/// The encoder choice (`Encoder`, hardware or x264) is deliberately *not* part of the
+/// key: the video is equivalent whichever encoder wrote it, so switching it keeps the cache.
+pub fn fonts_fingerprint(dir: Option<&Path>) -> String {
+    let Some(dir) = dir else { return String::new() };
+    let mut fonts: Vec<(String, u64)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let m = e.metadata().ok().filter(|m| m.is_file())?;
+            Some((e.file_name().to_string_lossy().into_owned(), m.len()))
+        })
+        .collect();
+    fonts.sort();
+    fonts.iter().map(|(n, s)| format!("{n}:{s}")).collect::<Vec<_>>().join(",")
+}
+
+/// The sidecar files that sit next to a cached scene video (`.seconds`, `.starts`, and
+/// the `.output` label `prune` uses to keep one render per output preset).
+const SIDECARS: [&str; 3] = ["seconds", "starts", "output"];
+
+/// Record which output preset a cached scene video was rendered for.
+pub fn write_output_label(video: &Path, output: Output) {
+    let _ = std::fs::write(video.with_extension("output"), format!("{}x{}@{}", output.width, output.height, output.fps));
+}
+
+/// What a file in the scene cache folder is: `{stem}-{16 hex}.{ext}` (a render or one of
+/// its sidecars) or a partial render. Returns the key part for renders and sidecars.
+fn cache_entry<'a>(name: &'a str, stem: &str) -> Option<(Option<&'a str>, &'a str)> {
+    let rest = name.strip_prefix(stem)?.strip_prefix('-')?;
+    // Partial renders: `{stem}-partial.mp4` and the engine's `{stem}-partial.partial.mp4`.
+    if matches!(rest, "partial.mp4" | "partial.partial.mp4") {
+        return Some((None, rest));
+    }
+    let (key, ext) = rest.split_once('.')?;
+    (key.len() == 16 && key.chars().all(|c| c.is_ascii_hexdigit()) && (ext == "mp4" || SIDECARS.contains(&ext))).then_some((Some(key), ext))
+}
+
+/// Remove cached renders of `script` that `keep` replaces: old versions of the scene for
+/// the same output preset, their sidecars, and partial leftovers. Renders for *other*
+/// output presets are kept (one per stem and preset, so flipping between 720p and 1080p
+/// doesn't re-render everything); a render with no `.output` label counts as old.
 pub fn prune(video_dir: &Path, script: &Path, keep: &Path) {
     let Some(stem) = script.file_stem().map(|s| s.to_string_lossy().into_owned()) else { return };
     let dir = video_dir.join(".cache").join("scenes");
     let Ok(entries) = std::fs::read_dir(&dir) else { return };
-    for e in entries.flatten() {
-        let p = e.path();
-        let name = e.file_name().to_string_lossy().into_owned();
-        let ours = name
-            .strip_prefix(&format!("{stem}-"))
-            .is_some_and(|rest| rest.len() == 16 + 4 || rest.ends_with("-partial.mp4"));
-        if ours && p != keep {
-            let _ = std::fs::remove_file(p);
+    let keep_name = keep.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let keep_key = cache_entry(&keep_name, &stem).and_then(|(k, _)| k).map(str::to_string);
+    let label = |key: &str| std::fs::read_to_string(dir.join(format!("{stem}-{key}.output"))).ok();
+    let keep_label = keep_key.as_deref().and_then(label);
+    let names: Vec<String> = entries.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    for name in &names {
+        let Some((key, _)) = cache_entry(name, &stem) else { continue };
+        let remove = match key {
+            None => true,
+            Some(k) if Some(k) == keep_key.as_deref() => false,
+            // A different preset's render survives while its video is still there.
+            Some(k) => {
+                let has_video = names.iter().any(|n| *n == format!("{stem}-{k}.mp4"));
+                !(has_video && keep_label.is_some() && label(k).is_some_and(|l| Some(&l) != keep_label.as_ref()))
+            }
+        };
+        if remove {
+            let _ = std::fs::remove_file(dir.join(name));
         }
     }
 }
@@ -193,6 +278,54 @@ mod tests {
         assert_ne!(a, b);
         assert_ne!(b, scene_key(&scene, &dir, "{\"x\":1}", out));
         assert_ne!(b, scene_key(&scene, &dir, "{}", Output::new(1920, 1080, 30.0)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn streamed_hash_matches_in_memory_hash() {
+        let p = std::env::temp_dir().join(format!("studio-fnv-{}.bin", std::process::id()));
+        let data: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&p, &data).unwrap();
+        let (mut a, mut b) = (Fnv::default(), Fnv::default());
+        a.write(&data);
+        b.write_file(&p);
+        assert_eq!(a.finish(), b.finish());
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn prune_keeps_one_render_per_output_preset() {
+        let dir = std::env::temp_dir().join(format!("studio-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let scenes = dir.join(".cache/scenes");
+        std::fs::create_dir_all(&scenes).unwrap();
+        let script = dir.join("scenes/01-a.ts");
+        let (hd, sd) = (Output::new(1920, 1080, 30.0), Output::new(1280, 720, 30.0));
+        let touch = |name: &str| std::fs::write(scenes.join(name), "x").unwrap();
+        let video = |key: &str, o: Output| {
+            touch(&format!("01-a-{key}.mp4"));
+            touch(&format!("01-a-{key}.seconds"));
+            touch(&format!("01-a-{key}.starts"));
+            write_output_label(&scenes.join(format!("01-a-{key}.mp4")), o);
+        };
+        video("0000000000000001", hd);
+        video("0000000000000002", sd);
+        video("0000000000000003", hd);
+        touch("01-a-partial.mp4");
+        touch("01-a-partial.partial.mp4");
+        touch("01-a-0000000000000009.seconds");
+        touch("01-ab-0000000000000001.mp4");
+        prune(&dir, &script, &scenes.join("01-a-0000000000000003.mp4"));
+        let mut left: Vec<String> = std::fs::read_dir(&scenes).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                "01-a-0000000000000002.mp4", "01-a-0000000000000002.output", "01-a-0000000000000002.seconds", "01-a-0000000000000002.starts",
+                "01-a-0000000000000003.mp4", "01-a-0000000000000003.output", "01-a-0000000000000003.seconds", "01-a-0000000000000003.starts",
+                "01-ab-0000000000000001.mp4",
+            ]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -176,12 +176,17 @@ impl Workspace {
     /// The "⋯" menu of a folder row.
     fn project_menu(&self, pi: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let target = RowTarget::Project(pi);
-        let items = vec![
-            MenuItem::new("New video here").icon(IconName::Plus),
-            MenuItem::new("Rename").icon(IconName::Pencil),
-            MenuItem::new(crate::engine::REVEAL_LABEL).icon(IconName::External),
-            MenuItem::new("Delete folder").icon(IconName::Trash).danger().divider(),
-        ];
+        // The items only matter while the menu is open.
+        let items = if self.row_menu == Some(target) {
+            vec![
+                MenuItem::new("New video here").icon(IconName::Plus),
+                MenuItem::new("Rename").icon(IconName::Pencil),
+                MenuItem::new(crate::engine::REVEAL_LABEL).icon(IconName::External),
+                MenuItem::new("Delete folder").icon(IconName::Trash).danger().divider(),
+            ]
+        } else {
+            Vec::new()
+        };
         Dropdown::new(
             SharedString::from(format!("project-menu-{pi}")),
             Button::icon(("project-more", pi), IconName::Dots).small().ghost().tooltip("Folder options"),
@@ -201,16 +206,27 @@ impl Workspace {
     /// The "⋯" menu of a video row.
     fn video_menu(&self, pi: usize, vi: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let target = RowTarget::Video(pi, vi);
-        let others: Vec<(usize, String)> =
-            self.projects.iter().enumerate().filter(|(i, _)| *i != pi).map(|(i, p)| (i, p.name.clone())).collect();
-        let mut items = vec![MenuItem::new("Rename").icon(IconName::Pencil), MenuItem::new(crate::engine::REVEAL_LABEL).icon(IconName::External)];
-        let first_move = items.len() + 1;
-        if !others.is_empty() {
-            items.push(MenuItem::heading("Move to").divider());
-            items.extend(others.iter().map(|(_, name)| MenuItem::new(name.clone()).icon(IconName::Move)));
+        // Built only while the menu is open: a closed menu is never read, and every video
+        // row would otherwise rebuild it each frame.
+        let open = self.row_menu == Some(target);
+        let others: Vec<(usize, String)> = if open {
+            self.projects.iter().enumerate().filter(|(i, _)| *i != pi).map(|(i, p)| (i, p.name.clone())).collect()
+        } else {
+            Vec::new()
+        };
+        let mut items = Vec::new();
+        let mut first_move = 0;
+        let mut delete_ix = 0;
+        if open {
+            items.extend([MenuItem::new("Rename").icon(IconName::Pencil), MenuItem::new(crate::engine::REVEAL_LABEL).icon(IconName::External)]);
+            first_move = items.len() + 1;
+            if !others.is_empty() {
+                items.push(MenuItem::heading("Move to").divider());
+                items.extend(others.iter().map(|(_, name)| MenuItem::new(name.clone()).icon(IconName::Move)));
+            }
+            delete_ix = items.len();
+            items.push(MenuItem::new("Delete").icon(IconName::Trash).danger().divider());
         }
-        let delete_ix = items.len();
-        items.push(MenuItem::new("Delete").icon(IconName::Trash).danger().divider());
         let targets: Vec<usize> = others.iter().map(|(i, _)| *i).collect();
         Dropdown::new(
             SharedString::from(format!("video-menu-{pi}-{vi}")),
@@ -257,11 +273,14 @@ impl Workspace {
         let mut matches = 0;
         for pi in 0..self.projects.len() {
             let project = &self.projects[pi];
+            // Lowercase the folder name once, and only while searching.
+            let project_lower = if searching { project.name.to_lowercase() } else { String::new() };
+            let project_hit = searching && project_lower.contains(&query);
             let hits: Vec<usize> = project
                 .videos
                 .iter()
                 .enumerate()
-                .filter(|(_, v)| query.is_empty() || v.title.to_lowercase().contains(&query) || project.name.to_lowercase().contains(&query))
+                .filter(|(_, v)| !searching || project_hit || v.title.to_lowercase().contains(&query))
                 .map(|(i, _)| i)
                 .collect();
             // Empty folders still show (so a new folder can be filled), except in search results.
