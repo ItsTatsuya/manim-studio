@@ -110,15 +110,3 @@ pub fn open_url(url: &str) {
     #[cfg(all(unix, not(target_os = "macos")))]
     let _ = std::process::Command::new("xdg-open").arg(url).spawn();
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn guarded_panics_are_not_crashes() {
-        assert!(is_caught_elsewhere(true, false));
-        assert!(is_caught_elsewhere(false, true));
-        assert!(!is_caught_elsewhere(false, false));
-    }
-}

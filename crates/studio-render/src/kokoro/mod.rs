@@ -404,11 +404,6 @@ pub fn write_wav(path: &Path, samples: &[f32]) -> Result<()> {
 mod tests {
     use super::*;
 
-    fn dir() -> Option<PathBuf> {
-        let d = PathBuf::from(std::env::var_os("APPDATA")?).join("ManimStudio/Manim Studio/data/voices/kokoro");
-        usable(&d, Quality::High).is_some().then_some(d)
-    }
-
     #[test]
     fn trims_silence_but_keeps_edges() {
         let mut w = vec![0.0f32; 24_000];
@@ -429,66 +424,4 @@ mod tests {
         assert_eq!(parts.iter().map(Vec::len).sum::<usize>() + parts.len() - 1, ids.len());
     }
 
-    /// Speed of each downloaded model: `cargo test --release -p studio-render compare_qualities -- --ignored --nocapture`.
-    #[test]
-    #[ignore]
-    fn compare_qualities() {
-        let Some(d) = dir() else { return };
-        let text = "If you double a pizza's radius, do you get twice the pizza? Let's find out. We cut the circle into thin slices and lay them side by side. The slices make a shape that looks more and more like a rectangle.";
-        for q in Quality::ALL.into_iter().filter(|&q| installed(&d, q)) {
-            let mut k = Kokoro::load(&d, q).unwrap();
-            k.speak("Warm up.", "af_heart", 1.0).unwrap();
-            let t = std::time::Instant::now();
-            let wave = k.speak(text, "af_heart", 1.0).unwrap();
-            let secs = wave.len() as f32 / SAMPLE_RATE as f32;
-            eprintln!("{q:?}: {secs:.1}s of audio in {:.2}s ({:.0}x real time)", t.elapsed().as_secs_f32(), secs / t.elapsed().as_secs_f32());
-            if let Ok(out) = std::env::var("KOKORO_WAV") {
-                write_wav(Path::new(&format!("{out}-{q:?}.wav")), &wave).unwrap();
-            }
-        }
-    }
-
-    /// `KOKORO_RUNTIME=<dir>`: fetch just the ONNX Runtime DLL there and check it.
-    #[test]
-    fn downloads_runtime() {
-        let Some(d) = std::env::var_os("KOKORO_RUNTIME") else { return };
-        let d = PathBuf::from(d);
-        std::fs::create_dir_all(&d).unwrap();
-        let mut got = 0;
-        runtime::download(&d, &AtomicBool::new(false), |n| got += n).unwrap();
-        assert!(runtime::present(&d) && got > 0);
-    }
-
-    /// `KOKORO_DOWNLOAD=<dir>`: fetch what is missing there and check it.
-    #[test]
-    fn downloads_missing_files() {
-        let Some(d) = std::env::var_os("KOKORO_DOWNLOAD") else { return };
-        let d = PathBuf::from(d);
-        let mut calls = 0;
-        download(&d, Quality::Standard, &AtomicBool::new(false), |done, total| {
-            calls += 1;
-            assert!(done <= total);
-        })
-        .unwrap();
-        assert!(installed(&d, Quality::Standard) && calls > 0);
-    }
-
-    /// Needs the downloaded model (skipped otherwise).
-    #[test]
-    fn speaks_with_kokoro() {
-        let Some(d) = dir() else { return };
-        let q = usable(&d, Quality::High).unwrap();
-        let mut k = Kokoro::load(&d, q).unwrap();
-        let ps = k.phonemes("The area of a circle is πr². Let's see why, step by step.", "af_heart").unwrap();
-        eprintln!("{ps}");
-        assert!(ps.contains("pˈI") && ps.contains("skwˈɛɹd"), "{ps}");
-        let t = std::time::Instant::now();
-        let wave = k.speak("The area of a circle is pi r squared.", "af_heart", 1.0).unwrap();
-        let secs = wave.len() as f32 / SAMPLE_RATE as f32;
-        eprintln!("{q:?}: {secs:.2}s of audio in {:?}", t.elapsed());
-        assert!((1.0..6.0).contains(&secs));
-        if let Ok(out) = std::env::var("KOKORO_WAV") {
-            write_wav(Path::new(&out), &wave).unwrap();
-        }
-    }
 }

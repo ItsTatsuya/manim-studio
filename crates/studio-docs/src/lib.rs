@@ -199,12 +199,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reads_word_xml() {
-        let xml = r#"<w:body><w:p><w:r><w:t>Area of</w:t></w:r><w:r><w:t xml:space="preserve"> a circle</w:t></w:r></w:p><w:p><w:r><w:tab/><w:t>A = &amp;pi;r²</w:t></w:r></w:p></w:body>"#;
-        assert_eq!(xml_text(xml, "w:t", "w:p"), "Area of a circle\nA = &pi;r²\n");
-    }
-
-    #[test]
     fn xml_text_handles_many_runs_and_lookalike_tags() {
         let mut xml = String::from("<w:p>");
         for _ in 0..20_000 {

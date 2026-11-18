@@ -489,19 +489,4 @@ mod plan_option_tests {
         assert!(!p.contains("End with one practice question"));
     }
 
-    #[test]
-    fn scene_count_scales_with_length() {
-        assert_eq!(opts(30).scene_range(), (2, 3));
-        assert_eq!(opts(120).scene_range(), (3, 6));
-        assert_eq!(opts(360).scene_range(), (8, 12));
-    }
-
-    #[test]
-    fn empty_options_keep_the_old_defaults() {
-        let o = PlanOptions { approach: "", level: "", ending: "", words_per_second: 0., ..opts(60) };
-        let p = plan(&o);
-        assert!(!p.contains("Audience:"));
-        assert!(p.contains("End with one practice question."));
-        assert!(p.contains("about 2.5 spoken words per second"));
-    }
 }

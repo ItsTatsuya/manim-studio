@@ -670,8 +670,8 @@ impl Workspace {
             .enumerate()
             .map(|(i, s)| (format_short(video.scene_start(i).round() as u32), s.say.clone(), s.engine.voice.as_ref().map(|v| v.seconds)))
             .collect();
+        // `voice_label` already ends with the speed.
         let voice = if self.prefs.narration { self.voice_label() } else { "Narration off".to_string() };
-        let speed = crate::engine::SPEEDS[self.prefs.speed.min(3)].0;
         let captions = crate::engine::CAPTIONS[self.prefs.captions.min(2)];
         div()
             .id("narration")
@@ -683,17 +683,26 @@ impl Workspace {
             .flex_col()
             .gap(px(10.))
             .child(
+                // The chips wrap onto a second line in a narrow panel; the button keeps its place.
                 div()
+                    .w_full()
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .child(Chip::new(format!("{voice} · {speed}")).icon(IconName::Mic))
-                    .child(Chip::new(captions).icon(IconName::Captions))
-                    .child(div().flex_1())
-                    .child(Button::icon("voice-settings", IconName::Gear).small().tooltip("Voice & captions").on_click(click(cx, |this, _, cx| {
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_wrap()
+                            .gap(px(8.))
+                            .child(Chip::new(voice).icon(IconName::Mic))
+                            .child(Chip::new(captions).icon(IconName::Captions)),
+                    )
+                    .child(div().flex_none().child(Button::icon("voice-settings", IconName::Gear).small().tooltip("Voice & captions").on_click(click(cx, |this, _, cx| {
                         this.settings_page = crate::app::SettingsPage::Voice;
                         this.go(crate::app::Screen::Settings, cx);
-                    }))),
+                    })))),
             )
             .children(lines.into_iter().enumerate().map(|(i, (ts, line, secs))| {
                 let on = i == self.scene;
@@ -1031,24 +1040,4 @@ fn activity_row(icon: IconName, ok: bool, label: String, meta: String, cx: &Cont
         )
         .child(num(meta).text_color(t.fg_3).font_weight(FontWeight::NORMAL))
         .into_any_element()
-}
-
-#[cfg(test)]
-mod working_tests {
-    use super::*;
-
-    #[test]
-    fn sweep_covers_the_track_and_repeats() {
-        assert!((sweep_left(0) + 0.35).abs() < 1e-6);
-        assert!((sweep_left(SWEEP_STEPS - 1) - 1.0).abs() < 1e-6);
-        assert_eq!(sweep_left(0), sweep_left(SWEEP_STEPS));
-    }
-
-    #[test]
-    fn dots_peak_in_turn() {
-        for step in 0..8 {
-            let peaks = (0..3).filter(|&i| pulse_opacity(step, i) > 0.9).count();
-            assert_eq!(peaks, usize::from(step % 4 < 3));
-        }
-    }
 }

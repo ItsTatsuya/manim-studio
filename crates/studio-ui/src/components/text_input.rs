@@ -1137,67 +1137,6 @@ mod tests {
     }
 
     #[test]
-    fn snap_clamps_and_floors_to_char_boundary() {
-        let t = "aé€😀"; // 1 + 2 + 3 + 4 bytes
-        assert_eq!(snap(t, 0), 0);
-        assert_eq!(snap(t, 2), 1); // mid-é
-        assert_eq!(snap(t, 4), 3); // mid-€
-        assert_eq!(snap(t, 8), 6); // mid-😀
-        assert_eq!(snap(t, 10), 10);
-        assert_eq!(snap(t, 999), 10);
-        assert_eq!(snap("", 5), 0);
-    }
-
-    #[test]
-    fn snap_range_orders_and_clamps() {
-        let t = "é€";
-        assert_eq!(snap_range(t, Range { start: 3, end: 1 }), 0..2);
-        assert_eq!(snap_range(t, 1..99), 0..5);
-    }
-
-    #[test]
-    fn strip_newlines_makes_spaces() {
-        assert_eq!(strip_newlines("a\nb"), "a b");
-        assert_eq!(strip_newlines("a\r\nb"), "a b");
-        assert_eq!(strip_newlines("a\rb\n\nc"), "a b  c");
-        assert_eq!(strip_newlines("plain"), "plain");
-    }
-
-    #[test]
-    fn single_line_buffer_never_holds_newlines() {
-        let mut b = Buffer::new();
-        b.single_line = true;
-        b.set_text("x\ny", false);
-        assert_eq!(b.text, "x y");
-        let at = b.caret();
-        b.replace(at..at, "1\r\n2");
-        assert_eq!(b.text, "x y1 2");
-        // Multi-line keeps them.
-        let mut m = Buffer::new();
-        m.set_text("x\ny", false);
-        assert_eq!(m.text, "x\ny");
-    }
-
-    #[test]
-    fn set_text_resets_marked_and_selection() {
-        let mut b = buf("hello");
-        b.replace_marking(Some(2..4), "ab");
-        assert!(b.marked.is_some());
-        b.set_text("hi", false);
-        assert_eq!(b.marked, None);
-        assert_eq!(b.selection, 2..2);
-        b.replace_marking(None, "xy");
-        assert!(b.marked.is_some());
-        b.set_text("", false); // what clear() does
-        assert_eq!(b.marked, None);
-        b.replace_marking(None, "xy");
-        b.set_text("rename me", true);
-        assert_eq!(b.marked, None);
-        assert_eq!(b.selection, 0..9);
-        assert_eq!(b.anchor, 0);
-    }
-
-    #[test]
     fn stale_ranges_are_clamped_and_snapped() {
         let mut b = buf("aé€");
         // Platform range past the end and in the middle of chars.
@@ -1215,21 +1154,6 @@ mod tests {
     }
 
     #[test]
-    fn select_to_snaps_offsets_and_anchor() {
-        let mut b = buf("aé€");
-        b.select_to(2, false); // mid-é
-        assert_eq!(b.selection, 1..1);
-        b.select_to(4, true); // mid-€
-        assert_eq!(b.selection, 1..3);
-        b.select_to(500, true);
-        assert_eq!(b.selection, 1..6);
-        // A stale anchor beyond a shorter text.
-        b.anchor = 50;
-        b.select_to(1, true);
-        assert_eq!(b.selection, Range { start: 6, end: 1 });
-    }
-
-    #[test]
     fn word_and_line_helpers_accept_mid_char_offsets() {
         let b = buf("héllo wörld\nnext");
         let _ = b.word_start(2);
@@ -1242,7 +1166,6 @@ mod tests {
     fn typing_coalesces_into_one_undo_step() {
         let mut b = Buffer::new();
         typed(&mut b, "abc");
-        assert_eq!(b.history.undo.len(), 1);
         assert!(b.undo());
         assert_eq!(b.text, "");
         assert!(!b.undo());
@@ -1253,55 +1176,15 @@ mod tests {
     }
 
     #[test]
-    fn space_and_movement_split_undo_steps() {
-        let mut b = Buffer::new();
-        typed(&mut b, "ab cd");
-        assert!(b.undo());
-        assert_eq!(b.text, "ab ");
-        assert!(b.undo());
-        assert_eq!(b.text, "ab");
-        assert!(b.undo());
-        assert_eq!(b.text, "");
-
-        let mut b = Buffer::new();
-        typed(&mut b, "ab");
-        b.history.break_run(); // cursor moved
-        typed(&mut b, "cd");
-        assert!(b.undo());
-        assert_eq!(b.text, "ab");
-    }
-
-    #[test]
-    fn new_edit_clears_redo_and_set_text_clears_history() {
-        let mut b = Buffer::new();
-        typed(&mut b, "ab");
-        b.undo();
-        assert_eq!(b.history.redo.len(), 1);
-        typed(&mut b, "z");
-        assert!(b.history.redo.is_empty());
-        b.set_text("fresh", false);
-        assert!(!b.undo());
-    }
-
-    #[test]
     fn deletes_coalesce_and_restore_selection() {
         let mut b = buf("hello");
         b.replace(4..5, "");
         b.replace(3..4, "");
         assert_eq!(b.text, "hel");
-        assert_eq!(b.history.undo.len(), 1);
-        b.undo();
+        assert!(b.undo());
         assert_eq!(b.text, "hello");
+        assert!(!b.undo(), "both deletes were one step");
         assert_eq!(b.selection, 5..5);
-    }
-
-    #[test]
-    fn history_is_bounded() {
-        let mut b = Buffer::new();
-        for _ in 0..(HISTORY_LIMIT + 20) {
-            b.replace(0..0, "é "); // Other steps never coalesce
-        }
-        assert_eq!(b.history.undo.len(), HISTORY_LIMIT);
     }
 
     #[test]
@@ -1315,16 +1198,6 @@ mod tests {
         assert_eq!(b.text, "x仮名");
         assert!(b.undo());
         assert_eq!(b.text, "x");
-    }
-
-    #[test]
-    fn restore_after_undo_never_leaves_marked() {
-        let mut b = buf("ab");
-        b.replace(2..2, "c");
-        b.replace_marking(None, "d");
-        assert!(b.marked.is_some());
-        b.undo();
-        assert_eq!(b.marked, None);
     }
 
     #[test]

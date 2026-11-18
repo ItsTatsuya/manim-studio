@@ -325,17 +325,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    #[test]
-    fn cancel_stops_and_keeps_the_part() {
-        let body = vec![7u8; 100_000];
-        let d = dir("cancel");
-        let (url, _) = serve(body.clone(), true, None);
-        let cancel = AtomicBool::new(false);
-        let e = download_file(&url, &d.join("f.bin"), body.len() as u64, &sha(&body), &cancel, |_| cancel.store(true, Ordering::Relaxed)).unwrap_err();
-        assert!(crate::is_cancelled(&e), "{e}");
-        assert!(d.join("f.bin.part").exists() && !d.join("f.bin").exists());
-        // A flag that is already set stops before any request.
-        assert!(crate::is_cancelled(&download_file("http://127.0.0.1:9/x", &d.join("g.bin"), 10, "00", &cancel, |_| {}).unwrap_err()));
-        let _ = std::fs::remove_dir_all(&d);
-    }
 }

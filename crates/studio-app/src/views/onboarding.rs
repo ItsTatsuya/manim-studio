@@ -12,6 +12,8 @@ use studio_ui::{Icon, IconName};
 pub const STEPS: usize = 5;
 /// The natural-voice download step.
 const VOICE_STEP: usize = 3;
+/// One width for every step's content and the Back / Continue row, so right edges line up.
+const CONTENT_W: f32 = 520.;
 
 impl Workspace {
     /// Go to onboarding step `step`; arriving at the voice step starts its download.
@@ -47,9 +49,11 @@ impl Workspace {
             _ => true,
         };
 
+        // Narrow windows drop the preview; the steps then take the whole width.
+        let show_preview = !theme::is_compact(window) || window.viewport_size().width > px(1000.);
         let left = div()
-            .w(relative(0.5))
-            .flex_none()
+            .when(show_preview, |d| d.w(relative(0.5)).flex_none())
+            .when(!show_preview, |d| d.flex_1())
             .min_w_0()
             .flex()
             .flex_col()
@@ -79,7 +83,7 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .max_w(px(520.))
+                    .max_w(px(CONTENT_W))
                     .when(step > 0, |d| {
                         d.child(Button::new("onb-back", "Back").ghost().on_click(click(cx, |this, _, cx| {
                             this.enter_onboarding_step(this.onboarding_step.saturating_sub(1), cx)
@@ -169,7 +173,7 @@ impl Workspace {
             .flex()
             .gap(px(10.))
             .child(left)
-            .when(!theme::is_compact(window) || window.viewport_size().width > px(1000.), |d| d.child(right))
+            .when(show_preview, |d| d.child(right))
             .into_any_element()
     }
 
@@ -237,7 +241,10 @@ impl Workspace {
                         .child(Icon::new(icon).color(t.fg_2)),
                 )
                 .child(
+                    // flex_1 + min_w_0 so the text wraps instead of running past the column.
                     div()
+                        .flex_1()
+                        .min_w_0()
                         .flex()
                         .flex_col()
                         .child(strong(head))
@@ -258,7 +265,7 @@ impl Workspace {
                     .flex()
                     .flex_col()
                     .gap(px(16.))
-                    .max_w(px(460.))
+                    .max_w(px(CONTENT_W))
                     .child(point(IconName::Board, "You approve a storyboard first", "Nothing is built until the plan looks right. That keeps usage low."))
                     .child(point(IconName::Key, "Uses the plan you already have", "Claude or ChatGPT. Studio never stores your password."))
                     .child(point(IconName::Film, "Renders locally, fast", "1080p in seconds, with captions and a natural voice.")),
@@ -330,7 +337,7 @@ impl Workspace {
                 "Studio uses your existing ChatGPT or Claude plan to write lessons. Nothing is billed separately, and your sign-in stays with the provider.",
                 cx,
             ))
-            .child(div().flex().flex_col().gap(px(10.)).max_w(px(500.)).children(cards))
+            .child(div().flex().flex_col().gap(px(10.)).max_w(px(CONTENT_W)).children(cards))
             .child(
                 div()
                     .flex()
@@ -338,7 +345,7 @@ impl Workspace {
                     .gap(px(6.))
                     .text_color(t.fg_3)
                     .text_size(px(12.))
-                    .max_w(px(500.))
+                    .max_w(px(CONTENT_W))
                     .child(div().flex_none().pt(px(1.)).child(Icon::new(IconName::Shield).small().color(t.fg_3)))
                     .child(div().flex_1().min_w_0().child(if self.providers.iter().any(|p| p.signed_in) {
                         format!(
@@ -358,6 +365,8 @@ impl Workspace {
             let on = self.prefs.house_style == i;
             div()
                 .id(("style", i))
+                // Fill the cell so cards in a row share one height.
+                .flex_1()
                 .flex()
                 .flex_col()
                 .gap(px(8.))
@@ -395,7 +404,7 @@ impl Workspace {
         // Three per row: six styles fit in two rows.
         const PER_ROW: usize = 3;
         let cards: Vec<_> = cards.collect();
-        let mut rows = div().flex().flex_col().gap(px(10.)).max_w(px(560.));
+        let mut rows = div().flex().flex_col().gap(px(10.)).max_w(px(CONTENT_W));
         let mut it = cards.into_iter().peekable();
         while it.peek().is_some() {
             let mut row = div().flex().gap(px(10.));
@@ -484,7 +493,7 @@ impl Workspace {
             .flex_col()
             .gap(px(14.))
             .p(px(14.))
-            .max_w(px(500.))
+            .max_w(px(CONTENT_W))
             .rounded(radius::PANEL)
             .bg(t.surface)
             .border_1()
@@ -538,7 +547,7 @@ impl Workspace {
                     .flex()
                     .items_start()
                     .gap(px(6.))
-                    .max_w(px(500.))
+                    .max_w(px(CONTENT_W))
                     .text_color(t.fg_3)
                     .text_size(px(12.))
                     .child(div().pt(px(1.)).flex_none().child(Icon::new(IconName::Info).small().color(t.fg_3)))
@@ -586,7 +595,7 @@ impl Workspace {
                 div()
                     .flex()
                     .flex_col()
-                    .max_w(px(460.))
+                    .max_w(px(CONTENT_W))
                     .child(row("Assistant", assistant))
                     .child(row("House style", strong(HOUSE_STYLES[self.prefs.house_style.min(HOUSE_STYLES.len() - 1)].name).into_any_element()))
                     .child(row("Voice", strong(self.voice_label()).into_any_element()))

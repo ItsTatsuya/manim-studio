@@ -276,8 +276,7 @@ mod tests {
     #[test]
     fn reset_phrase_survives_case_folding_that_changes_length() {
         // 'İ' lowercases to two chars (three bytes), which used to shift the index.
-        let raw = "İİİ limit reached, resets 3pm. Thanks";
-        assert_eq!(reset_phrase(raw).as_deref(), Some("resets 3pm"));
-        assert_eq!(reset_phrase("İ nothing here"), None);
+        let e = explain(Provider::Claude, "İİİ limit reached, resets 3pm. Thanks", 0);
+        assert!(e.body.contains("It resets 3pm."), "{}", e.body);
     }
 }

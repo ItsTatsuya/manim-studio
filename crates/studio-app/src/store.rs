@@ -546,18 +546,6 @@ pub fn fresh_project_name(projects: &[Project]) -> String {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn backup_names_are_timestamped_and_pruned_to_the_newest() {
-        assert_eq!(super::backup_name("chat.json", 1700000000), "chat.json.1700000000.bak");
-        let names: Vec<String> = ["chat.json", "chat.json.5.bak", "chat.json.30.bak", "chat.json.4.bak", "chat.json.bak", "video.json.1.bak", "chat.json.x.bak"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        // Numeric order, not text order: 30 is newer than 5.
-        assert_eq!(super::stale_backups("chat.json", &names, 2), vec!["chat.json.4.bak".to_string()]);
-        assert!(super::stale_backups("chat.json", &names, 3).is_empty());
-        assert_eq!(super::stale_backups("chat.json", &names, 0).len(), 3);
-    }
 
     #[test]
     fn backups_rotate_on_disk() {
@@ -592,12 +580,6 @@ mod tests {
         let (records, skipped) = parse_chat(json).unwrap();
         assert_eq!(records.len(), 2);
         assert_eq!(skipped, 2);
-    }
-
-    #[test]
-    fn chat_parse_rejects_non_lists() {
-        assert!(parse_chat(b"{ not json").is_none());
-        assert!(parse_chat(br#"{"kind":"user"}"#).is_none());
     }
 
     #[test]

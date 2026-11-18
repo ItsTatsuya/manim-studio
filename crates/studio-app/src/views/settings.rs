@@ -519,7 +519,7 @@ impl Workspace {
         });
         let captions = self.dropdown("captions", &CAPTIONS, self.prefs.captions, cx, |this, i, _, _| this.prefs.captions = i);
         let natural: AnyElement = match &self.natural {
-            crate::engine::NaturalVoice::Ready => faint("Installed", cx).into_any_element(),
+            crate::engine::NaturalVoice::Ready => Chip::new("Installed").tone(Tone::Ok).icon(IconName::Check).into_any_element(),
             _ if !kokoro::supported() => faint("Not available", cx).into_any_element(),
             crate::engine::NaturalVoice::Downloading(f) => div()
                 .flex()
@@ -559,7 +559,7 @@ impl Workspace {
         use crate::engine::NaturalVoice as Dl;
         let espeak_found = self.probes.borrow_mut().espeak.get((), |_| studio_render::voice::espeak());
         let espeak: AnyElement = match &self.espeak {
-            Dl::Ready => faint(if espeak_found.is_some_and(|e| !e.bundled) { "Found on this computer" } else { "Installed" }, cx)
+            Dl::Ready => Chip::new(if espeak_found.is_some_and(|e| !e.bundled) { "Found on this computer" } else { "Installed" }).tone(Tone::Ok).icon(IconName::Check)
                 .into_any_element(),
             Dl::Downloading(f) => div()
                 .flex()

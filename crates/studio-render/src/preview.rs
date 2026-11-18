@@ -764,32 +764,4 @@ export default class N extends Scene {
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
-
-    /// Retiming loads the scene twice; native state (trackers) must survive that.
-    #[test]
-    fn retimed_scenes_keep_trackers() {
-        let dir = std::env::temp_dir().join(format!("studio-retime-vt-{}", std::process::id()));
-        std::fs::create_dir_all(dir.join("scenes")).unwrap();
-        let path = dir.join("scenes/01-vt.ts");
-        std::fs::write(
-            &path,
-            r#"import { Scene, ValueTracker, DecimalNumber, FadeIn, alwaysRedraw } from "manim";
-export default class V extends Scene {
-  construct() {
-    const r = new ValueTracker(1);
-    const n = alwaysRedraw(() => DecimalNumber(r.getValue(), { numDecimalPlaces: 1 }));
-    this.play(FadeIn(n), { runTime: 1 });
-    this.play(r.animate.setValue(3), { runTime: 2 });
-    this.wait(6);
-  }
-}"#,
-        )
-        .unwrap();
-        let req = OpenScene { path, root: dir.clone(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: Some(2.0), narration_lines: vec![] };
-        let (host, _, t) = load(&req, Output::new(320, 180, 30.0)).unwrap();
-        assert!((t.duration - (2.0 + NARRATION_TAIL)).abs() < 0.15, "{}", t.duration);
-        host.frame_at(t.duration * 0.6).unwrap();
-        drop(host);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 }

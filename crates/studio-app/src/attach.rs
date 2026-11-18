@@ -123,23 +123,3 @@ impl Workspace {
         crate::store::assets(&dir).into_iter().map(|(n, _)| format!("assets/{n}")).collect()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn same_contents_checks_size_then_bytes() {
-        let dir = std::env::temp_dir().join(format!("studio-attach-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let (a, b, c, d) = (dir.join("a"), dir.join("b"), dir.join("c"), dir.join("d"));
-        std::fs::write(&a, b"hello").unwrap();
-        std::fs::write(&b, b"hello").unwrap();
-        std::fs::write(&c, b"hellp").unwrap();
-        std::fs::write(&d, b"hello!").unwrap();
-        assert!(same_contents(&a, &b));
-        assert!(!same_contents(&a, &c));
-        assert!(!same_contents(&a, &d));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}

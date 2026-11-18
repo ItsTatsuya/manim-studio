@@ -9,6 +9,12 @@ use studio_ui::components::{Button, Segment, Segmented, caps, panel};
 use studio_ui::theme::{ActiveTheme, radius, text};
 use studio_ui::{Icon, IconName};
 
+/// Width of the video options panel: the six looks fit on one line, and every other
+/// row stretches to the same width.
+const PANEL_W: f32 = 660.;
+/// Width of the look preview shown beside the panel.
+const PREVIEW_W: f32 = 260.;
+
 impl Workspace {
     pub fn render_home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let viewport_h = f32::from(window.viewport_size().height);
@@ -221,8 +227,6 @@ impl Workspace {
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_menu(KEY, !open, cx)));
         // Open below the button, or above it when the window is too short for that.
         const PANEL_H: f32 = 380.;
-        const PANEL_W: f32 = 580.;
-        const PREVIEW_W: f32 = 260.;
         let at = self.options_anchor.get();
         let (top, bottom) = (f32::from(at.origin.y), f32::from(at.origin.y + at.size.height));
         let upward = bottom + PANEL_H > viewport_h - 8. && top - PANEL_H > 8.;
@@ -295,9 +299,10 @@ impl Workspace {
                    pick: fn(&mut Workspace, usize, &mut Context<Workspace>),
                    cx: &mut Context<Self>| {
             div()
+                .w_full()
                 .flex()
                 .child(
-                    Segmented::new(id, labels.into_iter().map(Segment::new).collect(), selected).on_select(with_value(
+                    Segmented::new(id, labels.into_iter().map(Segment::new).collect(), selected).stretch().on_select(with_value(
                         cx,
                         move |this, i: usize, _, cx| {
                             pick(this, i, cx);
@@ -310,9 +315,11 @@ impl Workspace {
         };
 
         let look_ctl = div()
+            .w_full()
             .flex()
             .child(
                 Segmented::new("opt-look", HOUSE_STYLES.iter().map(|s| Segment::new(s.name)).collect(), look)
+                    .stretch()
                     .on_select(with_value(cx, |this, i: usize, _, cx| {
                         this.prefs.house_style = i;
                         this.save_prefs();
@@ -336,7 +343,7 @@ impl Workspace {
                 .top_0()
                 .when(!preview_left, |d| d.left(gpui::relative(1.)).ml(px(8.)))
                 .when(preview_left, |d| d.right(gpui::relative(1.)).mr(px(8.)))
-                .w(px(260.))
+                .w(px(PREVIEW_W))
                 .child(studio_ui::motion::pop(
                 div()
                     .w_full()
@@ -373,10 +380,11 @@ impl Workspace {
         // A typed length that isn't a preset selects no preset.
         let preset = LENGTHS.iter().position(|s| *s == secs).unwrap_or(usize::MAX);
         let length_ctl = div()
+            .w_full()
             .flex()
             .items_center()
             .gap(px(8.))
-            .child(seg(
+            .child(div().flex_1().min_w_0().child(seg(
                 "opt-length",
                 LENGTHS.iter().map(|s| length_label(*s)).collect(),
                 preset,
@@ -385,9 +393,10 @@ impl Workspace {
                     this.length_input.update(cx, |input, cx| input.clear(cx));
                 },
                 cx,
-            ))
+            )))
             .child(
                 div()
+                    .flex_none()
                     .w(px(84.))
                     .h(px(32.))
                     .px(px(10.))
@@ -441,7 +450,7 @@ impl Workspace {
             .occlude()
             // Moving anywhere else in the panel hides the look preview.
             .on_mouse_move(cx.listener(|this, _, _, cx| this.clear_look_hover(cx)))
-            .w(px(580.))
+            .w(px(PANEL_W))
             .py(px(2.))
             .flex()
             .flex_col()

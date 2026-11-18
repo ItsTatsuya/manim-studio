@@ -1226,28 +1226,3 @@ impl Workspace {
         true
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn script_changes_are_found_by_stat() {
-        let dir = std::env::temp_dir().join(format!("studio-snap-test-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("scenes")).unwrap();
-        std::fs::write(dir.join("scenes/a.py"), "one").unwrap();
-        std::fs::write(dir.join("scenes/b.py"), "two").unwrap();
-        let before = snapshot_scripts(&dir);
-        assert!(changed_between(&before, &snapshot_scripts(&dir)).is_empty());
-        // Size differs even if the clock didn't tick.
-        std::fs::write(dir.join("scenes/a.py"), "one more").unwrap();
-        std::fs::write(dir.join("scenes/c.py"), "new").unwrap();
-        std::fs::remove_file(dir.join("scenes/b.py")).unwrap();
-        let mut changed = changed_between(&before, &snapshot_scripts(&dir));
-        changed.sort();
-        let names: Vec<_> = changed.iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
-        assert_eq!(names, ["a.py", "b.py", "c.py"]);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}

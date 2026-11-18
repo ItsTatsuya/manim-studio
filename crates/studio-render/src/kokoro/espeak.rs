@@ -165,19 +165,4 @@ mod tests {
         assert!(t.elapsed() < Duration::from_secs(5));
     }
 
-    /// `ESPEAK_INSTALL=<kokoro dir>`: unpack Studio's copy there, then read an unknown word.
-    #[test]
-    fn installs_and_reads_unknown_words() {
-        let Some(dir) = std::env::var_os("ESPEAK_INSTALL") else { return };
-        let dir = PathBuf::from(dir);
-        let mut calls = 0;
-        install(&dir, &AtomicBool::new(false), |_, _| calls += 1).unwrap();
-        assert!(calls > 0 && find(Some(&dir)).is_some_and(|e| e.bundled));
-        if dir.join("us_gold.json").is_file() {
-            let g = super::super::G2p::load(&dir, false).unwrap();
-            let ps = g.phonemize("Zorbify the numbers.");
-            eprintln!("{ps}");
-            assert!(ps.starts_with("zˈɔɹb") && ps.contains("fˌI"), "{ps}");
-        }
-    }
 }

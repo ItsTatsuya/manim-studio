@@ -282,7 +282,14 @@ impl Workspace {
         let search_input = cx.new(|cx| TextInput::new("Search", window, cx).lines(1, 1));
         let palette_input = cx.new(|cx| TextInput::new("Type a command or a video name", window, cx).lines(1, 1));
         let rename_input = cx.new(|cx| TextInput::new("Name", window, cx).lines(1, 1));
-        let length_input = cx.new(|cx| TextInput::new("e.g. 3:30", window, cx).lines(1, 1));
+        let length_input = cx.new(|cx| {
+            let mut i = TextInput::new("e.g. 3:30", window, cx).lines(1, 1);
+            // A saved length that isn't a preset shows in the field it was typed into.
+            if !crate::model::LENGTHS.contains(&prefs.video_seconds) {
+                i.set_text(crate::model::length_label(prefs.video_seconds), cx);
+            }
+            i
+        });
         // Enter on an empty line saves it empty (a scene without narration).
         let narration_input = cx.new(|cx| TextInput::new("What the narrator says in this scene", window, cx).lines(2, 8).submit_empty(true));
         let watermark_input = cx.new(|cx| {
@@ -845,7 +852,14 @@ impl Workspace {
             Some(secs) => {
                 self.prefs.video_seconds = secs;
                 self.save_prefs();
-                self.length_input.update(cx, |i, cx| i.clear(cx));
+                // A preset lights up its pill; any other length stays in the field, tidied
+                // ("3:30"), so the highlighted field never looks empty.
+                if crate::model::LENGTHS.contains(&secs) {
+                    self.length_input.update(cx, |i, cx| i.clear(cx));
+                } else {
+                    let label = crate::model::length_label(secs);
+                    self.length_input.update(cx, |i, cx| i.set_text(label, cx));
+                }
             }
             None => self.notice = Some(format!("“{}” isn't a length. Try 3:30, 7 min or 90s.", text.trim())),
         }

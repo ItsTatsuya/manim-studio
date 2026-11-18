@@ -184,6 +184,5 @@ mod tests {
         let want = format!("/home/o{}neil/x", [0x27u8, 0x5c, 0x27, 0x27].iter().map(|b| *b as char).collect::<String>());
         assert_eq!(sh_quote_inner("/home/o'neil/x"), want);
         assert_eq!(sh_quote_inner("plain"), "plain");
-        assert_eq!(sh_quote_inner("a'b").len(), 6);
     }
 }

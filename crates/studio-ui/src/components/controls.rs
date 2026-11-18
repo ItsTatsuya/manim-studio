@@ -315,6 +315,7 @@ pub struct Segmented {
     items: Vec<Segment>,
     selected: usize,
     fill: bool,
+    stretch: bool,
     hide_icons: bool,
     on_select: Option<ValueHandler<usize>>,
     /// The item the pointer is moving over.
@@ -328,6 +329,7 @@ impl Segmented {
             items,
             selected,
             fill: false,
+            stretch: false,
             hide_icons: false,
             on_select: None,
             on_item_hover: None,
@@ -337,6 +339,13 @@ impl Segmented {
     /// Stretch items to the full width.
     pub fn fill(mut self) -> Self {
         self.fill = true;
+        self
+    }
+
+    /// Span the full width, items growing in proportion to their labels (unlike
+    /// [`Self::fill`], which makes them equal and can truncate long labels).
+    pub fn stretch(mut self) -> Self {
+        self.stretch = true;
         self
     }
 
@@ -366,6 +375,7 @@ impl RenderOnce for Segmented {
         let n = self.items.len().max(1) as f32;
         let selected = self.selected;
         let fill = self.fill;
+        let stretch = self.stretch && !fill;
         // Where each tab sat last frame, relative to the track: content-sized tabs
         // have different widths, so the pill needs them to slide and resize.
         let spans = window.use_keyed_state((id.clone(), usize::MAX - 1), cx, |_, _| Vec::<(f32, f32)>::new());
@@ -442,7 +452,7 @@ impl RenderOnce for Segmented {
             .bg(t.surface_2)
             .border_1()
             .border_color(t.line)
-            .when(fill, |d| d.w_full())
+            .when(fill || stretch, |d| d.w_full())
             .children(indicator)
             .children(self.items.into_iter().enumerate().map(|(i, item)| {
                 let on = i == selected;
@@ -466,6 +476,7 @@ impl RenderOnce for Segmented {
                     .font_weight(FontWeight::MEDIUM)
                     .whitespace_nowrap()
                     .when(fill, |d| d.flex_1().min_w_0())
+                    .when(stretch, |d| d.flex_grow(1.))
                     .text_color(if on { t.fg } else { t.fg_2 })
                     // Before the tabs are measured (first frame) the selected tab draws its own pill.
                     .when(on && !has_pill, |d| d.bg(t.raised).border_color(t.line).shadow(t.edge()))

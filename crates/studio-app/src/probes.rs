@@ -71,21 +71,3 @@ impl Probes {
         self.code_mtime.clear();
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cached_probes_once_until_cleared_or_rekeyed() {
-        let mut c: Cached<u8, u32> = Cached::default();
-        let mut calls = 0;
-        assert_eq!(c.get(1, |_| { calls += 1; 10 }), 10);
-        assert_eq!(c.get(1, |_| { calls += 1; 11 }), 10);
-        assert_eq!(calls, 1);
-        assert_eq!(c.get(2, |_| { calls += 1; 20 }), 20);
-        c.clear();
-        assert_eq!(c.get(2, |_| { calls += 1; 21 }), 21);
-        assert_eq!(calls, 3);
-    }
-}

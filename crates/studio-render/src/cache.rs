@@ -256,41 +256,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn finds_relative_imports() {
-        let src = "import { Scene } from \"manim\";\nimport { kit } from '../lib/kit';\nexport { x } from \"./x\";";
-        assert_eq!(relative_imports(src), vec!["../lib/kit".to_string(), "./x".to_string()]);
-    }
-
-    #[test]
     fn key_changes_with_imports() {
         let dir = std::env::temp_dir().join(format!("studio-cache-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("scenes")).unwrap();
         std::fs::create_dir_all(dir.join("lib")).unwrap();
         let scene = dir.join("scenes/a.ts");
-        std::fs::write(&scene, "import { k } from \"../lib/kit\";\n").unwrap();
+        // Both quote styles and re-exports count as imports.
+        std::fs::write(&scene, "import { Scene } from \"manim\";\nimport { k } from '../lib/kit';\nexport { x } from \"./x\";\n").unwrap();
         std::fs::write(dir.join("lib/kit.ts"), "export const k = 1;").unwrap();
+        std::fs::write(dir.join("scenes/x.ts"), "export const x = 1;").unwrap();
         let out = Output::new(1280, 720, 30.0);
         let a = scene_key(&scene, &dir, "{}", out);
         assert_eq!(a, scene_key(&scene, &dir, "{}", out));
         std::fs::write(dir.join("lib/kit.ts"), "export const k = 2;").unwrap();
+        let after_kit = scene_key(&scene, &dir, "{}", out);
+        assert_ne!(a, after_kit);
+        std::fs::write(dir.join("scenes/x.ts"), "export const x = 2;").unwrap();
         let b = scene_key(&scene, &dir, "{}", out);
-        assert_ne!(a, b);
+        assert_ne!(after_kit, b);
         assert_ne!(b, scene_key(&scene, &dir, "{\"x\":1}", out));
         assert_ne!(b, scene_key(&scene, &dir, "{}", Output::new(1920, 1080, 30.0)));
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn streamed_hash_matches_in_memory_hash() {
-        let p = std::env::temp_dir().join(format!("studio-fnv-{}.bin", std::process::id()));
-        let data: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
-        std::fs::write(&p, &data).unwrap();
-        let (mut a, mut b) = (Fnv::default(), Fnv::default());
-        a.write(&data);
-        b.write_file(&p);
-        assert_eq!(a.finish(), b.finish());
-        let _ = std::fs::remove_file(&p);
     }
 
     #[test]

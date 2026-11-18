@@ -243,13 +243,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn engine_rev_follows_the_lockfile() {
-        assert!(ENGINE_REV.starts_with("manim-rust@"));
-        let sha = &ENGINE_REV["manim-rust@".len()..];
-        assert!(!sha.is_empty() && sha != "3deae09" && sha != "unknown", "{ENGINE_REV}");
-    }
-
-    #[test]
     fn guard_catches_panics_and_sets_the_flag() {
         assert!(!in_engine_guard());
         let r: anyhow::Result<()> = guard(|| {

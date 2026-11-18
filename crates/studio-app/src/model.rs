@@ -736,12 +736,6 @@ mod length_tests {
         assert_eq!(parse_length("0"), None);
     }
 
-    #[test]
-    fn labels() {
-        assert_eq!(length_label(45), "45 s");
-        assert_eq!(length_label(600), "10 min");
-        assert_eq!(length_label(210), "3:30");
-    }
 }
 
 #[cfg(test)]

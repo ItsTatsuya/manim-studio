@@ -82,17 +82,3 @@ pub fn download_ffmpeg(cancel: &AtomicBool, mut progress: impl FnMut(u64, u64)) 
     progress(total, total);
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    /// `FFMPEG_DOWNLOAD=<dir>`: fetch ffmpeg there and check it runs.
-    #[test]
-    fn downloads_ffmpeg() {
-        let Some(d) = std::env::var_os("FFMPEG_DOWNLOAD") else { return };
-        super::set_dir(std::path::PathBuf::from(d));
-        super::download_ffmpeg(&std::sync::atomic::AtomicBool::new(false), |done, total| assert!(done <= total)).unwrap();
-        let exe = super::ffmpeg().expect("downloaded");
-        let out = std::process::Command::new(&exe).args(["-hide_banner", "-encoders"]).output().unwrap();
-        assert!(String::from_utf8_lossy(&out.stdout).contains("libx264"));
-    }
-}

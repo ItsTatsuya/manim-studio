@@ -244,16 +244,13 @@ impl Workspace {
 mod tests {
     use super::is_skipped;
 
+    /// After a rollback, that version and older are skipped; anything newer is offered.
     #[test]
-    fn rolled_back_version_and_older_are_skipped() {
+    fn skips_the_rolled_back_version_and_older() {
         assert!(is_skipped("1.1.0", Some("1.1.0")));
         assert!(is_skipped("1.0.9", Some("1.1.0")));
         assert!(is_skipped("1.1.0-beta.2", Some("1.1.0")));
         assert!(is_skipped("0.10.0", Some("0.10.0")));
-    }
-
-    #[test]
-    fn newer_versions_and_no_skip_are_offered() {
         assert!(!is_skipped("1.1.1", Some("1.1.0")));
         assert!(!is_skipped("1.1.0", Some("1.1.0-beta.1")));
         assert!(!is_skipped("0.10.0", Some("0.9.3")));

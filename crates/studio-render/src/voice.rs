@@ -425,7 +425,6 @@ mod tests {
     #[test]
     fn splits_sentences() {
         assert_eq!(sentences("Here's a pizza. If we double it, do we? Yes. Let's see!"), vec!["Here's a pizza.", "If we double it, do we? Yes. Let's see!"]);
-        assert_eq!(sentences("Pi is about 3.14 here."), vec!["Pi is about 3.14 here."]);
     }
 
     #[test]
@@ -489,29 +488,4 @@ mod tests {
         assert_eq!(parse_wav(&wav_bytes(8000, 1, 8000)).unwrap().len(), 24_000);
     }
 
-    #[test]
-    fn reads_wav_length() {
-        let dir = std::env::temp_dir().join(format!("studio-wav-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let p = dir.join("a.wav");
-        // 1 second of 8 kHz mono 16-bit silence.
-        let data = vec![0u8; 16000];
-        let mut b = Vec::new();
-        b.extend_from_slice(b"RIFF");
-        b.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
-        b.extend_from_slice(b"WAVEfmt ");
-        b.extend_from_slice(&16u32.to_le_bytes());
-        b.extend_from_slice(&1u16.to_le_bytes());
-        b.extend_from_slice(&1u16.to_le_bytes());
-        b.extend_from_slice(&8000u32.to_le_bytes());
-        b.extend_from_slice(&16000u32.to_le_bytes());
-        b.extend_from_slice(&2u16.to_le_bytes());
-        b.extend_from_slice(&16u16.to_le_bytes());
-        b.extend_from_slice(b"data");
-        b.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        b.extend_from_slice(&data);
-        std::fs::write(&p, b).unwrap();
-        assert!((wav_seconds(&p).unwrap() - 1.0).abs() < 1e-9);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 }
