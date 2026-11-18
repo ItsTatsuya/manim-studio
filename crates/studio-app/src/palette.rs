@@ -69,11 +69,11 @@ impl Workspace {
         let video_open = self.screen == Screen::Video;
         let mut v = vec![
             item(Command::Go(Screen::Home), "New video", IconName::Plus).keys(format!("{sec}-n")),
-            item(Command::Go(Screen::Renders), "Open renders", IconName::Queue).keys(format!("{sec}-r")),
+            item(Command::Go(Screen::Renders), "Open saved videos", IconName::Queue).keys(format!("{sec}-r")),
             item(Command::Go(Screen::Settings), "Open settings", IconName::Gear).keys(format!("{sec}-,")),
         ];
         if video_open {
-            v.push(item(Command::Render, "Render the video", IconName::Film).keys(format!("{sec}-enter")));
+            v.push(item(Command::Render, "Save the video", IconName::Film).keys(format!("{sec}-enter")));
             v.push(item(Command::Mode(Mode::Storyboard), "Show the storyboard", IconName::Board).keys(format!("{sec}-1")));
             v.push(item(Command::Mode(Mode::Studio), "Show the studio", IconName::Play).keys(format!("{sec}-2")));
             v.push(item(Command::Mode(Mode::Code), "Show the code", IconName::Script).keys(format!("{sec}-3")));

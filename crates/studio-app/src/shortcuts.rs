@@ -79,8 +79,8 @@ fn table() -> (Vec<KeyBinding>, Vec<Shortcut>) {
     sc!("Views", "Command palette", format!("{sec}-k"), FocusSearch, None);
 
     sc!("Videos", "New video", format!("{sec}-n"), NewVideo, None);
-    sc!("Videos", "Render the video", format!("{sec}-enter"), RenderVideo, None);
-    sc!("Videos", "Open renders", format!("{sec}-r"), OpenRenders, None);
+    sc!("Videos", "Save the video", format!("{sec}-enter"), RenderVideo, None);
+    sc!("Videos", "Open saved videos", format!("{sec}-r"), OpenRenders, None);
 
     sc!("App", "Open settings", format!("{sec}-,"), OpenSettings, None);
     sc!("App", "Close menus and dialogs", "escape".into(), CloseMenus, None);

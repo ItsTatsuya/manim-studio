@@ -1477,9 +1477,9 @@ impl Workspace {
     pub fn render_chip_for(status: &JobStatus) -> Chip {
         match status {
             JobStatus::Rendering { scene, of } => {
-                Chip::new(format!("Rendering scene {scene} / {of}")).tone(Tone::Signal)
+                Chip::new(format!("Making scene {scene} / {of}")).tone(Tone::Signal)
             }
-            JobStatus::Exporting => Chip::new("Joining scenes").tone(Tone::Signal),
+            JobStatus::Exporting => Chip::new("Finishing up").tone(Tone::Signal),
             JobStatus::Waiting(n) => Chip::new(format!("Waiting · #{n}")),
             JobStatus::Done(d) => Chip::new(format!("Done · {d}")).tone(Tone::Ok).icon(IconName::Check),
             JobStatus::Failed(r) => Chip::new(format!("Failed · {r}")).tone(Tone::Err),

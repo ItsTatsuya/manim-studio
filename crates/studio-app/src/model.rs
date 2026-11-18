@@ -448,15 +448,16 @@ impl Video {
         self.scenes.first().map_or(Art::Intro, |s| s.art)
     }
 
-    /// "now", "5 min", "2 h", "3d".
+    /// When the video was last changed: "just now", "5 min ago", "2 h ago", "3 d ago" (a
+    /// bare "21 min" next to a video reads as its length).
     pub fn updated_label(&self) -> String {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let ago = now.saturating_sub(self.updated);
         match ago {
-            0..120 => "now".into(),
-            120..3600 => format!("{} min", ago / 60),
-            3600..86400 => format!("{} h", ago / 3600),
-            _ => format!("{}d", ago / 86400),
+            0..120 => "just now".into(),
+            120..3600 => format!("{} min ago", ago / 60),
+            3600..86400 => format!("{} h ago", ago / 3600),
+            _ => format!("{} d ago", ago / 86400),
         }
     }
 }

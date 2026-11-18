@@ -79,10 +79,11 @@ impl Workspace {
                 };
             }
             Screen::Video => {
+                // No usage meter here: a bare percentage beside Save video reads as its
+                // progress. Home and the assistant's replies show it.
                 right = right
-                    .child(self.usage_meter(compact, cx))
                     .child({
-                        let b = Button::new("tb-render", "Render")
+                        let b = Button::new("tb-render", "Save video")
                             .primary()
                             .with_icon(IconName::Play)
                             .on_click(click(cx, |this, _, cx| this.start_render(cx)));
@@ -502,7 +503,7 @@ impl Workspace {
                     })),
             )
             .child(
-                ListRow::new("nav-renders", "Renders")
+                ListRow::new("nav-renders", "Saved videos")
                     .icon(IconName::Queue)
                     .when(queue_count > 0, |r| r.meta(queue_count.to_string()))
                     .selected(self.screen == Screen::Renders)
@@ -541,7 +542,7 @@ impl Workspace {
                 this.go(Screen::Settings, cx)
             })))
             .child({
-                let b = item("rail-renders", IconName::Queue, "Renders").selected(self.screen == Screen::Renders);
+                let b = item("rail-renders", IconName::Queue, "Saved videos").selected(self.screen == Screen::Renders);
                 let b = if queue_count > 0 { b.badge(queue_count.to_string()) } else { b };
                 b.on_click(click(cx, |this, _, cx| this.go(Screen::Renders, cx)))
             })

@@ -57,7 +57,7 @@ impl Workspace {
                                 .gap(px(8.))
                                 .text_color(t.fg)
                                 .child(Dot::new(Tone::Signal))
-                                .child(format!("Rendering scene {scene} of {of}"))
+                                .child(format!("Making scene {scene} of {of}"))
                                 .child(div().flex_1())
                                 .child(num(format!("{}%", (j.progress * 100.) as u32)).text_size(text::SMALL).text_color(t.fg_3)),
                         )
@@ -71,10 +71,7 @@ impl Workspace {
                         .into_any_element(),
                     other => Self::render_chip_for(other).into_any_element(),
                 };
-                let detail = match &j.status {
-                    JobStatus::Done(_) if j.cached > 0 => format!("{} · {} new, {} cached", j.project, j.rendered, j.cached),
-                    _ => j.project.clone(),
-                };
+                let detail = j.project.clone();
                 let picture: AnyElement = match &j.thumb {
                     Some(Still(img)) => still_image(img.clone()).into_any_element(),
                     None => stage_image(j.art).into_any_element(),
@@ -84,7 +81,7 @@ impl Workspace {
                     (JobStatus::Done(_), Some(path)) => {
                         let path = path.clone();
                         Button::icon(("job-show", i), IconName::Folder)
-                            .tooltip("Show in folder")
+                            .tooltip(crate::engine::REVEAL_LABEL)
                             .on_click(move |_, _, _| crate::engine::reveal(&path))
                             .into_any_element()
                     }
@@ -95,7 +92,7 @@ impl Workspace {
                     _ => {
                         let video = j.video;
                         Button::icon(("job-retry", i), IconName::Refresh)
-                            .tooltip("Render again")
+                            .tooltip("Try again")
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.open_video(video.0, video.1, cx);
                                 this.start_render(cx);
@@ -164,8 +161,8 @@ impl Workspace {
                                 .gap(px(8.))
                                 .py(px(80.))
                                 .child(Icon::new(IconName::Film).color(t.fg_3))
-                                .child(strong(if self.jobs.is_empty() { "No renders yet" } else { "Nothing here" }))
-                                .child(faint("Press Render in a video. Scenes you haven't changed are reused from the cache.", cx)),
+                                .child(strong(if self.jobs.is_empty() { "No saved videos yet" } else { "Nothing here" }))
+                                .child(faint("Press Save video in a video. Finished videos go to your Videos folder, under Manim Studio.", cx)),
                         )
                     }),
             )
@@ -180,7 +177,7 @@ impl Workspace {
                     .border_color(t.line)
                     .text_size(text::SMALL)
                     .text_color(t.fg_3)
-                    .child(num(format!("{rendering} rendering · {waiting} waiting")))
+                    .child(num(format!("{rendering} saving · {waiting} waiting")))
                     .when(self.queue_paused, |d| {
                         d.child(
                             div()

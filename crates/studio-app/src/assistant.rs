@@ -51,9 +51,11 @@ fn carry_engine(fresh: &mut [crate::model::Scene], old: Vec<crate::model::Scene>
             new.engine.key_time = o.engine.key_time;
             new.engine.issue = o.engine.issue.take();
             new.engine.checked = o.engine.checked;
-            if o.say.trim() == new.say.trim() {
-                new.engine.voice = o.engine.voice.take();
-            }
+        }
+        // The voice belongs to the line, not the script: a build pairs storyboard scenes
+        // (no file yet, voice already spoken) with their new files.
+        if o.say.trim() == new.say.trim() {
+            new.engine.voice = o.engine.voice.take();
         }
         leftover.extend(o.engine.thumb.take().map(|t| t.0));
     }
@@ -1224,5 +1226,37 @@ impl Workspace {
         let effort = self.prefs.build_reasoning.effort(self.auto_build_effort());
         self.start_turn(video, TurnKind::Edit, p, false, effort, cx);
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::carry_engine;
+    use crate::model::{Scene, VoiceLine};
+    use studio_agent::prompt::Beat;
+
+    fn scene(say: &str, file: Option<&str>) -> Scene {
+        let beat = Beat { title: "t".into(), say: say.into(), visual: String::new(), seconds: 5 };
+        let mut s = Scene::from_beat(0, &beat);
+        s.engine.file = file.map(Into::into);
+        s
+    }
+
+    fn voice() -> VoiceLine {
+        VoiceLine { wav: "track.wav".into(), seconds: 3.0, text: "Hello.".into(), parts: Vec::new(), starts: Vec::new() }
+    }
+
+    // A build gives storyboard scenes (no script yet, narration already spoken) their files:
+    // the narration must survive, or the render comes out silent.
+    #[test]
+    fn build_keeps_narration_spoken_for_the_storyboard() {
+        let mut planned = scene("Hello.", None);
+        planned.engine.voice = Some(voice());
+        let mut built = [scene("Hello.", Some("scenes/01.ts")), scene("Changed.", Some("scenes/02.ts"))];
+        let mut other = scene("Before.", None);
+        other.engine.voice = Some(voice());
+        carry_engine(&mut built, vec![planned, other]);
+        assert_eq!(built[0].engine.voice, Some(voice()));
+        assert_eq!(built[1].engine.voice, None, "a changed line is spoken again");
     }
 }

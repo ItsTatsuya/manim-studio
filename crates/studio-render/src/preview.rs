@@ -44,8 +44,9 @@ pub struct OpenScene {
     pub narration_lines: Vec<f64>,
 }
 
-/// Silence after the narration ends before the next scene starts.
-pub const NARRATION_TAIL: f64 = 0.8;
+/// Silence after the narration ends before the next scene starts. The next scene's
+/// voice starts as its picture fades in (0.5 s), so about 0.8 s of quiet is heard.
+pub const NARRATION_TAIL: f64 = 1.3;
 /// Scenes longer than their voice by more than this get retimed.
 const RETIME_SLACK: f64 = 0.3;
 /// Shortest hold a shortened pause keeps (the last one, after the voice, may go lower).
@@ -79,14 +80,16 @@ const TIMING_HOOK: &str = r#"(() => {
         return play.apply(this, items);
       };
       // narrate(n): sentence n of the narration starts here. Holds until the previous
-      // sentence has finished, marks the moment, and returns the sentence's length.
+      // sentence has finished and the narrator has paused for breath, marks the moment,
+      // and returns the sentence's length.
       p.narrate = function (n) {
-        const lines = (globalThis.NARRATION && globalThis.NARRATION.lines) || [];
+        const narration = globalThis.NARRATION || {};
+        const lines = narration.lines || [];
         const st = globalThis.__NARR;
         if (st.end > this.time + 1e-3) wait.call(this, st.end - this.time);
         const d = lines[n - 1] != null ? lines[n - 1] : 2.5;
         this.mark("narrate:" + n);
-        st.end = this.time + d;
+        st.end = this.time + d + (narration.gap || 0);
         return d;
       };
       p.__studioTiming = true;
@@ -161,7 +164,7 @@ pub fn install_hooks(host: &ScriptHost, plan: Option<&TimingPlan>) -> Result<()>
 
 /// The `NARRATION` global a scene sees.
 pub fn narration_json(seconds: f64, lines: &[f64]) -> String {
-    serde_json::json!({ "seconds": seconds, "lines": lines }).to_string()
+    serde_json::json!({ "seconds": seconds, "lines": lines, "gap": crate::voice::SENTENCE_GAP }).to_string()
 }
 
 /// The scene places its sentences itself with `this.narrate(n)`.
@@ -170,7 +173,7 @@ pub fn uses_narrate(t: &TimelineInfo) -> bool {
 }
 
 /// Where each sentence starts: at its `narrate(n)` mark, else right after the sentence
-/// before it (with a short gap).
+/// before it. Either way a short gap follows each sentence.
 pub fn narration_starts(t: &TimelineInfo, lines: &[f64]) -> Vec<f64> {
     let mut starts = Vec::with_capacity(lines.len());
     let mut end: Option<f64> = None;
@@ -178,7 +181,7 @@ pub fn narration_starts(t: &TimelineInfo, lines: &[f64]) -> Vec<f64> {
         let name = format!("narrate:{}", i + 1);
         let marked = t.markers.iter().find(|m| m.name == name).map(|m| m.time);
         let s = match (marked, end) {
-            (Some(m), Some(e)) => m.max(e),
+            (Some(m), Some(e)) => m.max(e + crate::voice::SENTENCE_GAP),
             (Some(m), None) => m,
             (None, Some(e)) => e + crate::voice::SENTENCE_GAP,
             (None, None) => 0.0,
@@ -687,23 +690,25 @@ export default class T extends Scene {
         let mut req = scene(&dir);
         let out = Output::new(320, 180, 30.0);
         assert!((load(&req, out).unwrap().2.duration - 10.0).abs() < 0.1, "unnarrated scenes keep their timing");
-        // Short voice: the final hold is cut so the scene ends 0.8 s after the voice.
+        // Short voice: the final hold is cut so the scene ends NARRATION_TAIL after the voice.
         req.narration = Some(3.5);
         let d = load(&req, out).unwrap().2.duration;
         assert!((d - (3.5 + NARRATION_TAIL)).abs() < 0.1, "{d}");
+        // The cases below are scene lengths (voice + tail) against these 10 s of animations
+        // and pauses.
         // Voice shorter than the animations alone: pauses shrink to the minimum and the
         // animations speed up, but no faster than MAX_SPEEDUP.
-        req.narration = Some(1.0);
+        req.narration = Some(1.8 - NARRATION_TAIL);
         let d = load(&req, out).unwrap().2.duration;
         assert!((d - (2.0 / MAX_SPEEDUP + MIN_WAIT + 0.2)).abs() < 0.12, "{d}");
         // Pauses alone are enough: animations keep their speed.
-        req.narration = Some(1.9);
+        req.narration = Some(2.7 - NARRATION_TAIL);
         let d = load(&req, out).unwrap().2.duration;
-        assert!((d - (1.9 + NARRATION_TAIL)).abs() < 0.1, "{d}");
+        assert!((d - 2.7).abs() < 0.1, "{d}");
         // In between: a moderate speed-up lands on the voice.
-        req.narration = Some(1.3);
+        req.narration = Some(2.1 - NARRATION_TAIL);
         let d = load(&req, out).unwrap().2.duration;
-        assert!((d - (1.3 + NARRATION_TAIL)).abs() < 0.1, "{d}");
+        assert!((d - 2.1).abs() < 0.1, "{d}");
         // Long voice: the scene is held, never shortened.
         req.narration = Some(12.0);
         let d = load(&req, out).unwrap().2.duration;
@@ -739,11 +744,13 @@ export default class N extends Scene {
         let (_, _, t) = load(&req, Output::new(320, 180, 30.0)).unwrap();
         assert!(uses_narrate(&t));
         let starts = narration_starts(&t, &lines);
-        let want = [0.0, 1.5, 4.5];
+        // Sentence 2 waits for sentence 1 and a breath; sentence 3 is already late.
+        let g = crate::voice::SENTENCE_GAP;
+        let want = [0.0, 1.5 + g, 4.5 + g];
         for (s, w) in starts.iter().zip(want) {
             assert!((s - w).abs() < 0.05, "{starts:?}");
         }
-        assert!((t.duration - (5.5 + NARRATION_TAIL)).abs() < 0.1, "{}", t.duration);
+        assert!((t.duration - (5.5 + g + NARRATION_TAIL)).abs() < 0.1, "{}", t.duration);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

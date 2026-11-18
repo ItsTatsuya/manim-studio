@@ -181,8 +181,9 @@ pub fn line(text: &str, spec: &VoiceSpec, cache_dir: &Path) -> Result<Line> {
     Ok(Line { wav, seconds })
 }
 
-/// Pause between sentences that aren't placed by the scene.
-pub const SENTENCE_GAP: f64 = 0.3;
+/// Pause after each sentence (added to the WAV's own short padding), placed by the scene
+/// or not.
+pub const SENTENCE_GAP: f64 = 0.4;
 
 /// A narration line split into sentences (short fragments join the sentence before).
 pub fn sentences(text: &str) -> Vec<String> {

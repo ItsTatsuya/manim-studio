@@ -178,6 +178,7 @@ The current folder is one video:
   `export default class Name extends Scene {{ construct() {{ ... }} }}`.
 - lib/kit.ts: helpers. `import {{ palette, heading, card }} from "../lib/kit";`
   palette(this.theme) gives colours; heading(text) is a top-left slide title; card(content, fill, stroke) boxes content.
+- lib/art.ts (yours to create): SVG pictures used by more than one scene, as functions taking the palette.
 - assets/: images, SVGs and sounds, referenced by relative path.
 
 Rules:
@@ -186,6 +187,8 @@ Rules:
 - MathTex takes Typst math, not LaTeX: "A = pi r^2", "1/2 dot b h", "sqrt(x)", "\"cm\"^2", "integral_0^1 x dif x".
 - The frame is 14.2 × 8 units, origin at the centre, y up. Keep text within x ±6.5, y ±3.6; wrap long text with maxWidth.
 - Text must not overlap other text once an animation ends, and must not cross-fade over other text. When new text takes the place of old text, FadeOut or Transform the old one in the same play() call; place new text with nextTo/arrange/VGroup relative to what is on screen, never at a position something else already uses.
+- Text in a box: card(Text(...), fill, stroke) sizes the box to the text. Never move text onto a fixed-size Rectangle. A label beside an icon, tick or shape goes there with nextTo(it, RIGHT, {{ buff: 0.25 }}), never at its own hard-coded position.
+- Draw pictures (people, desks, devices, documents, icons, objects) as one SVG, not as piles of Rectangles and Circles: `SVGMobject(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 90">…</svg>`, {{ height: 2 }})` with colours from the palette (`fill="${{c.primary}}"`). Use rect, circle, ellipse, line, polyline, polygon and path with flat fills and strokes; no gradients, filters, images or <text> (labels are Text objects placed beside the picture, so they follow the house style). To point at a picture, scale it briefly (`pic.animate.scale(1.1)` and back) or draw SurroundingRectangle around it; Indicate and colour changes paint every part of it one colour.
 - The top band (y > 2.6) is the heading's. Put body content, equations and diagrams below it.
 - Call this.mark("thumbnail") at the scene's most representative moment.
 - Each scene is narrated, sentence by sentence (numbered in the storyboard). Call `this.narrate(n)` immediately before the animation that sentence n describes, for every sentence, in order. It returns that sentence's length in seconds; use it for the runTime of what it describes. If the previous sentence is still being spoken, narrate() first waits for it, so the voice always matches what is on screen. Studio holds the last frame until the last sentence ends. Don't time anything off `NARRATION.seconds`.

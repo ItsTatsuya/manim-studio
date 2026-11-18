@@ -159,7 +159,7 @@ pub fn scene_key_with(script: &Path, root: &Path, theme_json: &str, output: Outp
     let mut h = Fnv::default();
     h.write(crate::ENGINE_REV.as_bytes());
     // Studio's own scene pipeline (narration timing); bump when it changes renders.
-    h.write(b"pipeline-3");
+    h.write(b"pipeline-4");
     h.write(extra.as_bytes());
     h.write(theme_json.as_bytes());
     // The encoder is not keyed on purpose (see `fonts_fingerprint`); the bundled fonts are,

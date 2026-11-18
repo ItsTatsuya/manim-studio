@@ -147,6 +147,8 @@ pub struct Stage {
     pub mix_seq: u64,
     /// Videos whose thumbnails wait for their narration (it changes scene lengths).
     pub thumbs_deferred: std::collections::HashSet<(usize, usize)>,
+    /// Videos whose render waits for their narration to be spoken.
+    pub render_after_voice: std::collections::HashSet<(usize, usize)>,
     /// The previous scene's last frame, dissolving out over the next scene during
     /// playback (the same dissolve the export uses), and when it started.
     pub fade_from: Option<(Arc<RenderImage>, std::time::Instant)>,
@@ -242,6 +244,59 @@ fn thumb_key(generation: u64, video: (usize, usize), scene: usize) -> u64 {
     ((generation & 0xFFF) << 48) | (((video.0 as u64) & 0xFF) << 40) | ((video.1 as u64) << 20) | scene as u64
 }
 
+/// The user's Videos folder, where finished videos are saved (`Videos/Manim Studio`).
+pub fn videos_dir() -> Option<PathBuf> {
+    directories::UserDirs::new().and_then(|d| d.video_dir().map(|p| p.join("Manim Studio")))
+}
+
+/// Text made safe for a file name: readable, minus what file systems reject.
+fn file_name_part(text: &str) -> String {
+    let s: String = text
+        .chars()
+        .filter(|c| !matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') && !c.is_control())
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    // Windows drops trailing dots and spaces from names.
+    s.trim_end_matches(['.', ' ']).to_string()
+}
+
+/// Where a finished video goes: `<Videos>/<project>/<title>.mp4`, where a teacher can find
+/// it, else (no Videos folder) the video's own `exports` folder. `tag` tells apart two
+/// videos of one project with the same title.
+pub fn export_path(videos: Option<&Path>, root: &Path, project: &str, title: &str, tag: Option<&str>) -> PathBuf {
+    let mut name = file_name_part(title);
+    if name.is_empty() {
+        name = "Video".into();
+    }
+    if let Some(tag) = tag {
+        name = format!("{name} ({tag})");
+    }
+    let dir = match videos {
+        Some(v) => {
+            let project = file_name_part(project);
+            if project.is_empty() { v.to_path_buf() } else { v.join(project) }
+        }
+        None => root.join("exports"),
+    };
+    dir.join(format!("{name}.mp4"))
+}
+
+/// Where a saved video is, in the words a file manager uses: "Videos › Manim Studio ›
+/// My videos" for the Videos folder, else the folder's own name.
+fn saved_place(path: &Path) -> String {
+    let dir = path.parent().unwrap_or(path);
+    if let Some(videos) = videos_dir()
+        && let Ok(rel) = dir.strip_prefix(&videos)
+    {
+        let mut parts = vec!["Videos".to_string(), "Manim Studio".to_string()];
+        parts.extend(rel.iter().map(|p| p.to_string_lossy().into_owned()));
+        return parts.join(" › ");
+    }
+    dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| dir.display().to_string())
+}
+
 /// What "reveal in the file manager" is called on this platform.
 pub const REVEAL_LABEL: &str = if cfg!(windows) {
     "Show in Explorer"
@@ -254,7 +309,15 @@ pub const REVEAL_LABEL: &str = if cfg!(windows) {
 /// Reveal a file in the system file manager.
 pub fn reveal(path: &Path) {
     #[cfg(windows)]
-    let _ = std::process::Command::new("explorer").arg(format!("/select,{}", path.display())).spawn();
+    {
+        use std::os::windows::process::CommandExt;
+        // Explorer wants `/select,"C:\a b\c.mp4"`. `arg` would quote the whole thing
+        // (`"/select,C:\a b\c.mp4"`) once the path has a space, and Explorer then opens
+        // Documents instead.
+        let _ = std::process::Command::new("explorer")
+            .raw_arg(format!("/select,\"{}\"", studio_render::plain_path(path)))
+            .spawn();
+    }
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg("-R").arg(path).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -770,6 +833,7 @@ impl Workspace {
         let Some(v) = self.projects.get(video.0).and_then(|p| p.videos.get(video.1)) else { return };
         let Some(dir) = v.dir.clone() else {
             self.flush_deferred_thumbs(video);
+            self.voice_settled(video, cx);
             return;
         };
         let enabled = self.prefs.narration && studio_render::kokoro::supported();
@@ -795,6 +859,7 @@ impl Workspace {
             } else {
                 self.flush_deferred_thumbs(video);
             }
+            self.voice_settled(video, cx);
             return;
         }
         let spec = self.voice_spec();
@@ -879,6 +944,7 @@ impl Workspace {
                     this.notice = Some(format!("Couldn't speak scene {}'s narration: {}", i + 1, studio_render::short_error(&e)));
                     cx.notify();
                 }
+                this.voice_settled(video, cx);
             })
             .ok();
         })
@@ -1402,6 +1468,28 @@ impl Workspace {
 
     /// Queue `target` (not necessarily the open video) for a final render.
     pub fn start_render_for(&mut self, target: (usize, usize), cx: &mut Context<Self>) {
+        // A scene rendered before its narration is spoken comes out silent: speak it
+        // first, and render when that finishes (whether or not every line worked).
+        if self.voice_pending(target) {
+            if self.stage.render_after_voice.insert(target) {
+                self.notice = Some("The video saves once the narration is ready.".into());
+                self.refresh_voice(target, cx);
+            }
+            cx.notify();
+            return;
+        }
+        self.queue_render(target, cx);
+    }
+
+    /// The narration `refresh_voice` was speaking for `video` is done: start the render
+    /// that waited for it.
+    fn voice_settled(&mut self, video: (usize, usize), cx: &mut Context<Self>) {
+        if self.stage.render_after_voice.remove(&video) {
+            self.queue_render(video, cx);
+        }
+    }
+
+    fn queue_render(&mut self, target: (usize, usize), cx: &mut Context<Self>) {
         let (pi, vi) = target;
         let Some(video) = self.projects.get(pi).and_then(|p| p.videos.get(vi)).cloned() else { return };
         let Some(root) = video.dir.clone() else {
@@ -1409,7 +1497,7 @@ impl Workspace {
             chat.push(Msg::Activity {
                 icon: IconName::Info,
                 ok: false,
-                text: "Nothing to render yet: build the video first".into(),
+                text: "Nothing to save yet: build the video first".into(),
                 meta: String::new(),
             });
             cx.notify();
@@ -1442,16 +1530,16 @@ impl Workspace {
                 })
             })
             .collect();
-        // Keep the title readable; drop only what file systems reject.
-        let safe: String = video
-            .title
-            .chars()
-            .filter(|c| !matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') && !c.is_control())
-            .collect::<String>()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        let export = root.join("exports").join(format!("{} {}x{} {}fps.mp4", safe.trim(), output.width, output.height, output.fps));
+        // Another video of this project with the same title would overwrite this one's file.
+        let clash = self.projects[pi]
+            .videos
+            .iter()
+            .enumerate()
+            .any(|(i, v)| i != vi && file_name_part(&v.title) == file_name_part(&video.title));
+        let tag = clash.then(|| root.file_name().map(|f| f.to_string_lossy().into_owned())).flatten();
+        // Test and screenshot runs (`STUDIO_HOME`) keep their exports out of the real Videos folder.
+        let videos = if crate::store::studio_home().is_some() { None } else { videos_dir() };
+        let export = export_path(videos.as_deref(), &root, &self.projects[pi].name, &video.title, tag.as_deref());
         let waiting = self.jobs.iter().filter(|j| j.status.active()).count();
         self.jobs.insert(
             0,
@@ -1552,6 +1640,7 @@ impl Workspace {
                 self.jobs[ix].progress = 1.;
             }
             QueueEvent::Done { path, elapsed, duration, rendered, cached, .. } => {
+                let place = saved_place(&path);
                 let job = &mut self.jobs[ix];
                 job.status = JobStatus::Done(crate::model::format_short(duration.round() as u32));
                 job.time = format_elapsed(elapsed);
@@ -1559,17 +1648,13 @@ impl Workspace {
                 job.progress = 1.;
                 job.rendered = rendered;
                 job.cached = cached;
-                let label = job.output.clone();
                 self.projects[video.0].videos[video.1].status = VideoStatus::Ready;
                 if mine {
                     self.render_progress = None;
                 }
                 let meta = format!("{:.1} s", elapsed.as_secs_f32());
-                let text = if cached > 0 {
-                    format!("Rendered {label} · {rendered} new, {cached} cached")
-                } else {
-                    format!("Rendered {label}")
-                };
+                let text = format!("Video saved to {place}");
+                self.notice = Some(format!("Video saved to {place}. Open Saved videos to find it."));
                 self.replace_rendering_row(video, Msg::Activity { icon: IconName::Check, ok: true, text, meta });
             }
             QueueEvent::Failed { scene, error, .. } => {
@@ -1587,7 +1672,7 @@ impl Workspace {
                 self.replace_rendering_row(video, Msg::Activity {
                     icon: IconName::X,
                     ok: false,
-                    text: format!("Render failed · {where_}{short}"),
+                    text: format!("Couldn't save the video · {where_}{short}"),
                     meta: String::new(),
                 });
             }
@@ -1618,5 +1703,23 @@ impl Workspace {
         }
         self.persist(video);
         self.chat_scroll.scroll_to_bottom();
+    }
+}
+
+#[cfg(test)]
+mod export_path_tests {
+    use super::export_path;
+    use std::path::Path;
+
+    #[test]
+    fn saved_videos_go_where_a_teacher_looks() {
+        let videos = Path::new("V");
+        let root = Path::new("R/video");
+        assert_eq!(export_path(Some(videos), root, "Class 7", "Fractions: halves?", None), Path::new("V/Class 7/Fractions halves.mp4"));
+        // Two videos of one project with one title don't overwrite each other.
+        assert_eq!(export_path(Some(videos), root, "Class 7", "Quiz", Some("quiz-2")), Path::new("V/Class 7/Quiz (quiz-2).mp4"));
+        // Names Windows would refuse or mangle still make a file.
+        assert_eq!(export_path(Some(videos), root, "...", "*?", None), Path::new("V/Video.mp4"));
+        assert_eq!(export_path(None, root, "Class 7", "Quiz.", None), Path::new("R/video/exports/Quiz.mp4"));
     }
 }

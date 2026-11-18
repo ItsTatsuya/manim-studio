@@ -199,7 +199,7 @@ impl Workspace {
         if !self.running.is_empty() || self.projects.iter().flat_map(|p| &p.videos).any(|v| v.busy.is_some()) {
             Some("Wait for the assistant to finish before deleting or moving videos.")
         } else if self.jobs.iter().any(|j| j.status.active()) {
-            Some("Wait for renders to finish (or cancel them in Renders) before deleting or moving videos.")
+            Some("Wait for videos to finish saving (or cancel them in Saved videos) before deleting or moving videos.")
         } else {
             None
         }

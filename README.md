@@ -116,7 +116,7 @@ when a variant wins on both tokens and quality.
 | Ctrl/⌘ N | New video |
 | Ctrl/⌘ B | Toggle sidebar |
 | Ctrl/⌘ , | Settings |
-| Ctrl/⌘ R | Renders & queue |
+| Ctrl/⌘ R | Saved videos & queue |
 | Enter / Shift Enter | Send / new line in a composer |
 | Esc | Close menus |
 
@@ -127,7 +127,8 @@ when a variant wins on both tokens and quality.
 - manim-rust is pinned (`3deae09`, workspace `Cargo.toml`); `studio_render::ENGINE_REV` is
   part of every cache key, so bump both together.
 - A video is a folder: `scenes/*.ts` (one scene per file, in order), `lib/`, `assets/`, plus
-  `.cache/` and `exports/` written by the studio. The sample lives in
+  `.cache/` written by the studio. Finished videos are saved to `Videos\Manim Studio\<project>\`
+  (the video's own `exports/` under `STUDIO_HOME`). The sample lives in
   `%APPDATA%\ManimStudio\Manim Studio\data\projects\`. Edit a scene in any editor and the
   stage reloads it.
 - Scenes don't hard-code colours: the studio applies the house style as the engine theme, and

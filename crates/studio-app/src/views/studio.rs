@@ -492,12 +492,12 @@ impl Workspace {
             .iter()
             .find(|j| j.video == self.current && j.status.active())
             .map(|j| match &j.status {
-                crate::model::JobStatus::Rendering { scene, of } => format!("Rendering scene {scene} of {of}"),
-                crate::model::JobStatus::Exporting => "Joining scenes".to_string(),
+                crate::model::JobStatus::Rendering { scene, of } => format!("Making scene {scene} of {of}"),
+                crate::model::JobStatus::Exporting => "Finishing up".to_string(),
                 crate::model::JobStatus::Waiting(n) => format!("Waiting in queue · #{n}"),
-                _ => "Rendering".to_string(),
+                _ => "Saving the video".to_string(),
             })
-            .unwrap_or_else(|| "Rendering".to_string());
+            .unwrap_or_else(|| "Saving the video".to_string());
         let show_usage = self.prefs.show_usage;
         let chat = &self.video().chat;
         let busy = self.busy(self.current);
