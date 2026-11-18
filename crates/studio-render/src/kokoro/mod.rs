@@ -203,18 +203,20 @@ pub fn download(dir: &Path, quality: Quality, cancel: &AtomicBool, mut progress:
 }
 
 /// ONNX Runtime (CPU build), loaded at run time from the voice folder. Only
-/// `onnxruntime.dll` is fetched out of Microsoft's 83 MB release zip (about 6 MB).
+/// `onnxruntime.dll` is fetched out of Microsoft's 160 MB NuGet package (about 6 MB).
+/// NuGet, not the GitHub release zip: github.com/microsoft/onnxruntime went 404 on
+/// 2026-11-17. The DLL is byte-identical to the one in that zip (same SHA-256).
 mod runtime {
     use super::*;
     use crate::fetch::ZipEntry;
 
     const DLL: ZipEntry = ZipEntry {
-        url: "https://github.com/microsoft/onnxruntime/releases/download/v1.31.1/onnxruntime-win-x64-1.31.1.zip",
-        offset: 221_047,
-        compressed: 6_178_062,
+        url: "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.31.1/microsoft.ml.onnxruntime.1.31.1.nupkg",
+        offset: 152_948_928,
+        compressed: 6_331_924,
         size: 17_253_728,
         sha256: "cb2fa518b18356617f6f9f460c012501da2819ec7e5c1d80bd8f5de20492db0c",
-        name_suffix: "lib/onnxruntime.dll",
+        name_suffix: "runtimes/win-x64/native/onnxruntime.dll",
     };
     /// What a download transfers, for progress.
     pub const DOWNLOAD: u64 = DLL.compressed;

@@ -153,7 +153,10 @@ pub struct Stage {
     /// playback (the same dissolve the export uses), and when it started.
     pub fade_from: Option<(Arc<RenderImage>, std::time::Instant)>,
     /// Images nothing shows any more (dropped scenes, cleared frames), freed from the
-    /// GPU cache at the next render (`Workspace::flush_dead_images`).
+    /// GPU cache at the next render (`Workspace::flush_dead_images`). Never free one
+    /// straight away with `cx.drop_image`: gpui can present the last drawn scene again
+    /// without redrawing it (a repaint, fast mouse input), and a sprite in that scene
+    /// pointing at a freed atlas texture panics in `directx_atlas.rs`.
     pub dead: Vec<Arc<RenderImage>>,
 }
 
@@ -1291,11 +1294,11 @@ impl Workspace {
         cx.notify();
     }
 
-    fn set_stage_frame(&mut self, image: Option<Arc<RenderImage>>, cx: &mut Context<Self>) {
+    fn set_stage_frame(&mut self, image: Option<Arc<RenderImage>>) {
         if let Some(old) = std::mem::replace(&mut self.stage.frame, image) {
             // The dissolving frame is still on screen; it is freed when the dissolve ends.
             if !self.stage.fade_from.as_ref().is_some_and(|(f, _)| Arc::ptr_eq(f, &old)) {
-                cx.drop_image(old, None);
+                self.stage.dead.push(old);
             }
         }
     }
@@ -1323,13 +1326,13 @@ impl Workspace {
     }
 
     /// Free the dissolving frame once its dissolve is over.
-    pub fn end_fade_if_done(&mut self, cx: &mut Context<Self>) {
+    pub fn end_fade_if_done(&mut self) {
         if self.stage.fade_from.is_some()
             && self.stage.fade_opacity().is_none()
             && let Some((img, _)) = self.stage.fade_from.take()
             && !self.stage.frame.as_ref().is_some_and(|f| Arc::ptr_eq(f, &img))
         {
-            cx.drop_image(img, None);
+            self.stage.dead.push(img);
         }
     }
 
@@ -1375,7 +1378,7 @@ impl Workspace {
                 cx.notify();
             }
             PreviewEvent::Frame { generation, frame, .. } if generation == self.stage.generation => {
-                self.set_stage_frame(Some(to_image(frame)), cx);
+                self.set_stage_frame(Some(to_image(frame)));
                 // While playing, the ticker redraws every 33 ms and shows this frame then.
                 if !self.ticking() {
                     cx.notify();
@@ -1395,9 +1398,7 @@ impl Workspace {
                 self.style_clips.push((style, frames));
                 while self.style_clips.len() > STYLE_CLIPS_KEPT {
                     let (_, old) = self.style_clips.remove(0);
-                    for Still(img) in old {
-                        cx.drop_image(img, None);
-                    }
+                    self.stage.dead.extend(old.into_iter().map(|Still(img)| img));
                 }
                 cx.notify();
             }
@@ -1407,7 +1408,7 @@ impl Workspace {
             let style = (key & !STYLE_KEY) as usize;
             if let (ThumbEvent::Ready { frame, .. }, Some(slot)) = (ev, self.style_previews.get_mut(style)) {
                 if let Some(Still(old)) = slot.replace(Still(to_image(frame))) {
-                    cx.drop_image(old, None);
+                    self.stage.dead.push(old);
                 }
                 cx.notify();
             }
@@ -1441,7 +1442,7 @@ impl Workspace {
             ThumbEvent::Clip { .. } => return,
         };
         if let Some(Still(old)) = old {
-            cx.drop_image(old, None);
+            self.stage.dead.push(old);
         }
         if let Some(plan) = mix {
             self.mix_voice((pi, vi), si, plan, cx);

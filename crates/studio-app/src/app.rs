@@ -32,15 +32,15 @@ pub fn init(cx: &mut App) {
 }
 
 pub fn open_main_window(cx: &mut App) {
-    let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
+    let (window_bounds, min_size) = initial_bounds(cx);
     let options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        window_bounds: Some(window_bounds),
         titlebar: Some(TitlebarOptions {
             title: Some("Manim Studio".into()),
             appears_transparent: true,
             traffic_light_position: Some(point(px(14.), px(15.))),
         }),
-        window_min_size: Some(size(px(960.), px(620.))),
+        window_min_size: Some(min_size),
         window_decorations: Some(WindowDecorations::Client),
         app_id: Some("app.manimstudio.Studio".into()),
         ..Default::default()
@@ -60,6 +60,27 @@ pub fn open_main_window(cx: &mut App) {
         cx.new(|cx| Workspace::new(prefs, window, cx))
     })
     .expect("failed to open the Manim Studio window");
+}
+
+/// The first window: 1440×900 centred in the screen's usable area (the taskbar left
+/// out). On a screen too small for that (a 1366×768 laptop at 125% is about 1093×614)
+/// it opens maximized, and the minimum size never exceeds the screen: a window taller
+/// than the screen hides its title bar off the top, so it can't be moved or resized.
+fn initial_bounds(cx: &App) -> (WindowBounds, gpui::Size<gpui::Pixels>) {
+    let want = size(px(1440.), px(900.));
+    let min = size(px(960.), px(620.));
+    let Some(area) = cx.primary_display().map(|d| d.visible_bounds()) else {
+        return (WindowBounds::Windowed(Bounds::centered(None, want, cx)), min);
+    };
+    let min = size(min.width.min(area.size.width), min.height.min(area.size.height));
+    let fits = want.width + px(48.) <= area.size.width && want.height + px(48.) <= area.size.height;
+    if fits {
+        (WindowBounds::Windowed(Bounds::centered_at(area.center(), want)), min)
+    } else {
+        // What un-maximizing restores to: inside the usable area, title bar on screen.
+        let restore = size((area.size.width * 0.9).max(min.width), (area.size.height * 0.9).max(min.height));
+        (WindowBounds::Maximized(Bounds::centered_at(area.center(), restore)), min)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -751,7 +772,7 @@ impl Workspace {
                 let keep = this
                     .update(cx, |this, cx| {
                         this.tick(dt);
-                        this.end_fade_if_done(cx);
+                        this.end_fade_if_done();
                         cx.notify();
                         if !this.playing {
                             this.ticker = None;
