@@ -109,7 +109,7 @@ impl Workspace {
                 cx.notify();
             }))
         };
-        let caption = self.stage_captions.then(|| scene.say.trim().to_string()).filter(|s| !s.is_empty());
+        let caption = self.stage_captions.then(|| scene.spoken().trim().to_string()).filter(|s| !s.is_empty());
         let local = (self.playhead - video.scene_start(scene_ix)).max(0.);
         let scene_len = scene.length().max(0.01);
 
@@ -727,7 +727,7 @@ impl Workspace {
             .scenes
             .iter()
             .enumerate()
-            .map(|(i, s)| (format_short(video.scene_start(i).round() as u32), s.say.clone(), s.engine.voice.as_ref().map(|v| v.seconds)))
+            .map(|(i, s)| (format_short(video.scene_start(i).round() as u32), s.spoken(), s.engine.voice.as_ref().map(|v| v.seconds)))
             .collect();
         // `voice_label` already ends with the speed.
         let voice = if self.prefs.narration { self.voice_label() } else { "Narration off".to_string() };

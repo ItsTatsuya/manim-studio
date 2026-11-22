@@ -7246,6 +7246,7 @@ dependencies = [
  "async-channel",
  "serde",
  "serde_json",
+ "studio-script",
  "windows-sys 0.61.2",
 ]
 
@@ -7294,9 +7295,14 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "studio-script",
  "ureq",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "studio-script"
+version = "1.2.1"
 
 [[package]]
 name = "studio-ui"

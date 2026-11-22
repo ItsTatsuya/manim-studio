@@ -49,6 +49,8 @@ pub struct Narration {
     /// Each sentence's WAV and text. The engine places them where the scene calls
     /// `narrate(n)` and writes their start times next to the scene video.
     pub parts: Vec<(PathBuf, String)>,
+    /// When each cue mark is spoken, for `this.cue(id)`.
+    pub cues: Vec<crate::cues::CueTime>,
 }
 
 /// What to do with captions at export.
@@ -275,7 +277,9 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Arc<Shared>, tx: &asyn
         let voiced = job.scenes.iter().any(|s| s.narration.is_some());
         let extra = match (&scene.narration, voiced) {
             (Some(n), _) if !n.parts.is_empty() => {
-                n.parts.iter().filter_map(|(w, _)| w.file_name().map(|f| f.to_string_lossy().into_owned())).collect::<Vec<_>>().join("+")
+                let wavs = n.parts.iter().filter_map(|(w, _)| w.file_name().map(|f| f.to_string_lossy().into_owned())).collect::<Vec<_>>().join("+");
+                // Moving a mark keeps the same sentence WAVs.
+                format!("{wavs}|cues:{}", serde_json::to_string(&n.cues).unwrap_or_default())
             }
             (Some(n), _) => n.wav.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default(),
             (None, true) => "silence".into(),
@@ -304,7 +308,7 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Arc<Shared>, tx: &asyn
                 ((done_weight + w * within) / total) as f32
             };
             let voice = match (&scene.narration, voiced) {
-                (Some(n), _) if !n.parts.is_empty() => Voice::Parts(n.parts.iter().map(|(w, _)| w.clone()).collect()),
+                (Some(n), _) if !n.parts.is_empty() => Voice::Parts(n.parts.iter().map(|(w, _)| w.clone()).collect(), n.cues.clone()),
                 (Some(n), _) => Voice::Narration(n.wav.clone()),
                 (None, true) => Voice::Silence,
                 (None, false) => Voice::None,
@@ -465,8 +469,8 @@ fn make_slides(ffmpeg: &Path, job: &VideoRender, parts: &[PathBuf], seconds: &[f
 enum Voice {
     None,
     Narration(PathBuf),
-    /// Sentence WAVs, placed by the scene's `narrate(n)` calls.
-    Parts(Vec<PathBuf>),
+    /// Sentence WAVs, placed by the scene's `narrate(n)` calls, and the cues inside them.
+    Parts(Vec<PathBuf>, Vec<crate::cues::CueTime>),
     Silence,
 }
 
@@ -528,11 +532,14 @@ fn render_scene(
         Voice::Narration(wav) => {
             cmd.arg("--narration").arg(wav);
         }
-        Voice::Parts(wavs) => {
+        Voice::Parts(wavs, cues) => {
             for w in wavs {
                 cmd.arg("--narration-part").arg(w);
             }
             cmd.arg("--narration-starts").arg(out.with_extension("starts"));
+            if !cues.is_empty() {
+                cmd.arg("--narration-cues").arg(serde_json::to_string(&cues).unwrap_or_default());
+            }
         }
         Voice::Silence => {
             cmd.arg("--silence");

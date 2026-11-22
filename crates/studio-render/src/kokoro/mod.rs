@@ -9,10 +9,12 @@ mod g2p;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
 
 pub use g2p::G2p;
+pub(crate) use g2p::normalize;
 
 pub const SAMPLE_RATE: u32 = 24_000;
 /// Kokoro's context: 512 tokens including the two pads.
@@ -243,14 +245,33 @@ fn environment(dir: &Path) -> Result<&'static ort::environment::Environment> {
     Ok(ENV.get_or_init(|| env))
 }
 
+/// Dictionaries already read, by folder and accent: the model and the cue timing share
+/// them, and cue timing doesn't need the model.
+static DICTIONARIES: Mutex<Vec<(PathBuf, bool, Arc<G2p>)>> = Mutex::new(Vec::new());
+
+/// The phonemizer `voice` reads with.
+pub(crate) fn g2p_for(dir: &Path, voice: &str) -> Result<Arc<G2p>> {
+    let british = voice.starts_with('b');
+    let mut loaded = crate::lock(&DICTIONARIES);
+    if let Some((.., g)) = loaded.iter().find(|(d, b, _)| d == dir && *b == british) {
+        return Ok(g.clone());
+    }
+    let g = Arc::new(G2p::load(dir, british)?);
+    loaded.push((dir.to_path_buf(), british, g.clone()));
+    Ok(g)
+}
+
+/// Read the dictionaries again next time (espeak-ng is looked for when they load).
+pub(crate) fn forget_dictionaries() {
+    crate::lock(&DICTIONARIES).clear();
+}
+
 /// The loaded model. Not thread-safe to run concurrently; keep one behind a mutex.
 pub struct Kokoro {
     pub quality: Quality,
     dir: PathBuf,
     session: ort::session::Session,
     vocab: HashMap<char, i64>,
-    us: Option<G2p>,
-    gb: Option<G2p>,
     voices: HashMap<String, Vec<f32>>,
 }
 
@@ -268,19 +289,11 @@ impl Kokoro {
             .map_err(|e| anyhow::anyhow!("loading the voice model: {e}"))?;
         let vocab: HashMap<String, i64> = serde_json::from_str(include_str!("vocab.json"))?;
         let vocab = vocab.into_iter().filter_map(|(k, v)| Some((k.chars().next()?, v))).collect();
-        Ok(Self { quality, dir: dir.to_path_buf(), session, vocab, us: None, gb: None, voices: HashMap::new() })
+        Ok(Self { quality, dir: dir.to_path_buf(), session, vocab, voices: HashMap::new() })
     }
 
-    fn g2p(&mut self, british: bool) -> Result<&G2p> {
-        let slot = if british { &mut self.gb } else { &mut self.us };
-        if slot.is_none() {
-            *slot = Some(G2p::load(&self.dir, british)?);
-        }
-        Ok(slot.as_ref().expect("loaded"))
-    }
-
-    pub fn phonemes(&mut self, text: &str, voice: &str) -> Result<String> {
-        Ok(self.g2p(voice.starts_with('b'))?.phonemize(text))
+    pub fn phonemes(&self, text: &str, voice: &str) -> Result<String> {
+        Ok(g2p_for(&self.dir, voice)?.phonemize(text))
     }
 
     fn voice(&mut self, id: &str) -> Result<&[f32]> {
@@ -367,7 +380,7 @@ fn split(ids: &[i64], vocab: &HashMap<char, i64>) -> Vec<Vec<i64>> {
 /// Pause between the pieces of a long line.
 const BREATH: f32 = 0.28;
 /// Kept before the first and after the last sound of a piece, so words aren't clipped.
-const EDGE: f32 = 0.06;
+pub(crate) const EDGE: f32 = 0.06;
 
 /// The samples between the first and last audible sound, with a short edge kept.
 fn trim_silence(wave: &[f32]) -> &[f32] {

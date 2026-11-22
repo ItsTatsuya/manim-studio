@@ -17,7 +17,7 @@ fn main() -> anyhow::Result<()> {
     let scenes = sample::install(&dir)?;
     let output = Output::new(960, 540, 30.0);
     for path in scenes {
-        let req = OpenScene { path: path.clone(), root: dir.clone(), theme_json: style::json(style_ix).into(), scene: None, globals: vec![], narration: None, narration_lines: vec![] };
+        let req = OpenScene { path: path.clone(), root: dir.clone(), theme_json: style::json(style_ix).into(), scene: None, globals: vec![], narration: None, narration_lines: vec![], narration_cues: vec![] };
         let (host, name, t) = load(&req, output)?;
         let mut times = vec![thumbnail_time(&t)];
         times.extend(fractions.iter().map(|f| f * t.duration));

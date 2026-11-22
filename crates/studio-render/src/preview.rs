@@ -20,6 +20,7 @@ use manim::events::ProgressMode;
 use manim::script::{HostOptions, ScriptHost};
 use manim::theme::Theme;
 
+use crate::cues::CueTime;
 use crate::{Frame, Output, TimelineInfo};
 
 /// What to load.
@@ -42,6 +43,8 @@ pub struct OpenScene {
     /// Length of each narration sentence (seconds). Scripts call `this.narrate(n)` where
     /// sentence `n` should start; empty when the narration isn't split.
     pub narration_lines: Vec<f64>,
+    /// When each cue mark in the narration is spoken (`this.cue(id)`).
+    pub narration_cues: Vec<CueTime>,
 }
 
 /// Silence after the narration ends before the next scene starts. The next scene's
@@ -59,6 +62,8 @@ const MAX_SPEEDUP: f64 = 1.35;
 const TIMING_HOOK: &str = r#"(() => {
   const run = globalThis.__manim_run;
   if (run.__studio) return true;
+  // An animation given what narrate() or cue() returned always has some length.
+  const MIN_PLAY = 0.1;
   const wrapped = function (cls) {
     let p = cls.prototype;
     while (p && !Object.prototype.hasOwnProperty.call(p, "wait")) p = Object.getPrototypeOf(p);
@@ -79,24 +84,65 @@ const TIMING_HOOK: &str = r#"(() => {
         }
         return play.apply(this, items);
       };
+      // Holds until scene time `t`. The engine rounds a wait down to whole frames, which
+      // would put the picture ahead of the voice, and more so with every sentence; this
+      // rounds up, so a moment lands at most one frame late.
+      const hold = (scene, t) => {
+        const frames = Math.ceil((t - scene.time) * scene.fps - 1e-6);
+        if (frames > 0) wait.call(scene, frames / scene.fps);
+      };
+      const length = (n) => {
+        const d = ((globalThis.NARRATION || {}).lines || [])[n - 1];
+        return d != null ? d : 2.5;
+      };
+      // Starts sentence n, after any before it that the scene skipped: the voice speaks
+      // them in order whatever the scene does.
+      const begin = (scene, n) => {
+        const narration = globalThis.NARRATION || {};
+        const st = globalThis.__NARR;
+        const known = n <= (narration.lines || []).length;
+        for (let k = known ? 1 : n; k <= n; k++) {
+          if (st.starts[k] != null) continue;
+          hold(scene, st.end);
+          scene.mark("narrate:" + k);
+          st.starts[k] = scene.time;
+          st.end = scene.time + length(k) + (narration.gap || 0);
+        }
+        return st.starts[n];
+      };
+      const cuesOf = () => (globalThis.NARRATION || {}).cues || [];
       // narrate(n): sentence n of the narration starts here. Holds until the previous
       // sentence has finished and the narrator has paused for breath, marks the moment,
-      // and returns the sentence's length.
+      // and returns the seconds until the sentence's first cue, or its whole length.
       p.narrate = function (n) {
-        const narration = globalThis.NARRATION || {};
-        const lines = narration.lines || [];
-        const st = globalThis.__NARR;
-        if (st.end > this.time + 1e-3) wait.call(this, st.end - this.time);
-        const d = lines[n - 1] != null ? lines[n - 1] : 2.5;
-        this.mark("narrate:" + n);
-        st.end = this.time + d + (narration.gap || 0);
-        return d;
+        const start = begin(this, n);
+        const inside = cuesOf().filter((c) => c.line === n).map((c) => c.at);
+        if (!inside.length) return length(n);
+        return Math.max(MIN_PLAY, start + Math.min(...inside) - this.time);
+      };
+      // cue(id): the word after the mark {id} is spoken here. Starts its sentence if need
+      // be, holds until that word, marks the moment, and returns the seconds until the
+      // next cue or the end of the sentence. An id used again names its next mark.
+      p.cue = function (id) {
+        const all = cuesOf();
+        const same = all.filter((c) => c.id === String(id));
+        if (!same.length) return 1;
+        const used = globalThis.__NARR.used;
+        const k = Object.prototype.hasOwnProperty.call(used, id) ? used[id] : 0;
+        used[id] = k + 1;
+        const cue = same[Math.min(k, same.length - 1)];
+        const start = begin(this, cue.line);
+        hold(this, start + cue.at);
+        this.mark("cue:" + id);
+        const later = all.filter((c) => c.line === cue.line && c.at > cue.at + 1e-3).map((c) => c.at);
+        const next = later.length ? Math.min(...later) : length(cue.line);
+        return Math.max(MIN_PLAY, start + next - this.time);
       };
       p.__studioTiming = true;
     }
     globalThis.__WAIT_IX = 0;
     globalThis.__PLAY_IX = 0;
-    globalThis.__NARR = { end: 0 };
+    globalThis.__NARR = { end: 0, starts: {}, used: {} };
     return run.call(this, cls);
   };
   wrapped.__studio = true;
@@ -153,7 +199,7 @@ pub fn timing_plan(t: &TimelineInfo, narration: f64) -> Option<TimingPlan> {
     Some(TimingPlan { waits, plays })
 }
 
-/// Install Studio's scene hooks (`narrate`, timing plans) before the next `run`.
+/// Install Studio's scene hooks (`narrate`, `cue`, timing plans) before the next `run`.
 pub fn install_hooks(host: &ScriptHost, plan: Option<&TimingPlan>) -> Result<()> {
     let empty: Vec<f64> = Vec::new();
     host.set_global_json("__WAIT_PLAN", &serde_json::to_string(plan.map_or(&empty, |p| &p.waits))?)?;
@@ -163,8 +209,8 @@ pub fn install_hooks(host: &ScriptHost, plan: Option<&TimingPlan>) -> Result<()>
 }
 
 /// The `NARRATION` global a scene sees.
-pub fn narration_json(seconds: f64, lines: &[f64]) -> String {
-    serde_json::json!({ "seconds": seconds, "lines": lines, "gap": crate::voice::SENTENCE_GAP }).to_string()
+pub fn narration_json(seconds: f64, lines: &[f64], cues: &[CueTime]) -> String {
+    serde_json::json!({ "seconds": seconds, "lines": lines, "cues": cues, "gap": crate::voice::SENTENCE_GAP }).to_string()
 }
 
 /// The scene places its sentences itself with `this.narrate(n)`.
@@ -249,7 +295,7 @@ fn load_with(req: &OpenScene, output: Output, plan: Option<&TimingPlan>) -> Resu
         host.set_global_json(name, json)?;
     }
     if let Some(n) = req.narration {
-        host.set_global_json("NARRATION", &narration_json(n, &req.narration_lines))?;
+        host.set_global_json("NARRATION", &narration_json(n, &req.narration_lines, &req.narration_cues))?;
     }
     install_hooks(&host, plan)?;
     let scene = match &req.scene {
@@ -707,7 +753,7 @@ export default class T extends Scene {
 }"#,
         )
         .unwrap();
-        OpenScene { path, root: dir.to_path_buf(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: None, narration_lines: vec![] }
+        OpenScene { path, root: dir.to_path_buf(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: None, narration_lines: vec![], narration_cues: vec![] }
     }
 
     #[test]
@@ -766,7 +812,7 @@ export default class N extends Scene {
         .unwrap();
         let lines = vec![1.5, 2.0, 1.0];
         let total = crate::preview::narration_end(&crate::voice::sequential_starts(&lines), &lines);
-        let req = OpenScene { path, root: dir.clone(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: Some(total), narration_lines: lines.clone() };
+        let req = OpenScene { path, root: dir.clone(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: Some(total), narration_lines: lines.clone(), narration_cues: vec![] };
         let (_, _, t) = load(&req, Output::new(320, 180, 30.0)).unwrap();
         assert!(uses_narrate(&t));
         let starts = narration_starts(&t, &lines);
@@ -780,6 +826,85 @@ export default class N extends Scene {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A narrated scene's timeline, its sentence starts and its cues.
+    fn cued(tag: &str, say: &str, lines: &[f64], body: &str) -> (TimelineInfo, Vec<f64>, Vec<CueTime>) {
+        let dir = std::env::temp_dir().join(format!("studio-cue-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("scenes")).unwrap();
+        let path = dir.join("scenes/01-c.ts");
+        let script = format!(
+            "import {{ Scene, Circle, Dot, Create, FadeIn }} from \"manim\";\n\
+             export default class C extends Scene {{ construct() {{ {body} }} }}"
+        );
+        std::fs::write(&path, script).unwrap();
+        let total = narration_end(&crate::voice::sequential_starts(lines), lines);
+        let cues = crate::cues::estimate(say, lines);
+        let req = OpenScene { path, root: dir.clone(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: Some(total), narration_lines: lines.to_vec(), narration_cues: cues.clone() };
+        let (_, _, t) = load(&req, Output::new(320, 180, 30.0)).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let starts = narration_starts(&t, lines);
+        (t, starts, cues)
+    }
+
+    /// Each dot pops when its number is spoken. Measured against when the voice says it,
+    /// not against the `cue:` mark, which a late cue would drag along.
+    #[test]
+    fn cues_pop_dots_on_their_numbers() {
+        let say = "We want points on the first line. If p is four, q is {a}nine. If p is eight, q is {b}three. If p is two, q is {c}twelve.";
+        let lines = [2.4, 2.1, 2.2, 2.0];
+        let (t, starts, cues) = cued(
+            "dots",
+            say,
+            &lines,
+            r#"this.play(Create(Circle(1)), { runTime: this.narrate(1) });
+            for (const [n, id] of [[2, "a"], [3, "b"], [4, "c"]]) {
+              this.play(Create(Circle(n / 2)), { runTime: this.narrate(n) });
+              this.play(FadeIn(Dot()), { runTime: Math.min(0.25, this.cue(id)) });
+            }"#,
+        );
+        let plays: Vec<f64> = t.plays.iter().filter(|p| !p.wait).map(|p| p.start).collect();
+        assert_eq!((plays.len(), cues.len()), (7, 3));
+        for (k, cue) in cues.iter().enumerate() {
+            let spoken = starts[cue.line - 1] + cue.at;
+            let pop = plays[2 + 2 * k];
+            assert!(cue.at > 1.0, "the number is said late in its sentence: {cue:?}");
+            assert!((pop - spoken).abs() < 0.25, "{} pops at {pop}, spoken at {spoken}", cue.id);
+            assert!(pop > spoken - 1e-6, "{} is shown before it is said", cue.id);
+        }
+        // The sentences stay a breath apart: the cues don't stretch the narration.
+        for k in 1..lines.len() {
+            let want = starts[k - 1] + lines[k - 1] + crate::voice::SENTENCE_GAP;
+            assert!((starts[k] - want).abs() < 0.1, "{starts:?}");
+        }
+    }
+
+    /// `cue` starts the sentences before it, works without `narrate`, takes a repeated id
+    /// in order and lets an unknown one through.
+    #[test]
+    fn cues_work_without_narrate() {
+        let say = "First we look at it. Then it is {x}six here. Now it is {x}seven here.";
+        let lines = [1.5, 1.8, 1.9];
+        let (t, starts, cues) = cued(
+            "alone",
+            say,
+            &lines,
+            r#"this.cue("nothing");
+            this.play(FadeIn(Dot()), { runTime: 0.2 });
+            this.cue("x");
+            this.narrate(2);
+            this.play(FadeIn(Dot()), { runTime: 0.2 });
+            this.cue("x");
+            this.play(FadeIn(Dot()), { runTime: 0.2 });"#,
+        );
+        assert!(uses_narrate(&t));
+        let plays: Vec<f64> = t.plays.iter().filter(|p| !p.wait).map(|p| p.start).collect();
+        assert!(plays[0] < 0.05, "an unknown cue doesn't wait: {plays:?}");
+        for (pop, cue) in plays[1..].iter().zip(&cues) {
+            let spoken = starts[cue.line - 1] + cue.at;
+            assert!((pop - spoken).abs() < 0.05, "{pop} for {cue:?}, spoken at {spoken}");
+        }
+        assert_eq!(t.markers.iter().filter(|m| m.name == "narrate:2").count(), 1, "cue already started sentence 2");
+    }
+
     /// Like the preview thread: one scene after another on the same thread, retimed.
     #[test]
     fn sequential_retimed_scenes_on_one_thread() {
@@ -787,7 +912,7 @@ export default class N extends Scene {
         let scenes = crate::sample::install(&dir).unwrap();
         let out = Output::new(320, 180, 30.0);
         for path in scenes.iter().take(3) {
-            let req = OpenScene { path: path.clone(), root: dir.clone(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: Some(6.0), narration_lines: vec![] };
+            let req = OpenScene { path: path.clone(), root: dir.clone(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: Some(6.0), narration_lines: vec![], narration_cues: vec![] };
             let (host, _, t) = load(&req, out).unwrap_or_else(|e| panic!("{}: {e:#}", path.display()));
             // Raw engine seeks, backwards and forwards: the sample's scene 2 creates its
             // tracker and redrawn mobjects mid-scene (fixed in manim-rust 3deae09).

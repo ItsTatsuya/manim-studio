@@ -1,0 +1,12 @@
+[package]
+name = "studio-script"
+description = "Narration scripts: cue marks and sentences, read the same way by the prompts and the voice"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

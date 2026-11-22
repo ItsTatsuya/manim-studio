@@ -111,42 +111,17 @@ export default class Diameter extends Scene {
   }
 }"#;
 
-/// A narration line split into sentences, numbered for `this.narrate(n)`. Must match
-/// `studio_render::voice::sentences` (checked by a test in tools/tokenbench).
-pub fn sentences(text: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    let chars: Vec<char> = text.chars().collect();
-    for (i, &ch) in chars.iter().enumerate() {
-        cur.push(ch);
-        let end = matches!(ch, '.' | '!' | '?') && chars.get(i + 1).is_none_or(|c| c.is_whitespace());
-        if end {
-            let s = cur.trim().to_string();
-            if !s.is_empty() {
-                out.push(s);
-            }
-            cur.clear();
-        }
-    }
-    if !cur.trim().is_empty() {
-        out.push(cur.trim().to_string());
-    }
-    let mut merged: Vec<String> = Vec::new();
-    for s in out {
-        match merged.last_mut() {
-            Some(prev) if s.split_whitespace().count() < 3 => {
-                prev.push(' ');
-                prev.push_str(&s);
-            }
-            _ => merged.push(s),
-        }
-    }
-    merged
-}
+/// The narration's sentences, as the voice speaks them and `this.narrate(n)` numbers them.
+pub use studio_script::sentences;
 
-/// `1. "…"  2. "…"` for a prompt.
+/// `1. "…"  2. "…"` for a prompt, with the cue marks the scene can wait for.
 pub fn numbered(text: &str) -> String {
-    sentences(text).iter().enumerate().map(|(i, s)| format!("{}. \"{}\"", i + 1, s)).collect::<Vec<_>>().join("  ")
+    studio_script::marked_sentences(text)
+        .iter()
+        .enumerate()
+        .map(|(i, s)| format!("{}. \"{}\"", i + 1, studio_script::with_marks(s)))
+        .collect::<Vec<_>>()
+        .join("  ")
 }
 
 /// System prompt for building and editing with a recipe.
@@ -191,8 +166,9 @@ Rules:
 - Draw pictures (people, desks, devices, documents, icons, objects) as one SVG, not as piles of Rectangles and Circles: `SVGMobject(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 90">…</svg>`, {{ height: 2 }})` with colours from the palette (`fill="${{c.primary}}"`). Use rect, circle, ellipse, line, polyline, polygon and path with flat fills and strokes; no gradients, filters, images or <text> (labels are Text objects placed beside the picture, so they follow the house style). To point at a picture, scale it briefly (`pic.animate.scale(1.1)` and back) or draw SurroundingRectangle around it; Indicate and colour changes paint every part of it one colour.
 - The top band (y > 2.6) is the heading's. Put body content, equations and diagrams below it.
 - Call this.mark("thumbnail") at the scene's most representative moment.
-- Each scene is narrated, sentence by sentence (numbered in the storyboard). Call `this.narrate(n)` immediately before the animation that sentence n describes, for every sentence, in order. It returns that sentence's length in seconds; use it for the runTime of what it describes. If the previous sentence is still being spoken, narrate() first waits for it, so the voice always matches what is on screen. Studio holds the last frame until the last sentence ends. Don't time anything off `NARRATION.seconds`.
-- Pace for the class: let narrate() set the pace; add this.wait(seconds) only for a short beat after a key result.
+- Each scene is narrated, sentence by sentence (numbered in the storyboard). Call `this.narrate(n)` immediately before the animation that sentence n describes, for every sentence, in order. It returns that sentence's length in seconds (or the seconds until its first cue); use it for the runTime of what it describes. If the previous sentence is still being spoken, narrate() first waits for it, so the voice always matches what is on screen. Studio holds the last frame until the last sentence ends. Don't time anything off `NARRATION.seconds`.
+- A `{{id}}` inside the narration is a cue: the moment the next word is spoken. Call `this.cue(id)` immediately before the animation for that moment, for every cue, in order. Never show a value before the voice says it. cue() waits for that moment and returns the seconds until the next cue or the end of the sentence, so keep that animation no longer: a pop takes `Math.min(0.3, this.cue("c20"))`.
+- Pace for the class: let narrate() and cue() set the pace; add this.wait(seconds) only for a short beat after a key result.
 - The scenes play back to back as one continuous video, with a short dissolve between them. Don't open a scene with the video title or a scene number; carry on from the previous scene (reuse its heading wording, colours and positions for recurring objects), and end on the scene's key result rather than fading everything out.
 - Change only the files you are asked to change. Don't open other scenes unless asked.
 - Work in as few steps as possible: write several files at once with parallel tool calls, and don't read files back after writing them.
@@ -289,7 +265,7 @@ pub fn plan(o: &PlanOptions) -> String {
         r#"
 Reply with only this JSON:
 {{"title": "short video title", "grade": "e.g. Grade 8", "scenes": [{{"title": "scene title", "say": "the narration for this scene, in the teacher's voice", "show": "one plain sentence a teacher would use to say what the viewer sees, no code or drawing terms", "visual": "what is drawn and animated, concretely", "seconds": 20}}]{notes}}}
-Use {lo} to {hi} scenes. Start with a hook and build the idea with visuals that can be drawn with shapes, graphs, text and equations. {ending} Narration is read aloud by a voice: write it as speech ("pi r squared", "x over two"), no symbols, markup or LaTeX. The narration sets each scene's length, so it must fill the scene: about {wps} spoken words per second ("seconds": 20 means about {words20} words), talking through what appears on screen as it appears. The scenes are one continuous video: link each scene's narration to the one before it."#,
+Use {lo} to {hi} scenes. Start with a hook and build the idea with visuals that can be drawn with shapes, graphs, text and equations. {ending} Narration is read aloud by a voice: write it as speech ("pi r squared", "x over two"), no symbols, markup or LaTeX. The one exception is cue marks: wherever something appears on screen in the middle of a sentence (a dot, a number, a named term), put a short id in braces directly before the word that names it, as in "If r is ten, c is {{c20}}twenty." A mark goes before the number itself, is never read aloud, and has an id of its own in that scene, starting with a letter. Say in "visual" what appears at each cue. The narration sets each scene's length, so it must fill the scene: about {wps} spoken words per second ("seconds": 20 means about {words20} words), talking through what appears on screen as it appears. The scenes are one continuous video: link each scene's narration to the one before it."#,
         lo = lo,
         hi = hi,
         ending = ending,
@@ -302,7 +278,7 @@ Use {lo} to {hi} scenes. Start with a hook and build the idea with visuals that 
 /// Revise a storyboard from a teacher's note (planning model, no code).
 pub fn revise(current: &Storyboard, note: &str) -> String {
     format!(
-        "Revise this storyboard. Teacher's note: {}\n\nCurrent storyboard:\n{}\n\nReply with only the revised storyboard JSON in the same shape.",
+        "Revise this storyboard. Keep the {{id}} cue marks in the narration with the words they precede. Teacher's note: {}\n\nCurrent storyboard:\n{}\n\nReply with only the revised storyboard JSON in the same shape.",
         note.trim(),
         serde_json::to_string(current).unwrap_or_default()
     )
@@ -523,6 +499,19 @@ mod plan_option_tests {
         assert!(p.contains("about 2.9 spoken words per second"));
         assert!(p.contains("about 58 words"));
         assert!(!p.contains("End with one practice question"));
+    }
+
+    #[test]
+    fn cues_reach_the_prompts() {
+        assert!(plan(&opts(120)).contains("c is {c20}twenty"));
+        let system = build_system("");
+        assert!(system.contains("A `{id}` inside the narration is a cue"));
+        assert!(system.contains("Never show a value before the voice says it."));
+        // Marks stay visible to the builder and don't change the numbering.
+        assert_eq!(
+            numbered("If r is ten, c is {c20}twenty. {line}They lie on one line."),
+            "1. \"If r is ten, c is {c20}twenty.\"  2. \"{line}They lie on one line.\""
+        );
     }
 
 }

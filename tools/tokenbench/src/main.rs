@@ -260,14 +260,15 @@ fn system_prompt(r: Recipe) -> String {
 }
 
 fn scene_request(dir: &Path, path: &Path, narration: Option<f64>) -> OpenScene {
-    OpenScene { path: path.to_path_buf(), root: dir.to_path_buf(), theme_json: style::json(0).into(), scene: None, globals: vec![], narration, narration_lines: vec![] }
+    OpenScene { path: path.to_path_buf(), root: dir.to_path_buf(), theme_json: style::json(0).into(), scene: None, globals: vec![], narration, narration_lines: vec![], narration_cues: vec![] }
 }
 
-/// A scene's narration as the app gives it: estimated sentence lengths.
+/// A scene's narration as the app gives it: estimated sentence lengths and cue times.
 fn narrated_request(dir: &Path, path: &Path, say: &str) -> OpenScene {
     let lines: Vec<f64> = prompt::sentences(say).iter().map(|s| s.split_whitespace().count() as f64 / WORDS_PER_SECOND).collect();
     let total = studio_render::preview::narration_end(&studio_render::voice::sequential_starts(&lines), &lines);
-    OpenScene { narration: Some(total), narration_lines: lines, ..scene_request(dir, path, None) }
+    let narration_cues = studio_render::cues::estimate(say, &lines);
+    OpenScene { narration: Some(total), narration_lines: lines, narration_cues, ..scene_request(dir, path, None) }
 }
 
 
@@ -605,6 +606,7 @@ mod tests {
             "Here's a pizza. If we double its radius, do we get twice as much pizza? It feels like we should.",
             "Pi is about 3.14, so it's a little more than three squares. Ready? Well done!",
             "No full stop at the end",
+            "If r is ten, c is {c20}twenty.{next} They lie on {one}one straight line. {ok}Yes.",
         ] {
             assert_eq!(prompt::sentences(text), studio_render::voice::sentences(text), "{text}");
         }

@@ -46,6 +46,7 @@ crates/
     src/theme.rs        colours, type scale, radius, spacing (mirrors DESIGN.md §4)
     src/components/     Button, Kbd, Chip, Dot, ProgressBar, Toggle, Segmented,
                         Dropdown/MenuItem, ListRow, TextInput (wrapping, IME, clipboard)
+  studio-script/ narration scripts: sentences and cue marks, shared by prompts and voice
   studio-agent/  assistant adapters: Claude Code / Codex CLIs (stream JSON), detection,
                  sign-in, prompts (API digest, storyboard, build, edit, repair)
   studio-docs/   text out of PDF, DOCX, PPTX, Markdown and plain text
@@ -153,6 +154,10 @@ when a variant wins on both tokens and quality.
   Watermark; saved in `project.json`).
 - Visual review: after a video is created (Settings → Assistants → Look over new videos, or the scene strip's Check the look), `preview::review_frames` draws the key moment (and the middle, for longer scenes) of each chapter, ffmpeg writes them to `.cache/review/*.jpg`, and one assistant turn (`prompt::review`) opens the pictures with its file reader and fixes overlapping, cut-off or tiny text in the scene files; the usual engine check and repairs run after it. `cargo run -p studio-app --example review_demo -- <video folder>` tries it without the GUI.
 - Lecture slides (Settings → Rendering, or per video from the scene strip / script): saving a video can also write `<Title>.pdf` and/or `<Title>.pptx` beside it: one slide per chapter, which is just that chapter's key frame filling the page, in the video's own shape, with no text added. The frames are cut from the cached scene videos with ffmpeg (so no watermark or burned-in captions). `studio_render::slides` writes both formats by hand. A slide failure never fails the video.
+- Cues time moments inside a sentence: a mark like `If r is ten, c is {c20}twenty.` in the
+  script (never spoken, never in captions) lets the scene call `this.cue("c20")` right before
+  that word's animation. Word starts are estimated from the phonemes and snapped to the
+  pauses in the audio (`studio_render::cues`), cached as `.words.json` beside the sentence WAV.
 - Narration is in step with the picture sentence by sentence: each sentence is spoken and
   cached on its own, scenes call `this.narrate(n)` right before the animation sentence `n`
   describes (it returns the sentence's length and holds until the previous one ends), and
