@@ -322,11 +322,12 @@ pub struct Scene {
     pub title: String,
     /// Narration.
     pub say: String,
-    /// What appears on screen.
+    /// What appears on screen (drawing terms, for the assistant).
     pub visual: String,
+    /// What appears on screen, in plain words for the teacher.
+    pub show: String,
     /// Planned length from the storyboard.
     pub seconds: u32,
-    pub art: Art,
     pub note: Option<String>,
     pub engine: SceneEngine,
 }
@@ -337,13 +338,25 @@ impl Scene {
         self.engine.duration.unwrap_or(self.seconds as f32)
     }
 
-    pub fn from_beat(i: usize, b: &Beat) -> Self {
+    /// What the viewer sees, in words a teacher would use. Plans written before the plain
+    /// description existed only have the drawing terms, which are not shown.
+    pub fn plain_visual(&self) -> Option<&str> {
+        let show = self.show.trim();
+        if !show.is_empty() {
+            return Some(show);
+        }
+        let v = self.visual.trim();
+        let technical = v.contains(['(', ')', '_', '{', '}', '=']) || v.contains("this.");
+        (!v.is_empty() && !technical).then_some(v)
+    }
+
+    pub fn from_beat(b: &Beat) -> Self {
         Scene {
             title: b.title.clone(),
             say: b.say.clone(),
             visual: b.visual.clone(),
+            show: b.show.clone(),
             seconds: b.seconds,
-            art: Art::ALL[i % Art::ALL.len()],
             note: None,
             engine: SceneEngine::default(),
         }
@@ -358,6 +371,8 @@ pub struct VideoSettings {
     pub style: Option<usize>,
     /// Index into `engine::OUTPUTS`.
     pub output: Option<usize>,
+    /// Index into `engine::SLIDES`.
+    pub slides: Option<usize>,
 }
 
 /// The assistant is working on this video.
@@ -367,6 +382,8 @@ pub enum Busy {
     Revising,
     Building,
     Editing,
+    /// Looking at frames of the finished video and fixing what looks wrong.
+    Reviewing,
     /// Repairing scene `n` (1-based), try `k` of `of`.
     Fixing { scene: usize, k: u8, of: u8 },
 }
@@ -442,10 +459,6 @@ impl Video {
 
     pub fn cover_still(&self) -> Option<Still> {
         self.scenes.iter().find_map(|s| s.engine.thumb.clone())
-    }
-
-    pub fn cover(&self) -> Art {
-        self.scenes.first().map_or(Art::Intro, |s| s.art)
     }
 
     /// When the video was last changed: "just now", "5 min ago", "2 h ago", "3 d ago" (a
@@ -545,7 +558,6 @@ pub struct RenderJob {
     pub project: String,
     pub output: String,
     pub status: JobStatus,
-    pub art: Art,
     pub thumb: Option<Still>,
     /// Wall-clock render time once finished.
     pub time: String,

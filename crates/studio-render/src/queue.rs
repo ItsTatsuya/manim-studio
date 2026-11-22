@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use crate::events::EngineEvent;
-use crate::{Backend, Encoder, Output, cache, export, lock};
+use crate::{Backend, Encoder, Output, cache, export, lock, slides};
 
 /// How to start an engine worker process (the app passes its own executable plus
 /// [`crate::worker::ARG`]).
@@ -30,6 +30,10 @@ impl WorkerCommand {
 #[derive(Clone, Debug)]
 pub struct SceneSpec {
     pub path: PathBuf,
+    /// The scene's title (the heading of its lecture slide).
+    pub title: String,
+    /// Where the scene's key moment is, in seconds from its start (the slide's picture).
+    pub key_time: Option<f64>,
     /// Duration from a preview run, for overall progress (equal weights when unknown).
     pub expected: Option<f64>,
     /// The scene's narration: its WAV and the text it speaks (for captions).
@@ -75,6 +79,9 @@ pub struct VideoRender {
     pub captions: Captions,
     /// Drawn on the exported video (not on the cached scenes).
     pub watermark: Option<export::Watermark>,
+    /// The video's title, and which lecture-slide files to write beside it.
+    pub title: String,
+    pub slides: slides::Formats,
 }
 
 #[derive(Clone, Debug)]
@@ -88,7 +95,18 @@ pub enum QueueEvent {
     Progress { id: u64, fraction: f32 },
     Problem { id: u64, scene: usize, message: String },
     Exporting { id: u64 },
-    Done { id: u64, path: PathBuf, elapsed: Duration, duration: f64, rendered: usize, cached: usize },
+    /// `slides` are the lecture-slide files written beside the video; `slides_problem` says
+    /// why they were not (the video itself is fine).
+    Done {
+        id: u64,
+        path: PathBuf,
+        elapsed: Duration,
+        duration: f64,
+        rendered: usize,
+        cached: usize,
+        slides: Vec<PathBuf>,
+        slides_problem: Option<String>,
+    },
     Failed { id: u64, scene: Option<usize>, error: String },
     Cancelled { id: u64 },
 }
@@ -246,6 +264,8 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Arc<Shared>, tx: &asyn
     let of = job.scenes.len();
     let mut parts = Vec::with_capacity(of);
     let mut starts: Vec<f64> = Vec::with_capacity(of);
+    // Each scene's own length, for picking its slide frame.
+    let mut scene_seconds: Vec<f64> = Vec::with_capacity(of);
     let (mut rendered, mut cached, mut duration) = (0, 0, 0.0);
     let mut done_weight = 0.0;
     for (index, scene) in job.scenes.iter().enumerate() {
@@ -275,6 +295,7 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Arc<Shared>, tx: &asyn
                 .or(scene.expected)
                 .unwrap_or(0.0);
             starts.push(duration);
+            scene_seconds.push(d);
             duration += d;
         } else {
             let progress = |t: f64| {
@@ -294,6 +315,7 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Arc<Shared>, tx: &asyn
                     let _ = std::fs::write(out.with_extension("seconds"), format!("{d}"));
                     cache::write_output_label(&out, job.output);
                     starts.push(duration);
+                    scene_seconds.push(d);
                     duration += d;
                     cache::prune(&job.root, &scene.path, &out);
                 }
@@ -397,7 +419,47 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Arc<Shared>, tx: &asyn
             return fail(None, format!("{}: {e:#}", if burn { "adding captions" } else { "adding the watermark" }));
         }
     }
-    QueueEvent::Done { id, path: job.export.clone(), elapsed: started.elapsed(), duration, rendered, cached }
+    let (slide_files, slides_problem) = if job.slides.any() && !cancelled() {
+        make_slides(&ffmpeg, job, &parts, &scene_seconds, &cache_dir)
+    } else {
+        (Vec::new(), None)
+    };
+    QueueEvent::Done { id, path: job.export.clone(), elapsed: started.elapsed(), duration, rendered, cached, slides: slide_files, slides_problem }
+}
+
+/// Lecture slides from the scenes' key frames, beside the finished video. A failure here
+/// never fails the video: it comes back as the reason, and the video stays saved.
+fn make_slides(ffmpeg: &Path, job: &VideoRender, parts: &[PathBuf], seconds: &[f64], cache_dir: &Path) -> (Vec<PathBuf>, Option<String>) {
+    let dir = cache_dir.join("slides");
+    let run = || -> anyhow::Result<Vec<PathBuf>> {
+        std::fs::create_dir_all(&dir)?;
+        let mut deck = Vec::with_capacity(parts.len());
+        for (i, (scene, video)) in job.scenes.iter().zip(parts).enumerate() {
+            let len = seconds.get(i).copied().unwrap_or(0.0);
+            let frame = dir.join(format!("frame-{:02}.jpg", i + 1));
+            // No key moment known: near the end, where a scene is fully drawn.
+            let at = scene.key_time.unwrap_or(len * 0.9);
+            slides::extract_frame(ffmpeg, video, at, len, &frame)?;
+            deck.push(slides::Slide { title: scene.title.clone(), image: frame });
+        }
+        let (pdf, pptx) = slides::paths(&job.export);
+        let mut written = Vec::new();
+        if job.slides.pdf {
+            slides::write_pdf(&job.title, &deck, &pdf)?;
+            written.push(pdf);
+        }
+        if job.slides.pptx {
+            slides::write_pptx(&job.title, &deck, &pptx)?;
+            written.push(pptx);
+        }
+        Ok(written)
+    };
+    let r = run();
+    let _ = std::fs::remove_dir_all(&dir);
+    match r {
+        Ok(files) => (files, None),
+        Err(e) => (Vec::new(), Some(format!("{e:#}"))),
+    }
 }
 
 enum Voice {
@@ -646,6 +708,8 @@ mod tests {
             fonts_dir: None,
             captions: Captions::Off,
             watermark: None,
+            title: String::new(),
+            slides: slides::Formats::NONE,
         }
     }
 

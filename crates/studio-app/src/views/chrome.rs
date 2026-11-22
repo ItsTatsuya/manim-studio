@@ -55,22 +55,24 @@ impl Workspace {
                 let built = v.has_scripts();
                 let has_plan = v.storyboard.is_some() && !v.scenes.is_empty();
                 let chip = match (&v.busy, built) {
-                    (Some(crate::model::Busy::Planning), _) => Chip::new("Writing storyboard…").tone(studio_ui::components::Tone::Signal),
-                    (Some(crate::model::Busy::Revising), _) => Chip::new("Revising…").tone(studio_ui::components::Tone::Signal),
-                    (Some(_), _) => Chip::new("Building…").tone(studio_ui::components::Tone::Signal),
-                    (None, true) => Chip::new(format!("Built · {} scenes", v.scenes.len())).tone(studio_ui::components::Tone::Ok),
-                    (None, false) => Chip::new("Draft · not built yet"),
+                    (Some(crate::model::Busy::Planning), _) => Chip::new("Writing the script…").tone(studio_ui::components::Tone::Signal),
+                    (Some(crate::model::Busy::Revising), _) => Chip::new("Updating the script…").tone(studio_ui::components::Tone::Signal),
+                    (Some(crate::model::Busy::Reviewing), _) => Chip::new("Checking how it looks…").tone(studio_ui::components::Tone::Signal),
+                    (Some(_), _) => Chip::new("Creating the video…").tone(studio_ui::components::Tone::Signal),
+                    (None, true) => Chip::new(format!("Video created · {} chapters", v.scenes.len())).tone(studio_ui::components::Tone::Ok),
+                    (None, false) => Chip::new("Script ready · video not created yet"),
                 };
                 right = right.child(chip);
                 right = if built {
-                    right.child(Button::new("tb-open-studio", "Open studio").primary().icon_right(IconName::ChevronRight).on_click(click(cx, |this, _, cx| {
+                    right.child(Button::new("tb-open-studio", "Open video").primary().icon_right(IconName::ChevronRight).on_click(click(cx, |this, _, cx| {
                         this.mode = Mode::Studio;
                         this.sync_preview();
                         cx.notify();
                     })))
                 } else {
                     right.child(
-                        Button::new("tb-approve", "Approve & build")
+                        Button::new("tb-approve", "Create video")
+                            .tooltip("Approve the script and create the video")
                             .primary()
                             .disabled(busy || !has_plan)
                             .icon_right(IconName::ChevronRight)
@@ -86,6 +88,7 @@ impl Workspace {
                         let b = Button::new("tb-render", "Save video")
                             .primary()
                             .with_icon(IconName::Play)
+                            .disabled(!self.video().has_scripts())
                             .on_click(click(cx, |this, _, cx| this.start_render(cx)));
                         if compact { b } else { b.kbd(if cfg!(target_os = "macos") { "⌘ ↵" } else { "Ctrl ↵" }) }
                     });

@@ -1,4 +1,4 @@
-use crate::app::{Workspace, click, display, faint, stage_image, strong, with_value};
+use crate::app::{Workspace, click, display, faint, strong, with_value};
 use crate::model::{HOUSE_STYLES, format_short};
 use gpui::{
     ColorExt,
@@ -116,10 +116,10 @@ impl Workspace {
         let recent: Vec<_> = all
             .into_iter()
             .take(4)
-            .map(|(pi, vi, v)| (pi, vi, v.title.clone(), v.cover_still(), v.cover(), v.seconds(), v.updated_label()))
+            .map(|(pi, vi, v)| (pi, vi, v.title.clone(), v.cover_still(), v.seconds(), v.updated_label(), self.video_progress((pi, vi))))
             .collect();
         let no_recent = recent.is_empty();
-        let recent_cards = recent.into_iter().map(|(pi, vi, title, still, art, secs, updated)| {
+        let recent_cards = recent.into_iter().map(|(pi, vi, title, still, secs, updated, progress)| {
             div()
                 .id(("recent", pi * 100 + vi))
                 .group("recent-card")
@@ -141,9 +141,10 @@ impl Workspace {
                         .border_color(t.line)
                         .group_hover_style("recent-card", |s| s.border_color(t.line_strong))
                         .mb(px(6.))
-                        .child(match still {
-                            Some(crate::model::Still(img)) => crate::app::still_image(img).into_any_element(),
-                            None => stage_image(art).into_any_element(),
+                        .child(match (progress, still) {
+                            (Some(p), _) => crate::app::progress_tile(&p, false, ("recent-progress", pi * 100 + vi), cx),
+                            (None, Some(crate::model::Still(img))) => crate::app::still_image(img).into_any_element(),
+                            (None, None) => crate::app::empty_tile("", "", true, None, cx),
                         }),
                 )
                 .child(strong(title).text_size(text::SMALL).truncate())
@@ -167,7 +168,7 @@ impl Workspace {
                     .child(display("What should students learn today?"))
                     .child(composer)
                     .child(faint(
-                        "Type an idea, drop in notes, or paste a full script. Studio shows you a storyboard before writing anything.",
+                        "Type an idea, drop in notes, or paste a full script. Studio shows you the script before making anything.",
                         cx,
                     ))
                     .child(

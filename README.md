@@ -151,6 +151,8 @@ when a variant wins on both tokens and quality.
   (`studio_render::export::place`). Drawn once on the exported MP4 in the same ffmpeg pass
   as burned-in captions, so scene caches stay valid. Projects can opt out (scene strip →
   Watermark; saved in `project.json`).
+- Visual review: after a video is created (Settings → Assistants → Look over new videos, or the scene strip's Check the look), `preview::review_frames` draws the key moment (and the middle, for longer scenes) of each chapter, ffmpeg writes them to `.cache/review/*.jpg`, and one assistant turn (`prompt::review`) opens the pictures with its file reader and fixes overlapping, cut-off or tiny text in the scene files; the usual engine check and repairs run after it. `cargo run -p studio-app --example review_demo -- <video folder>` tries it without the GUI.
+- Lecture slides (Settings → Rendering, or per video from the scene strip / script): saving a video can also write `<Title>.pdf` and/or `<Title>.pptx` beside it: one slide per chapter, which is just that chapter's key frame filling the page, in the video's own shape, with no text added. The frames are cut from the cached scene videos with ffmpeg (so no watermark or burned-in captions). `studio_render::slides` writes both formats by hand. A slide failure never fails the video.
 - Narration is in step with the picture sentence by sentence: each sentence is spoken and
   cached on its own, scenes call `this.narrate(n)` right before the animation sentence `n`
   describes (it returns the sentence's length and holds until the previous one ends), and

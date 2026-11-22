@@ -74,8 +74,8 @@ impl Workspace {
         ];
         if video_open {
             v.push(item(Command::Render, "Save the video", IconName::Film).keys(format!("{sec}-enter")));
-            v.push(item(Command::Mode(Mode::Storyboard), "Show the storyboard", IconName::Board).keys(format!("{sec}-1")));
-            v.push(item(Command::Mode(Mode::Studio), "Show the studio", IconName::Play).keys(format!("{sec}-2")));
+            v.push(item(Command::Mode(Mode::Storyboard), "Show the script", IconName::Board).keys(format!("{sec}-1")));
+            v.push(item(Command::Mode(Mode::Studio), "Show the video", IconName::Play).keys(format!("{sec}-2")));
             v.push(item(Command::Mode(Mode::Code), "Show the code", IconName::Script).keys(format!("{sec}-3")));
         }
         v.push(item(Command::ToggleSidebar, "Show or hide the sidebar", IconName::Sidebar).keys(format!("{sec}-b")));

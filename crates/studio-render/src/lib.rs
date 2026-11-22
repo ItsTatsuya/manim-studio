@@ -25,6 +25,7 @@ pub mod preview;
 pub mod queue;
 pub mod sample;
 pub mod showcase;
+pub mod slides;
 pub mod style;
 pub mod voice;
 pub mod worker;

@@ -72,8 +72,8 @@ fn table() -> (Vec<KeyBinding>, Vec<Shortcut>) {
     sc!("Stage", "Show the safe area", "g".into(), ToggleSafeArea, Some(NOT_TYPING));
     sc!("Stage", "Loop the scene", "l".into(), ToggleLoop, Some(NOT_TYPING));
 
-    sc!("Views", "Storyboard", format!("{sec}-1"), ModeStoryboard, None);
-    sc!("Views", "Studio", format!("{sec}-2"), ModeStudio, None);
+    sc!("Views", "Script", format!("{sec}-1"), ModeStoryboard, None);
+    sc!("Views", "Video", format!("{sec}-2"), ModeStudio, None);
     sc!("Views", "Code", format!("{sec}-3"), ModeCode, None);
     sc!("Views", "Show or hide the sidebar", format!("{sec}-b"), ToggleSidebar, None);
     sc!("Views", "Command palette", format!("{sec}-k"), FocusSearch, None);

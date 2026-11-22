@@ -1,5 +1,5 @@
 use studio_ui::motion;
-use crate::app::{Mode, RightTab, Workspace, click, faint, num, scene_image, stage_image, still_image, strong, sub, with_value};
+use crate::app::{Mode, RightTab, Workspace, click, faint, num, scene_image, still_image, strong, sub, with_value};
 use crate::model::{Issue, Msg, format_short, format_time};
 use gpui::{
     ColorExt,
@@ -24,9 +24,9 @@ impl Workspace {
             .justify_center()
             .gap(px(8.))
             .child(Icon::new(IconName::Board).color(t.fg_3))
-            .child(strong(if planning { "The assistant is writing the storyboard" } else { "No scenes yet" }))
-            .child(faint("Scenes appear here once the storyboard is approved and built.", cx))
-            .child(Button::new("go-storyboard", "Open storyboard").small().on_click(click(cx, |this, _, cx| {
+            .child(strong(if planning { "The assistant is writing the script" } else { "No chapters yet" }))
+            .child(faint("Chapters appear here once you approve the script and create the video.", cx))
+            .child(Button::new("go-storyboard", "Open the script").small().on_click(click(cx, |this, _, cx| {
                 this.mode = Mode::Storyboard;
                 cx.notify();
             })))
@@ -63,14 +63,38 @@ impl Workspace {
         let scene_ix = self.scene.min(video.scenes.len() - 1);
         let scene = &video.scenes[scene_ix];
         let total = video.length();
-        let art = scene.art;
+
         let live = video.has_scripts() && scene.engine.file.is_some();
         let issue = scene.engine.issue.clone();
         let error = if live { self.stage.error.clone() } else { None };
-        let picture: AnyElement = match (&self.stage.frame, live) {
-            (Some(img), true) => still_image(img.clone()).into_any_element(),
-            (None, true) => div().size_full().bg(t.stage).into_any_element(),
-            _ => stage_image(art).into_any_element(),
+        // While the scenes are being written the stage has nothing real to show yet.
+        let creating = self.video_progress(self.current).filter(|_| video.busy == Some(crate::model::Busy::Building));
+        let picture: AnyElement = match (&creating, &self.stage.frame, live) {
+            (Some(p), ..) => crate::app::progress_tile(p, false, "stage-progress", cx),
+            (None, Some(img), true) => still_image(img.clone()).into_any_element(),
+            (None, None, true) => div().size_full().bg(t.stage).into_any_element(),
+            // Nothing has been drawn for this video yet: say so, instead of showing a picture
+            // of something else.
+            _ => {
+                let writing = matches!(video.busy, Some(crate::model::Busy::Planning) | Some(crate::model::Busy::Revising));
+                let (title, body) = if writing {
+                    ("The script is being written", "The video can be created once you have approved it.")
+                } else if video.has_scripts() {
+                    ("This chapter hasn't been created yet", "Ask the assistant to create it, or open the Code tab to see what stopped it.")
+                } else {
+                    ("Your video isn't created yet", "Read the script, then press Create video. The video appears here.")
+                };
+                let action = (!writing && !video.has_scripts()).then(|| {
+                    Button::new("stage-open-script", "Open the script")
+                        .small()
+                        .on_click(click(cx, |this, _, cx| {
+                            this.mode = Mode::Storyboard;
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                });
+                crate::app::empty_tile(title, body, false, action, cx)
+            }
         };
         // The previous scene dissolving into this one.
         let fading = match (&self.stage.fade_from, self.stage.fade_opacity()) {
@@ -183,8 +207,8 @@ impl Workspace {
                                         .flex_col()
                                         .gap(px(2.))
                                         .child(strong(match line {
-                                            Some(l) => format!("Scene {} stopped at line {l}", scene_ix + 1),
-                                            None => format!("Scene {} could not run", scene_ix + 1),
+                                            Some(l) => format!("Chapter {} stopped at line {l}", scene_ix + 1),
+                                            None => format!("Chapter {} could not be drawn", scene_ix + 1),
                                         }))
                                         .child(div().text_size(text::SMALL).text_color(t.fg_2).font_family(FONT_MONO).child(short)),
                                 )
@@ -195,7 +219,7 @@ impl Workspace {
                         ),
                     )
                 })
-                .child(
+                .when(live && creating.is_none(), |d| d.child(
                     div().absolute().bottom(px(12.)).left_0().right_0().flex().justify_center().child(
                         floating(cx)
                             .whitespace_nowrap()
@@ -247,7 +271,7 @@ impl Workspace {
                                             }
                                         }))
                                         .on_mouse_up(gpui::MouseButton::Left, cx.listener(|this, _, _, _| this.scrubbing = false))
-                                        .tooltip(studio_ui::components::Tooltip::text("Drag to scrub this scene")),
+                                        .tooltip(studio_ui::components::Tooltip::text("Drag to scrub this chapter")),
                                 )
                             })
                             .child(div().mx(px(6.)).w(px(1.)).h(px(18.)).bg(t.line_strong))
@@ -258,9 +282,9 @@ impl Workspace {
                             .child(tool("tool-cc", IconName::Captions, "Show narration as captions  C", self.stage_captions, |w| {
                                 w.stage_captions = !w.stage_captions
                             }))
-                            .child(tool("tool-loop", IconName::Loop, "Loop this scene  L", self.stage_loop, |w| w.stage_loop = !w.stage_loop)),
+                            .child(tool("tool-loop", IconName::Loop, "Loop this chapter  L", self.stage_loop, |w| w.stage_loop = !w.stage_loop)),
                     ),
-                )
+                ))
 
         )
     }
@@ -391,6 +415,26 @@ impl Workspace {
             })
             .collect();
         let count = video.scenes.len();
+        // The last chapter is the ending, so a new one goes before it.
+        let mut cards: Vec<AnyElement> = cards.into_iter().map(IntoElement::into_any_element).collect();
+        let last = if count > 1 { cards.pop() } else { None };
+        let front = cards;
+        let add = div()
+                                .id("add-scene").transitions(studio_ui::motion::hovers)
+                                .flex_none()
+                                .w(px(60.))
+                                .rounded(radius::CARD)
+                                .border_1()
+                                .border_color(t.line_strong)
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .cursor_pointer()
+                                .bg(t.surface_2.opacity(0.))
+                                .hover_style(|s| s.bg(t.surface_2))
+                                .tooltip(studio_ui::components::Tooltip::text(if count > 1 { "Add a chapter before the ending" } else { "Add a chapter after this one" }))
+                                .on_click(cx.listener(|this, _, window, cx| this.ask_for_new_scene(window, cx)))
+                                .child(Icon::new(IconName::Plus).color(t.fg_3));
         let total = format_short(video.seconds());
         let has_scripts = video.has_scripts();
         panel(cx).flex_none().child(
@@ -405,12 +449,26 @@ impl Workspace {
                         .px(px(12.))
                         .pt(px(10.))
                         .pb(px(8.))
-                        .child(strong("Scenes"))
+                        .child(strong("Chapters"))
                         .child(num(format!("{count} · {total}")).text_color(t.fg_3))
                         .child(div().flex_1())
                         .when(has_scripts, |d| {
+                            d.child(
+                                Button::new("check-look", "Check the look")
+                                    .small()
+                                    .ghost()
+                                    .with_icon(IconName::Spark)
+                                    .disabled(self.busy(self.current))
+                                    .tooltip("The assistant looks at the video and fixes overlapping or cut-off text")
+                                    .on_click(click(cx, |this, _, cx| {
+                                        let v = this.current;
+                                        this.review_look(v, false, cx);
+                                    })),
+                            )
+                        })
+                        .when(has_scripts, |d| {
                             let (style, output) = self.video_setting_menus(("strip-style", "strip-output"), true, cx);
-                            d.child(style).child(output).child(self.watermark_menu("strip-watermark", true, cx))
+                            d.child(style).child(output).child(self.slides_menu("strip-slides", true, cx)).child(self.watermark_menu("strip-watermark", true, cx))
                         }),
                 )
                 .child(
@@ -419,25 +477,9 @@ impl Workspace {
                         .gap(px(8.))
                         .px(px(10.))
                         .pb(px(10.))
-                        .children(cards)
-                        .child(
-                            div()
-                                .id("add-scene").transitions(studio_ui::motion::hovers)
-                                .flex_none()
-                                .w(px(60.))
-                                .rounded(radius::CARD)
-                                .border_1()
-                                .border_color(t.line_strong)
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .cursor_pointer()
-                                .bg(t.surface_2.opacity(0.))
-                                .hover_style(|s| s.bg(t.surface_2))
-                                .tooltip(studio_ui::components::Tooltip::text("Ask the assistant for another scene"))
-                                .on_click(cx.listener(|this, _, window, cx| this.ask_for_new_scene(window, cx)))
-                                .child(Icon::new(IconName::Plus).color(t.fg_3)),
-                        ),
+                        .children(front)
+                        .child(add)
+                        .children(last)
                 ),
         )
     }
@@ -492,7 +534,7 @@ impl Workspace {
             .iter()
             .find(|j| j.video == self.current && j.status.active())
             .map(|j| match &j.status {
-                crate::model::JobStatus::Rendering { scene, of } => format!("Making scene {scene} of {of}"),
+                crate::model::JobStatus::Rendering { .. } => "Saving your video".to_string(),
                 crate::model::JobStatus::Exporting => "Finishing up".to_string(),
                 crate::model::JobStatus::Waiting(n) => format!("Waiting in queue · #{n}"),
                 _ => "Saving the video".to_string(),
@@ -583,12 +625,12 @@ impl Workspace {
                                 .flex_col()
                                 .gap(px(6.))
                                 .pt(px(8.))
-                                .child(strong(if has_scripts { "Ask for a change" } else { "Nothing built yet" }))
+                                .child(strong(if has_scripts { "Ask for a change" } else { "Nothing created yet" }))
                                 .child(faint(
                                     if has_scripts {
-                                        "Pick a scene below, then describe what to change: “slow this down”, “label the axes”, “make the question harder”. Only that scene is sent, so turns stay small."
+                                        "Describe what to change: “slow this down”, “label the axes”, “make the question harder”. It changes the chapter you have selected; switch to Whole video to change anything."
                                     } else {
-                                        "Approve the storyboard to build the scenes."
+                                        "Approve the script to create the video."
                                     },
                                     cx,
                                 )),
@@ -611,6 +653,23 @@ impl Workspace {
                     .border_color(t.line_strong)
                     .cursor_text()
                     .on_mouse_down(gpui::MouseButton::Left, crate::app::focus_on_click(&self.chat_input))
+                    // What the next request changes: the selected scene, or anything.
+                    .when(has_scripts, |d| {
+                        let n = self.scene.min(self.video().scenes.len().saturating_sub(1)) + 1;
+                        d.child(
+                            div().flex().items_center().child(
+                                Segmented::new(
+                                    "edit-scope",
+                                    vec![Segment::new(format!("Chapter {n} only")), Segment::new("Whole video")],
+                                    usize::from(self.edit_whole),
+                                )
+                                .on_select(with_value(cx, |this, i: usize, _, cx| {
+                                    this.edit_whole = i == 1;
+                                    cx.notify();
+                                })),
+                            ),
+                        )
+                    })
                     .child(self.chat_input.clone())
                     .child(
                         div()
@@ -762,7 +821,7 @@ impl Workspace {
                     )
                 }
             }))
-            .child(faint("Click a line to edit it. Each scene lasts at least as long as its narration.", cx).mt(px(4.)))
+            .child(faint("Click a line to edit it. Each chapter lasts at least as long as its narration.", cx).mt(px(4.)))
             .into_any_element()
     }
 

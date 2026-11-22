@@ -1,4 +1,4 @@
-use crate::app::{Workspace, faint, num, stage_image, still_image, strong};
+use crate::app::{Progress, Workspace, faint, num, progress_tile, still_image, strong};
 use crate::model::{JobStatus, Still};
 use gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
@@ -45,7 +45,7 @@ impl Workspace {
             .map(|(i, j)| {
                 let active = matches!(j.status, JobStatus::Rendering { .. } | JobStatus::Exporting);
                 let status: AnyElement = match &j.status {
-                    JobStatus::Rendering { scene, of } => div()
+                    JobStatus::Rendering { .. } => div()
                         .flex()
                         .flex_col()
                         .gap(px(6.))
@@ -57,7 +57,7 @@ impl Workspace {
                                 .gap(px(8.))
                                 .text_color(t.fg)
                                 .child(Dot::new(Tone::Signal))
-                                .child(format!("Making scene {scene} of {of}"))
+                                .child("Saving your video".to_string())
                                 .child(div().flex_1())
                                 .child(num(format!("{}%", (j.progress * 100.) as u32)).text_size(text::SMALL).text_color(t.fg_3)),
                         )
@@ -72,9 +72,14 @@ impl Workspace {
                     other => Self::render_chip_for(other).into_any_element(),
                 };
                 let detail = j.project.clone();
-                let picture: AnyElement = match &j.thumb {
-                    Some(Still(img)) => still_image(img.clone()).into_any_element(),
-                    None => stage_image(j.art).into_any_element(),
+                // While a video is being saved its old picture says nothing: show how far it is.
+                let picture: AnyElement = match (&j.thumb, j.status.active()) {
+                    (_, true) => {
+                        let p = self.video_progress(j.video).unwrap_or(Progress { fraction: Some(j.progress), label: String::new() });
+                        progress_tile(&p, true, ("job-progress", i), cx)
+                    }
+                    (Some(Still(img)), _) => still_image(img.clone()).into_any_element(),
+                    (None, _) => crate::app::empty_tile("", "", true, None, cx),
                 };
                 let id = j.id;
                 let action = match (&j.status, &j.path) {

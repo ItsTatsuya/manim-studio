@@ -167,6 +167,10 @@ pub struct Workspace {
     pub current: (usize, usize),
     pub mode: Mode,
     pub scene: usize,
+    /// The next chat request may change any scene, not only the selected one.
+    pub edit_whole: bool,
+    /// Videos whose creation already had its visual review (so a repair after it does not start another).
+    pub reviewed: std::collections::HashSet<(usize, usize)>,
     pub right_tab: RightTab,
     pub playing: bool,
     pub playhead: f32,
@@ -290,11 +294,11 @@ impl Workspace {
             .submit_empty(true)
         });
         let chat_input = cx.new(|cx| {
-            TextInput::new("Ask for a change. Use @ to pick a scene.", window, cx).lines(2, 8)
+            TextInput::new("Ask for a change. Use @ to pick a chapter.", window, cx).lines(2, 8)
         });
         let revise_input = cx.new(|cx| {
             TextInput::new(
-                "Tell the assistant what to change, e.g. “merge scenes 1 and 2”. Revisions only rewrite the plan.",
+                "Tell the assistant what to change, e.g. “merge chapters 1 and 2”. Revisions only rewrite the script.",
                 window,
                 cx,
             )
@@ -312,7 +316,7 @@ impl Workspace {
             i
         });
         // Enter on an empty line saves it empty (a scene without narration).
-        let narration_input = cx.new(|cx| TextInput::new("What the narrator says in this scene", window, cx).lines(2, 8).submit_empty(true));
+        let narration_input = cx.new(|cx| TextInput::new("What the narrator says in this chapter", window, cx).lines(2, 8).submit_empty(true));
         let watermark_input = cx.new(|cx| {
             let mut i = TextInput::new("e.g. Ms. Rao · Grade 8 Science", window, cx).lines(1, 1);
             i.set_text(prefs.watermark.text.clone(), cx);
@@ -424,6 +428,8 @@ impl Workspace {
             current,
             mode: Mode::Studio,
             scene: 0,
+            edit_whole: false,
+            reviewed: Default::default(),
             right_tab: RightTab::Assistant,
             playing: false,
             playhead: 0.,
@@ -568,7 +574,7 @@ impl Workspace {
             }
             _ => {}
         }
-        // `STUDIO_DEMO=menu|folder-menu|confirm|working|empty-folder` forces a transient state for screenshots.
+        // `STUDIO_DEMO=menu|folder-menu|confirm|working|building|saving|empty-folder` forces a transient state for screenshots.
         if let Ok(demo) = std::env::var("STUDIO_DEMO") {
             use crate::manage::RowTarget;
             match demo.as_str() {
@@ -580,7 +586,7 @@ impl Workspace {
                     self.confirm = Some(crate::manage::Confirm {
                         target: RowTarget::Video(self.current.0, self.current.1),
                         title: format!("Delete “{}”?", self.video().title),
-                        body: "The video, its scenes, narration and exports move to the Recycle Bin.".into(),
+                        body: "The video, its chapters, narration and exports move to the Recycle Bin.".into(),
                         action: "Delete video",
                     })
                 }
@@ -592,6 +598,29 @@ impl Workspace {
                         since: Instant::now() - Duration::from_secs(42),
                         progress: Some((2, 6)),
                     }));
+                }
+                "building" => {
+                    let (pi, vi) = self.current;
+                    let v = &mut self.projects[pi].videos[vi];
+                    v.busy = Some(model::Busy::Building);
+                    v.chat.push(Msg::Working(model::Working { label: "Creating scenes".into(), since: Instant::now(), progress: Some((2, 6)) }));
+                }
+                "saving" => {
+                    let v = &self.projects[self.current.0].videos[self.current.1];
+                    self.jobs.push(RenderJob {
+                        id: 0,
+                        title: v.title.clone(),
+                        project: self.projects[self.current.0].name.clone(),
+                        output: "1080p · 30".into(),
+                        status: JobStatus::Rendering { scene: 2, of: 5 },
+                        thumb: v.cover_still(),
+                        time: "—".into(),
+                        progress: 0.42,
+                        video: self.current,
+                        path: None,
+                        cached: 0,
+                        rendered: 0,
+                    });
                 }
                 _ => {}
             }
@@ -952,6 +981,39 @@ impl Workspace {
         }
     }
 
+    /// The chapter whose narration is being played from the script, if it still is.
+    pub fn listening_to(&self) -> Option<usize> {
+        let a = self.audio.as_ref().filter(|a| a.is_playing())?;
+        let (video, scene, _) = a.current.as_ref()?;
+        (*video == self.current).then_some(*scene)
+    }
+
+    /// Play (or stop) chapter `i`'s narration from the script page.
+    pub fn listen_to(&mut self, i: usize, cx: &mut Context<Self>) {
+        let key = (self.current, i);
+        let wav = self.video().scenes.get(i).and_then(|s| s.engine.voice.as_ref()).map(|v| (v.wav.clone(), v.seconds));
+        let Some(audio) = &mut self.audio else {
+            self.notice = Some("Couldn't play sound: no audio device was found.".into());
+            cx.notify();
+            return;
+        };
+        let was_playing = audio.is_playing() && audio.current.as_ref().is_some_and(|(v, s, _)| (*v, *s) == key);
+        audio.stop();
+        if was_playing {
+            cx.notify();
+            return;
+        }
+        let Some((wav, seconds)) = wav else { return };
+        audio.play_full(key, &wav);
+        // The button goes back to "Listen" when the line ends.
+        cx.spawn(async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            cx.background_executor().timer(Duration::from_secs_f32(seconds + 0.3)).await;
+            this.update(cx, |_, cx| cx.notify()).ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
     /// Start editing scene `i`'s narration line.
     pub fn edit_narration_line(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(text) = self.video().scenes.get(i).map(|s| s.say.clone()) else { return };
@@ -1155,6 +1217,84 @@ pub fn style_image(ws: &Workspace, i: usize, art: studio_ui::assets::Art) -> Any
         Some(model::Still(img)) => still_image(img).into_any_element(),
         None => stage_image(art).into_any_element(),
     }
+}
+
+/// Stands where a picture of the video would be before there is one, instead of a
+/// picture of something else. `small` (a list thumbnail) shows only the mark.
+pub fn empty_tile(title: &str, body: &str, small: bool, action: Option<AnyElement>, cx: &App) -> AnyElement {
+    let t = cx.theme();
+    div()
+        .size_full()
+        .bg(if small { t.surface_3 } else { t.stage })
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(8.))
+        .px(px(16.))
+        .child(Icon::new(IconName::Film).color(t.fg_3))
+        .when(!small, |d| {
+            d.child(div().text_color(t.fg).font_weight(FontWeight::MEDIUM).child(title.to_string()))
+                .child(div().max_w(px(360.)).text_center().text_size(text::SMALL).text_color(t.fg_2).child(body.to_string()))
+                .children(action)
+        })
+        .into_any_element()
+}
+
+/// How far a video's creation or saving has got, shown in place of a picture of it (a
+/// picture would be of the previous version). `fraction` is `None` when no figure is known.
+pub struct Progress {
+    pub fraction: Option<f32>,
+    pub label: String,
+}
+
+impl Workspace {
+    /// Where `video` is in being saved (its render job) or created (scenes being written).
+    pub fn video_progress(&self, video: (usize, usize)) -> Option<Progress> {
+        if let Some(j) = self.jobs.iter().find(|j| j.video == video && j.status.active()) {
+            return Some(match &j.status {
+                JobStatus::Rendering { .. } => Progress { fraction: Some(j.progress), label: "Saving the video".into() },
+                JobStatus::Waiting(n) => Progress { fraction: None, label: format!("Waiting in the queue · #{n}") },
+                _ => Progress { fraction: None, label: "Finishing up".into() },
+            });
+        }
+        let v = self.projects.get(video.0)?.videos.get(video.1)?;
+        if v.busy == Some(model::Busy::Building) {
+            let done = v.chat.iter().find_map(|m| match m {
+                Msg::Working(w) => w.progress,
+                _ => None,
+            });
+            return Some(match done {
+                Some((d, of)) if of > 0 => Progress { fraction: Some(d as f32 / of as f32), label: format!("Creating chapters · {d} of {of}") },
+                _ => Progress { fraction: None, label: "Creating the video".into() },
+            });
+        }
+        None
+    }
+}
+
+/// The tile for a [`Progress`]. `small` (a list thumbnail) drops the words.
+pub fn progress_tile(p: &Progress, small: bool, id: impl Into<gpui::ElementId>, cx: &App) -> AnyElement {
+    let t = cx.theme();
+    let id = id.into();
+    div()
+        .size_full()
+        .bg(t.stage)
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(if small { 4. } else { 8. }))
+        .px(px(if small { 6. } else { 16. }))
+        .when_some(p.fraction, |d, f| {
+            d.child(num(format!("{}%", (f * 100.).round() as u32)).text_size(if small { text::SMALL } else { px(22.) }).text_color(t.fg))
+        })
+        .when(!small, |d| d.child(div().text_size(text::SMALL).text_color(t.fg_2).child(p.label.clone())))
+        .child(div().w_full().child(match p.fraction {
+            Some(f) => studio_ui::components::ProgressBar::new(f).animated(id),
+            None => studio_ui::components::ProgressBar::indeterminate(id),
+        }))
+        .into_any_element()
 }
 
 /// A scene's engine thumbnail when it has one. A scripted scene without one is still
@@ -1497,8 +1637,8 @@ impl Workspace {
 
     pub fn render_chip_for(status: &JobStatus) -> Chip {
         match status {
-            JobStatus::Rendering { scene, of } => {
-                Chip::new(format!("Making scene {scene} / {of}")).tone(Tone::Signal)
+            JobStatus::Rendering { .. } => {
+                Chip::new("Saving").tone(Tone::Signal)
             }
             JobStatus::Exporting => Chip::new("Finishing up").tone(Tone::Signal),
             JobStatus::Waiting(n) => Chip::new(format!("Waiting · #{n}")),
@@ -1526,8 +1666,8 @@ impl Workspace {
         Segmented::new(
             "mode",
             vec![
-                Segment::new("Storyboard").icon(IconName::Board),
-                Segment::new("Studio").icon(IconName::Film),
+                Segment::new("Script").icon(IconName::Board),
+                Segment::new("Video").icon(IconName::Film),
                 Segment::new("Code").icon(IconName::Script),
             ],
             selected,

@@ -218,7 +218,7 @@ impl Workspace {
                 Confirm {
                     target,
                     title: format!("Delete “{}”?", v.title),
-                    body: "The video, its scenes, narration and exports move to the Recycle Bin.".into(),
+                    body: "The video, its chapters, narration and exports move to the Recycle Bin.".into(),
                     action: "Delete video",
                 }
             }

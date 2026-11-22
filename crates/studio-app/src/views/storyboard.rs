@@ -15,21 +15,55 @@ impl Workspace {
         let video = self.video();
         let busy = video.busy.clone();
         let planning = matches!(busy, Some(crate::model::Busy::Planning) | Some(crate::model::Busy::Revising));
+        let editing = self.editing_line;
+        let listening = self.listening_to();
         let beats: Vec<_> = video.scenes.iter().enumerate().map(|(i, s)| {
-            let on = i == self.scene;
+            let plain = s.plain_visual().map(str::to_string);
+            let has_voice = s.engine.voice.is_some() && self.prefs.narration;
+            let is_listening = listening == Some(i);
+            let narration: AnyElement = if editing == Some(i) {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .px(px(8.))
+                            .py(px(6.))
+                            .rounded(radius::CONTROL)
+                            .bg(t.surface)
+                            .border_1()
+                            .border_color(t.line_strong)
+                            .child(self.narration_input.clone()),
+                    )
+                    .child(faint("Enter saves · Esc cancels", cx).text_size(text::CAPS))
+                    .into_any_element()
+            } else {
+                div()
+                    .id(("beat-say", i))
+                    .px(px(8.))
+                    .py(px(6.))
+                    .mx(px(-8.))
+                    .rounded(radius::CONTROL)
+                    .line_height(px(21.))
+                    .text_color(t.fg)
+                    .cursor_pointer()
+                    .hover_style(|s| s.bg(t.surface_3))
+                    .tooltip(studio_ui::components::Tooltip::text("Click to edit what is said"))
+                    .on_click(cx.listener(move |this, _, window, cx| this.edit_narration_line(i, window, cx)))
+                    .child(if s.say.trim().is_empty() { "Nothing is said in this chapter. Click to write it.".to_string() } else { s.say.clone() })
+                    .into_any_element()
+            };
             div()
                 .id(("beat", i))
                 .flex()
                 .items_start()
                 .gap(px(16.))
-                .p(px(12.))
+                .p(px(14.))
                 .rounded(radius::PANEL)
                 .bg(t.surface_2)
                 .border_1()
-                .border_color(if on { t.fg_3 } else { t.line })
-                .cursor_pointer()
-                .when(!on, |d| d.hover_style(|s| s.border_color(t.line_strong)))
-                .on_click(click(cx, move |this, _, cx| this.seek_scene(i, cx)))
+                .border_color(t.line)
                 .child(
                     div()
                         .size(px(26.))
@@ -42,7 +76,8 @@ impl Workspace {
                         .text_size(text::SMALL)
                         .child(strong((i + 1).to_string())),
                 )
-                .when(!compact, |d| {
+                // Once the video exists, the chapter's picture; before that there is none to show.
+                .when(!compact && s.engine.thumb.is_some(), |d| {
                     d.child(
                         div()
                             .w(px(170.))
@@ -59,13 +94,40 @@ impl Workspace {
                         .min_w_0()
                         .flex()
                         .flex_col()
-                        .gap(px(4.))
-                        .child(title(s.title.clone()).text_size(px(14.)))
-                        .child(sub(format!("“{}”", s.say), cx))
-                        .child(faint(s.visual.clone(), cx))
-                        .when_some(s.note.clone(), |d, n| d.child(div().flex().mt(px(4.)).child(Chip::new(n).tone(Tone::Signal)))),
+                        .gap(px(6.))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(10.))
+                                .child(title(s.title.clone()).text_size(px(15.)))
+                                .child(div().flex_1())
+                                .when(!planning, |d| {
+                                    d.child(
+                                        Button::new(("listen", i), if is_listening { "Stop" } else { "Listen" })
+                                            .small()
+                                            .ghost()
+                                            .with_icon(if is_listening { IconName::Stop } else { IconName::Play })
+                                            .disabled(!has_voice)
+                                            .tooltip(if has_voice { "Hear this part read aloud" } else { "Narration is off or still being prepared" })
+                                            .on_click(click(cx, move |this, _, cx| this.listen_to(i, cx))),
+                                    )
+                                })
+                                .child(num(format_short(s.seconds)).text_color(t.fg_3).flex_none()),
+                        )
+                        .child(narration)
+                        .when_some(plain, |d, p| {
+                            d.child(
+                                div()
+                                    .flex()
+                                    .gap(px(8.))
+                                    .text_size(text::SMALL)
+                                    .child(div().flex_none().text_color(t.fg_3).child("On screen"))
+                                    .child(div().flex_1().min_w_0().text_color(t.fg_2).child(p)),
+                            )
+                        })
+                        .when_some(s.note.clone(), |d, n| d.child(div().flex().mt(px(2.)).child(Chip::new(n).tone(Tone::Signal)))),
                 )
-                .child(num(format_short(s.seconds)).text_color(t.fg_3).flex_none())
         }).collect();
         // While the plan is being written: what was asked, and skeleton beats.
         let skeleton = (planning && beats.is_empty()).then(|| {
@@ -91,7 +153,7 @@ impl Workspace {
                 Some((i, provider, raw)) => self.problem_card(i, provider, &raw, true, cx),
                 // Saved by an older version, or the plan came back unreadable.
                 None => {
-                    let reason = self.last_error(video).unwrap_or_else(|| "The assistant stopped before the storyboard was written.".into());
+                    let reason = self.last_error(video).unwrap_or_else(|| "The assistant stopped before the script was written.".into());
                     div()
                         .flex()
                         .flex_col()
@@ -101,7 +163,7 @@ impl Workspace {
                         .bg(t.surface_2)
                         .border_1()
                         .border_color(t.line_strong)
-                        .child(strong("The storyboard couldn't be written"))
+                        .child(strong("The script couldn't be written"))
                         .child(sub(reason, cx))
                         .child(
                             div().child(
@@ -154,7 +216,7 @@ impl Workspace {
                             .child(display(video.title.clone()).text_size(px(22.)).line_height(px(28.)))
                             .child(faint(
                                 [
-                                    Some(format!("{} scenes", video.scenes.len())),
+                                    Some(format!("{} chapters", video.scenes.len())),
                                     Some(format!("about {}", format_short(video.seconds()))),
                                     (!video.grade.trim().is_empty()).then(|| video.grade.clone()),
                                 ]
@@ -229,13 +291,13 @@ impl Workspace {
             .child(
                 section()
                     .gap(px(4.))
-                    .child(title("Before you build").text_size(px(14.)))
-                    .child(faint("The storyboard is a cheap plan. Code is written only after you approve it.", cx)),
+                    .child(title("Before you create the video").text_size(px(14.)))
+                    .child(faint("This is only the script, and it costs very little. Read it, listen to it and change what you like. The video is created when you press Create video.", cx)),
             )
             .child(
                 section()
                     .gap(px(6.))
-                    .child(caps("Estimated build", cx))
+                    .child(caps("Estimated cost to create", cx))
                     .child(
                         div()
                             .flex()
@@ -253,7 +315,8 @@ impl Workspace {
                     .child(kv_el("Output", output_menu.into_any_element()))
                     .child(kv("Captions", crate::engine::CAPTIONS[self.prefs.captions.min(2)].to_string()))
                     .child(kv_el("Watermark", self.watermark_menu("sb-watermark", false, cx).into_any_element()))
-                    .child(kv("Model", format!("{} for build", self.prefs.build_tier.model(self.default_provider)))),
+                    .child(kv_el("Lecture slides", self.slides_menu("sb-slides", false, cx).into_any_element()))
+                    .child(kv("Model", format!("{} creates the video", self.prefs.build_tier.model(self.default_provider)))),
             )
             .child(
                 div()

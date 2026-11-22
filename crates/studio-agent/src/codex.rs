@@ -22,6 +22,9 @@ pub fn command(exe: &Path, req: &TurnRequest) -> Command {
         cmd.args(["resume", id]);
     }
     cmd.args(["--json", "--skip-git-repo-check"]);
+    for image in &req.images {
+        cmd.arg("--image").arg(image);
+    }
     cmd.args(["--sandbox", if req.tools.is_empty() { "read-only" } else { "workspace-write" }]);
     if let Some(m) = req.model {
         cmd.args(["--model", m]);

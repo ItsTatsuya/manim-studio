@@ -116,10 +116,10 @@ pub fn scenes_for(dir: &Path, storyboard: Option<&Storyboard>, notes: &[Option<S
     (0..n)
         .map(|i| {
             let mut s = match beats.get(i) {
-                Some(b) => Scene::from_beat(i, b),
+                Some(b) => Scene::from_beat(b),
                 None => {
                     let stem = files[i].file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-                    Scene::from_beat(i, &studio_agent::prompt::Beat { title: humanize(&stem), say: String::new(), visual: String::new(), seconds: 10 })
+                    Scene::from_beat(&studio_agent::prompt::Beat { title: humanize(&stem), say: String::new(), visual: String::new(), show: String::new(), seconds: 10 })
                 }
             };
             s.engine = SceneEngine { file: files.get(i).cloned(), ..Default::default() };

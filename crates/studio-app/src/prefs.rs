@@ -58,6 +58,8 @@ pub struct Prefs {
     pub show_usage: bool,
     pub house_style: usize,
     pub auto_render: bool,
+    /// After creating a video, the assistant looks at frames of it and fixes what looks wrong.
+    pub visual_review: bool,
     pub update_channel: usize,
     /// The assistant new videos use ("claude" / "codex").
     pub default_provider: String,
@@ -95,6 +97,8 @@ pub struct Prefs {
     pub voice_model: usize,
     /// 0 off, 1 .srt file, 2 burned in + .srt.
     pub captions: usize,
+    /// Lecture slides saved with each video: index into `engine::SLIDES`.
+    pub slides: usize,
     /// Last update check (Unix seconds).
     pub last_update_check: Option<u64>,
     /// Set when the teacher rolls back: that version, and anything older, isn't offered
@@ -153,6 +157,8 @@ impl Default for Prefs {
             watermark: WatermarkPrefs::default(),
             voice_model: 0,
             captions: 1,
+            slides: 0,
+            visual_review: true,
             last_update_check: None,
             skipped_version: None,
         }

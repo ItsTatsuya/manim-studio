@@ -28,12 +28,15 @@ pub enum TurnKind {
     /// Repair scene index `scene`, attempt `k`. `build`: the repairs follow a build (so
     /// when they finish, the studio opens and the render can start).
     Repair { scene: usize, k: u8, build: bool },
+    /// The assistant looks at frames of the video and fixes what looks wrong. `build`: it
+    /// follows a build (so when it ends, the studio opens and the render can start).
+    Review { build: bool },
 }
 
 impl TurnKind {
     /// A build, or the repairs that follow one.
     fn is_build(&self) -> bool {
-        matches!(self, TurnKind::Build | TurnKind::Repair { build: true, .. })
+        matches!(self, TurnKind::Build | TurnKind::Repair { build: true, .. } | TurnKind::Review { build: true })
     }
 }
 
@@ -387,6 +390,7 @@ impl Workspace {
                 TurnKind::Build => Busy::Building,
                 TurnKind::Edit => Busy::Editing,
                 TurnKind::Repair { scene, k, .. } => Busy::Fixing { scene: scene + 1, k, of: k },
+                TurnKind::Review { .. } => Busy::Reviewing,
             });
             if spec.kind == TurnKind::Build {
                 v.status = VideoStatus::Building;
@@ -408,7 +412,6 @@ impl Workspace {
         self.providers.iter().find(|p| p.provider != provider && p.signed_in).map(|p| p.provider)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn start_turn(
         &mut self,
         video: (usize, usize),
@@ -416,6 +419,21 @@ impl Workspace {
         prompt_text: String,
         planning: bool,
         effort: Option<Effort>,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_turn_with(video, kind, prompt_text, planning, effort, Vec::new(), cx);
+    }
+
+    /// `images`: pictures the assistant is to look at (the visual review).
+    #[allow(clippy::too_many_arguments)]
+    fn start_turn_with(
+        &mut self,
+        video: (usize, usize),
+        kind: TurnKind,
+        prompt_text: String,
+        planning: bool,
+        effort: Option<Effort>,
+        images: Vec<PathBuf>,
         cx: &mut Context<Self>,
     ) {
         let build = kind.is_build();
@@ -442,7 +460,7 @@ impl Workspace {
                         if this.checking_providers() {
                             this.fail_early(video, build, "Still checking which assistants are connected. Try again in a moment.".into(), cx);
                         } else {
-                            this.start_turn(video, kind, prompt_text, planning, effort, cx);
+                            this.start_turn_with(video, kind, prompt_text, planning, effort, images, cx);
                         }
                     })
                     .ok();
@@ -494,6 +512,7 @@ impl Workspace {
             resume,
             tools: if planning { vec![] } else { EDIT_TOOLS.to_vec() },
             ephemeral: planning,
+            images,
         };
         if let Some(v) = self.video_mut(video) {
             v.resume_next = false;
@@ -547,7 +566,15 @@ impl Workspace {
     pub fn ask_for_new_scene(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
         self.right_tab = crate::app::RightTab::Assistant;
         let n = self.video().scenes.len();
-        self.chat_input.update(cx, |i, cx| i.set_text(format!("Add a scene {} after scene {n} that ", n + 1), cx));
+        // A new chapter is a change to the whole video, not to the selected chapter.
+        self.edit_whole = true;
+        // The last chapter is the ending: the new one goes before it.
+        let text = if n > 1 {
+            format!("Add a chapter between chapter {} and chapter {n} (the ending) that ", n - 1)
+        } else {
+            "Add a chapter after chapter 1 that ".to_string()
+        };
+        self.chat_input.update(cx, |i, cx| i.set_text(text, cx));
         let handle = gpui::Focusable::focus_handle(self.chat_input.read(cx), cx);
         window.focus(&handle, cx);
         cx.notify();
@@ -592,7 +619,7 @@ impl Workspace {
                     match kind {
                         TurnKind::Build => {
                             let of = self.projects[video.0].videos[video.1].storyboard.as_ref().map_or(0, |s| s.scenes.len());
-                            self.set_working_progress(video, Some("Writing scenes".into()), (of > 0).then_some((done.min(of), of)));
+                            self.set_working_progress(video, Some("Creating chapters".into()), (of > 0).then_some((done.min(of), of)));
                         }
                         TurnKind::Repair { .. } => {}
                         _ => self.set_working(video, Some("Editing".into())),
@@ -700,7 +727,7 @@ impl Workspace {
                                 let notes: Vec<Option<String>> = old.iter().map(|s| s.note.clone()).collect();
                                 store::scenes_for(&dir, Some(&sb), &notes)
                             }
-                            None => sb.scenes.iter().enumerate().map(|(i, b)| crate::model::Scene::from_beat(i, b)).collect(),
+                            None => sb.scenes.iter().map(crate::model::Scene::from_beat).collect(),
                         };
                         let leftover = carry_engine(&mut v.scenes, old);
                         let scene_count = v.scenes.len();
@@ -713,7 +740,7 @@ impl Workspace {
                         v.updated = store::now();
                         refresh_voice = true;
                         if let Some(u) = usage {
-                            v.chat.push(Msg::Usage(format!("Storyboard · {u}")));
+                            v.chat.push(Msg::Usage(format!("Script · {u}")));
                         }
                     }
                     Err(e) => {
@@ -723,7 +750,7 @@ impl Workspace {
                             text: format!("The plan didn't come back in the right shape ({e}). Try again."),
                             meta: String::new(),
                         });
-                        self.notice = Some("The storyboard didn't come back in the right shape. Try again or revise the request.".into());
+                        self.notice = Some("The script didn't come back in the right shape. Try again or revise the request.".into());
                     }
                 }
                 self.persist(video);
@@ -731,7 +758,7 @@ impl Workspace {
                     self.refresh_voice(video, cx);
                 }
             }
-            TurnKind::Build | TurnKind::Edit | TurnKind::Repair { .. } => {
+            TurnKind::Build | TurnKind::Edit | TurnKind::Repair { .. } | TurnKind::Review { .. } => {
                 if let Some(u) = usage {
                     self.push_msg(video, Msg::Usage(u));
                 }
@@ -812,7 +839,7 @@ impl Workspace {
             self.finish_assistant_work_with(video, kind, true, !changed.is_empty(), cx);
             return;
         }
-        self.set_working(video, Some(format!("Checking {} scene{}", targets.len(), if targets.len() == 1 { "" } else { "s" })));
+        self.set_working(video, Some(format!("Checking {} chapter{}", targets.len(), if targets.len() == 1 { "" } else { "s" })));
         cx.notify();
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let results = cx
@@ -883,7 +910,7 @@ impl Workspace {
                         excerpt: prompt::repair_excerpt(path, *line).or_else(|| prompt::layout_excerpt(path, msg)),
                     })
                     .collect();
-                let what = if list.len() == 1 { format!("scene {}", scene + 1) } else { format!("{} scenes", list.len()) };
+                let what = if list.len() == 1 { format!("chapter {}", scene + 1) } else { format!("{} chapters", list.len()) };
                 let base = self.prefs.build_reasoning.effort(Some(Effort::High));
                 let effort = if self.prefs.escalate_repairs && attempt > 1 {
                     Some(base.unwrap_or(Effort::Medium).raise())
@@ -900,9 +927,9 @@ impl Workspace {
             // Out of tries: one plain sentence instead of a row per check.
             let names: Vec<String> = failures.iter().map(|(i, ..)| (i + 1).to_string()).collect();
             let text = match names.as_slice() {
-                [one] => format!("Scene {one} still has a problem: {}. Open Code to see it, or describe the fix.", failures[0].2),
+                [one] => format!("Chapter {one} still has a problem: {}. Open Code to see it, or describe the fix.", failures[0].2),
                 many => format!(
-                    "Scenes {} and {} still have problems. Open Code to see them, or describe the fix.",
+                    "Chapters {} and {} still have problems. Open Code to see them, or describe the fix.",
                     many[..many.len() - 1].join(", "),
                     many[many.len() - 1]
                 ),
@@ -911,7 +938,105 @@ impl Workspace {
             self.finish_assistant_work(video, kind, false, cx);
             return;
         }
+        // A video that was just created gets a look-over before it is called done.
+        if self.prefs.visual_review && kind.is_build() && !self.reviewed.contains(&video) {
+            return self.review_look(video, true, cx);
+        }
         self.finish_assistant_work(video, kind, true, cx);
+    }
+
+    /// The visual review: draw frames of each chapter, then ask the assistant to look at
+    /// them and fix what is wrong (overlapping or cut-off text, crowding). `build`: it
+    /// follows the creation of the video.
+    pub fn review_look(&mut self, video: (usize, usize), build: bool, cx: &mut Context<Self>) {
+        let kind = TurnKind::Review { build };
+        let v = &self.projects[video.0].videos[video.1];
+        let Some(dir) = v.dir.clone() else { return self.finish_assistant_work(video, kind, true, cx) };
+        let Some(ffmpeg) = studio_render::ffmpeg_path() else {
+            // Pictures need ffmpeg; without it the video is simply not looked over.
+            return self.finish_assistant_work(video, kind, true, cx);
+        };
+        let theme_json = studio_render::style::json(self.video_style(video)).to_string();
+        let jobs: Vec<(usize, PathBuf, OpenScene)> = v
+            .scenes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| {
+                let file = s.engine.file.clone()?;
+                let req = OpenScene {
+                    path: file.clone(),
+                    root: dir.clone(),
+                    theme_json: theme_json.clone(),
+                    scene: None,
+                    globals: vec![],
+                    narration: s.engine.voice.as_ref().map(|v| v.seconds as f64),
+                    narration_lines: s.engine.voice.as_ref().map(crate::model::VoiceLine::lines).unwrap_or_default(),
+                };
+                Some((i, file, req))
+            })
+            .collect();
+        if jobs.is_empty() {
+            return self.finish_assistant_work(video, kind, true, cx);
+        }
+        self.reviewed.insert(video);
+        if let Some(v) = self.video_mut(video) {
+            v.busy = Some(Busy::Reviewing);
+        }
+        self.set_working(video, Some("Checking how it looks".into()));
+        // The video is made: show it while it is looked over.
+        if video == self.current && build {
+            self.mode = Mode::Studio;
+            self.scene = 0;
+            self.stage.open = None;
+            self.sync_preview();
+        }
+        if build {
+            self.refresh_thumbs_for(video);
+        }
+        cx.notify();
+        let frames_dir = dir.join(".cache").join("review");
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let dir2 = dir.clone();
+            let made = cx
+                .background_executor()
+                .spawn(async move {
+                    let _ = std::fs::remove_dir_all(&frames_dir);
+                    std::fs::create_dir_all(&frames_dir).map_err(|e| format!("{e}"))?;
+                    let mut out: Vec<prompt::ReviewFrame> = Vec::new();
+                    for (i, file, req) in jobs {
+                        // A chapter that can't be drawn is the repair loop's business, not the review's.
+                        let Ok(frames) = studio_render::preview::review_frames(&req, studio_render::Output::new(1280, 720, 30.0)) else { continue };
+                        for (k, (at, frame)) in frames.into_iter().enumerate() {
+                            let img = frames_dir.join(format!("{:02}-{}.jpg", i + 1, k + 1));
+                            studio_render::slides::frame_to_jpeg(&ffmpeg, &frame, &img).map_err(|e| format!("{e:#}"))?;
+                            let rel = |p: &Path| p.strip_prefix(&dir2).unwrap_or(p).to_string_lossy().replace('\\', "/");
+                            out.push(prompt::ReviewFrame { image: rel(&img), file: rel(&file), chapter: i + 1, at });
+                        }
+                    }
+                    Ok::<_, String>(out)
+                })
+                .await;
+            this.update(cx, |this, cx| this.on_review_frames(video, build, made, cx)).ok();
+        })
+        .detach();
+    }
+
+    fn on_review_frames(&mut self, video: (usize, usize), build: bool, made: Result<Vec<prompt::ReviewFrame>, String>, cx: &mut Context<Self>) {
+        let kind = TurnKind::Review { build };
+        // Stopped, or the app moved on, while the pictures were drawn.
+        if !matches!(self.projects[video.0].videos[video.1].busy, Some(Busy::Reviewing)) {
+            return;
+        }
+        let frames = match made {
+            Ok(f) if !f.is_empty() => f,
+            // Nothing to look at, or the pictures could not be made: the video is still fine.
+            _ => return self.finish_assistant_work(video, kind, true, cx),
+        };
+        let dir = self.projects[video.0].videos[video.1].dir.clone().unwrap_or_default();
+        let images: Vec<PathBuf> = frames.iter().map(|f| dir.join(&f.image)).collect();
+        let effort = self.prefs.build_reasoning.effort(Some(Effort::Low));
+        self.set_working(video, Some("Checking how it looks".into()));
+        self.start_turn_with(video, kind, prompt::review(&frames), false, effort, images, cx);
     }
 
     fn finish_assistant_work(&mut self, video: (usize, usize), kind: TurnKind, ok: bool, cx: &mut Context<Self>) {
@@ -922,6 +1047,7 @@ impl Workspace {
     /// always reloads).
     fn finish_assistant_work_with(&mut self, video: (usize, usize), kind: TurnKind, ok: bool, reload: bool, cx: &mut Context<Self>) {
         self.set_working(video, None);
+        self.reviewed.remove(&video);
         let was_build = {
             let v = &mut self.projects[video.0].videos[video.1];
             // By what the turn was for, not the video's status: a render sets Building too.
@@ -1191,8 +1317,8 @@ impl Workspace {
         self.mode = Mode::Studio;
         self.right_tab = crate::app::RightTab::Assistant;
         let n = sb.scenes.len();
-        self.push_msg(video, Msg::User(format!("Build the storyboard ({n} scenes).")));
-        self.set_working_progress(video, Some("Writing scenes".into()), Some((0, n)));
+        self.push_msg(video, Msg::User(format!("Create the video from the script ({n} chapters).")));
+        self.set_working_progress(video, Some("Creating chapters".into()), Some((0, n)));
         let effort = self.prefs.build_reasoning.effort(self.auto_build_effort());
         self.start_turn(video, TurnKind::Build, prompt::build(&sb), false, effort, cx);
     }
@@ -1212,7 +1338,7 @@ impl Workspace {
             self.fail_early(video, true, "This video has no folder yet.".into(), cx);
             return true;
         }
-        let scope = v.scenes.get(self.scene).and_then(|s| {
+        let scope = v.scenes.get(self.scene).filter(|_| !self.edit_whole).and_then(|s| {
             let f = s.engine.file.as_ref()?;
             let rel = f.strip_prefix(v.dir.as_ref()?).ok()?.to_string_lossy().replace('\\', "/");
             Some((rel, format!("Scene {} · {}", self.scene + 1, s.title), s.say.clone()))
@@ -1236,8 +1362,8 @@ mod tests {
     use studio_agent::prompt::Beat;
 
     fn scene(say: &str, file: Option<&str>) -> Scene {
-        let beat = Beat { title: "t".into(), say: say.into(), visual: String::new(), seconds: 5 };
-        let mut s = Scene::from_beat(0, &beat);
+        let beat = Beat { title: "t".into(), say: say.into(), visual: String::new(), show: String::new(), seconds: 5 };
+        let mut s = Scene::from_beat(&beat);
         s.engine.file = file.map(Into::into);
         s
     }

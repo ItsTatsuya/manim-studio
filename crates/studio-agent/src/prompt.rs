@@ -214,8 +214,11 @@ pub struct Beat {
     pub title: String,
     /// What the narrator says.
     pub say: String,
-    /// What appears on screen.
+    /// What appears on screen, for the assistant that writes the scene (drawing terms).
     pub visual: String,
+    /// The same, in plain words for the teacher reading the script.
+    #[serde(default)]
+    pub show: String,
     pub seconds: u32,
 }
 
@@ -285,7 +288,7 @@ pub fn plan(o: &PlanOptions) -> String {
     p.push_str(&format!(
         r#"
 Reply with only this JSON:
-{{"title": "short video title", "grade": "e.g. Grade 8", "scenes": [{{"title": "scene title", "say": "the narration for this scene, in the teacher's voice", "visual": "what is drawn and animated, concretely", "seconds": 20}}]{notes}}}
+{{"title": "short video title", "grade": "e.g. Grade 8", "scenes": [{{"title": "scene title", "say": "the narration for this scene, in the teacher's voice", "show": "one plain sentence a teacher would use to say what the viewer sees, no code or drawing terms", "visual": "what is drawn and animated, concretely", "seconds": 20}}]{notes}}}
 Use {lo} to {hi} scenes. Start with a hook and build the idea with visuals that can be drawn with shapes, graphs, text and equations. {ending} Narration is read aloud by a voice: write it as speech ("pi r squared", "x over two"), no symbols, markup or LaTeX. The narration sets each scene's length, so it must fill the scene: about {wps} spoken words per second ("seconds": 20 means about {words20} words), talking through what appears on screen as it appears. The scenes are one continuous video: link each scene's narration to the one before it."#,
         lo = lo,
         hi = hi,
@@ -397,6 +400,36 @@ pub fn edit(request: &str, scope: Option<(&str, &str, &str)>, assets: &[String])
     if !assets.is_empty() {
         p.push_str(&format!("\nAssets available (ImageMobject / SVGMobject / addSound with these paths): {}", assets.join(", ")));
     }
+    p
+}
+
+/// One picture for the visual review: a frame of a chapter, and the script that draws it.
+pub struct ReviewFrame {
+    /// Path of the picture, relative to the video folder.
+    pub image: String,
+    /// Path of the chapter's script, relative to the video folder.
+    pub file: String,
+    pub chapter: usize,
+    /// Where in the chapter the frame is, in seconds.
+    pub at: f64,
+}
+
+/// Ask the assistant to look at how the finished chapters look and fix what is wrong. The
+/// frames are pictures it opens with its file reader.
+pub fn review(frames: &[ReviewFrame]) -> String {
+    let mut p = String::from(
+        "Look at how the video looks. Open each picture below (they are frames of the finished chapters, as a viewer sees them) and check:\n\
+- text overlapping other text, a drawing or a label\n\
+- anything cut off by, or touching, the edge of the frame\n\
+- text too small to read from the back of a classroom\n\
+- crowded or uneven spacing, or a label that is not next to what it labels\n\n",
+    );
+    for f in frames {
+        p.push_str(&format!("{}  chapter {} at {:.1} s  ({})\n", f.image, f.chapter, f.at, f.file));
+    }
+    p.push_str(
+        "\nFix each problem with the smallest change to that chapter's script file, placing things with the layout helpers (nextTo, arrange, buff, toEdge) instead of guessing coordinates. Leave the narration, timing and story as they are, and leave chapters that look clean alone. Reply with one sentence: what you fixed, or \"Looks clean.\"",
+    );
     p
 }
 

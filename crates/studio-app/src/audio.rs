@@ -54,6 +54,11 @@ impl Audio {
         self.current = Some((key.0, key.1, wav.to_path_buf()));
     }
 
+    /// Whether anything is still sounding (a finished sound leaves its sink behind).
+    pub fn is_playing(&self) -> bool {
+        self.sink.as_ref().is_some_and(|s| !s.empty())
+    }
+
     pub fn stop(&mut self) {
         if let Some(s) = self.sink.take() {
             s.stop();

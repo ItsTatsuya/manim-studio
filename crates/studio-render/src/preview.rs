@@ -644,6 +644,32 @@ fn render_clip(req: &OpenScene, output: Output, fps: f64) -> Result<Vec<Frame>> 
     })
 }
 
+/// Frames for the assistant to look at (the visual review): the scene's key moment, and
+/// its middle when that is a different picture. Each comes with its time in seconds.
+pub fn review_frames(req: &OpenScene, output: Output) -> Result<Vec<(f64, Frame)>> {
+    let req = req.clone();
+    std::thread::Builder::new()
+        .stack_size(STACK)
+        .spawn(move || {
+            crate::guard(|| {
+                let (host, _, timeline) = load(&req, output)?;
+                let key = thumbnail_time(&timeline).clamp(0.0, timeline.duration);
+                let mid = timeline.duration / 2.0;
+                let mut times = vec![key];
+                if (mid - key).abs() > 3.0 {
+                    times.insert(0, mid);
+                }
+                times
+                    .into_iter()
+                    .map(|t| Ok((t, Frame::from_rgba(output.width, output.height, host.frame_at(t)?))))
+                    .collect()
+            })
+        })
+        .context("spawning the review thread")?
+        .join()
+        .map_err(|_| anyhow!("the engine panicked"))?
+}
+
 /// Run a scene once (no frames) and return its timeline: duration, plays, markers and
 /// layout problems. The quick check before a render or after an assistant edit.
 pub fn check(req: &OpenScene) -> Result<TimelineInfo> {

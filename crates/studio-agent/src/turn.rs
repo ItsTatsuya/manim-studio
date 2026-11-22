@@ -33,6 +33,9 @@ pub struct TurnRequest {
     pub tools: Vec<&'static str>,
     /// Don't keep the conversation (one-off planning calls).
     pub ephemeral: bool,
+    /// Pictures the assistant is to look at (the visual review). Claude reads them from
+    /// the paths in the prompt; Codex is handed them with `--image`.
+    pub images: Vec<PathBuf>,
 }
 
 /// Lock a mutex even if a panicking thread poisoned it (the data is plain state).

@@ -49,7 +49,7 @@ fn main() -> Result<()> {
             println!("scene {}: {} sentences, {:.1} s of speech", i + 1, parts.len(), lines.iter().sum::<f64>());
             Some(Narration { wav: track.wav, seconds: track.seconds, text: say, parts: parts.into_iter().map(|p| (p.0, p.1)).collect() })
         };
-        scenes.push(SceneSpec { path, expected: None, narration });
+        scenes.push(SceneSpec { path, title: format!("Scene {}", i + 1), key_time: None, expected: None, narration });
     }
     let exe = std::env::current_exe()?;
     let engine = exe.parent().and_then(|p| p.parent()).map(|p| p.join(if cfg!(windows) { "studio-engine.exe" } else { "studio-engine" }));
@@ -70,12 +70,15 @@ fn main() -> Result<()> {
         fonts_dir: None,
         captions: Captions::Srt,
         watermark: None,
+        title: "Headless render".into(),
+        slides: studio_render::slides::Formats { pdf: true, pptx: true },
     });
     while let Ok(ev) = queue.events().recv_blocking() {
         match ev {
             QueueEvent::Scene { index, of, cached, .. } => println!("scene {}/{of}{}", index + 1, if cached { " (cached)" } else { "" }),
-            QueueEvent::Done { path, duration, elapsed, .. } => {
+            QueueEvent::Done { path, duration, elapsed, slides, slides_problem, .. } => {
                 println!("done: {} ({duration:.1} s video in {:.0} s)", path.display(), elapsed.as_secs_f64());
+                println!("slides: {slides:?} {slides_problem:?}");
                 return Ok(());
             }
             QueueEvent::Failed { error, scene, .. } => anyhow::bail!("scene {scene:?}: {error}"),

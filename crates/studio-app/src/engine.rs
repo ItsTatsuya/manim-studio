@@ -115,6 +115,13 @@ pub const OUTPUTS: [(&str, Output); 5] = [
 pub const BACKENDS: [(&str, Backend); 3] = [("Automatic", Backend::Auto), ("GPU", Backend::Gpu), ("CPU", Backend::Cpu)];
 pub const ENCODERS: [(&str, Encoder); 2] = [("Hardware when available", Encoder::Auto), ("Software (x264)", Encoder::X264)];
 pub const SPEEDS: [(&str, f32); 4] = [("0.9×", 0.9), ("1.0×", 1.0), ("1.1×", 1.1), ("1.2×", 1.2)];
+/// Lecture slides saved beside the video: what the menus show, in `Formats` order below.
+pub const SLIDES: [&str; 4] = ["No slides", "Slides as PDF", "Slides as PowerPoint", "PDF and PowerPoint slides"];
+
+pub fn slide_formats(choice: usize) -> studio_render::slides::Formats {
+    studio_render::slides::Formats { pdf: matches!(choice, 1 | 3), pptx: matches!(choice, 2 | 3) }
+}
+
 pub const CAPTIONS: [&str; 3] = ["Off", ".srt file", "Burned in + .srt"];
 
 pub struct Engine {
@@ -386,6 +393,41 @@ impl Workspace {
     pub fn video_output(&self, video: (usize, usize)) -> usize {
         let own = self.projects.get(video.0).and_then(|p| p.videos.get(video.1)).and_then(|v| v.settings.output);
         own.unwrap_or(self.prefs.output).min(OUTPUTS.len() - 1)
+    }
+
+    /// The lecture-slide choice for a video (its own, else the default).
+    pub fn video_slides(&self, video: (usize, usize)) -> usize {
+        let own = self.projects.get(video.0).and_then(|p| p.videos.get(video.1)).and_then(|v| v.settings.slides);
+        own.unwrap_or(self.prefs.slides).min(SLIDES.len() - 1)
+    }
+
+    pub fn set_video_slides(&mut self, slides: usize, cx: &mut Context<Self>) {
+        let video = self.current;
+        let Some(v) = self.projects.get_mut(video.0).and_then(|p| p.videos.get_mut(video.1)) else { return };
+        v.settings.slides = Some(slides);
+        self.save_video_settings(video);
+        cx.notify();
+    }
+
+    /// Picker for the current video's lecture slides (strip and storyboard).
+    pub fn slides_menu(&self, key: &'static str, upward: bool, cx: &mut Context<Self>) -> studio_ui::components::Dropdown {
+        use crate::app::with_value;
+        use studio_ui::components::{Button, Dropdown, MenuItem};
+        let choice = self.video_slides(self.current);
+        Dropdown::new(
+            key,
+            Button::new((key, 0usize), SLIDES[choice]).small().ghost().with_icon(IconName::Doc).icon_right(IconName::ChevronDown),
+            SLIDES.iter().map(|n| MenuItem::new(*n)).collect(),
+        )
+        .selected(choice)
+        .width(240.)
+        .when(upward, |d| d.upward())
+        .open(self.menu_open(key))
+        .on_toggle(with_value(cx, move |this, open: bool, _, cx| this.toggle_menu(key, open, cx)))
+        .on_select(with_value(cx, |this, i: usize, _, cx| {
+            this.open_menu = None;
+            this.set_video_slides(i, cx);
+        }))
     }
 
     fn save_video_settings(&self, video: (usize, usize)) {
@@ -944,7 +986,7 @@ impl Workspace {
                 if let Some((i, e)) = first_error
                     && studio_render::voice::kokoro_ready()
                 {
-                    this.notice = Some(format!("Couldn't speak scene {}'s narration: {}", i + 1, studio_render::short_error(&e)));
+                    this.notice = Some(format!("Couldn't speak chapter {}'s narration: {}", i + 1, studio_render::short_error(&e)));
                     cx.notify();
                 }
                 this.voice_settled(video, cx);
@@ -1002,7 +1044,7 @@ impl Workspace {
                     this.update(cx, |this, cx| {
                         if this.stage.mix_latest.get(&(video, scene)) == Some(&seq) {
                             this.stage.mix_latest.remove(&(video, scene));
-                            this.notice = Some(format!("Couldn't mix the narration for scene {}: {e:#}", scene + 1));
+                            this.notice = Some(format!("Couldn't mix the narration for chapter {}: {e:#}", scene + 1));
                             cx.notify();
                         }
                     })
@@ -1498,7 +1540,7 @@ impl Workspace {
             chat.push(Msg::Activity {
                 icon: IconName::Info,
                 ok: false,
-                text: "Nothing to save yet: build the video first".into(),
+                text: "Nothing to save yet: create the video first".into(),
                 meta: String::new(),
             });
             cx.notify();
@@ -1521,6 +1563,8 @@ impl Workspace {
             .filter_map(|s| {
                 s.engine.file.clone().map(|path| SceneSpec {
                     path,
+                    title: s.title.clone(),
+                    key_time: s.engine.key_time.map(f64::from),
                     expected: s.engine.duration.map(f64::from),
                     narration: s.engine.voice.as_ref().map(|v| studio_render::queue::Narration {
                         wav: v.wav.clone(),
@@ -1550,7 +1594,6 @@ impl Workspace {
                 project: self.projects[pi].name.to_string(),
                 output: output.label(),
                 status: if waiting == 0 { JobStatus::Rendering { scene: 1, of: scenes.len() } } else { JobStatus::Waiting(waiting) },
-                art: video.cover(),
                 thumb: video.cover_still(),
                 time: "—".into(),
                 progress: 0.,
@@ -1576,6 +1619,8 @@ impl Workspace {
                 _ => studio_render::queue::Captions::Srt,
             },
             watermark: self.watermark_for(pi),
+            title: video.title.clone(),
+            slides: slide_formats(self.video_slides((pi, vi))),
         });
         self.projects[pi].videos[vi].status = VideoStatus::Building;
         if let Some(chat) = self.chat_of((pi, vi)) {
@@ -1640,7 +1685,7 @@ impl Workspace {
                 self.jobs[ix].status = JobStatus::Exporting;
                 self.jobs[ix].progress = 1.;
             }
-            QueueEvent::Done { path, elapsed, duration, rendered, cached, .. } => {
+            QueueEvent::Done { path, elapsed, duration, rendered, cached, slides, slides_problem, .. } => {
                 let place = saved_place(&path);
                 let job = &mut self.jobs[ix];
                 job.status = JobStatus::Done(crate::model::format_short(duration.round() as u32));
@@ -1654,13 +1699,26 @@ impl Workspace {
                     self.render_progress = None;
                 }
                 let meta = format!("{:.1} s", elapsed.as_secs_f32());
-                let text = format!("Video saved to {place}");
-                self.notice = Some(format!("Video saved to {place}. Open Saved videos to find it."));
+                let (text, notice) = match (&slides_problem, slides.is_empty()) {
+                    (Some(why), _) => {
+                        let short = studio_render::short_error(why);
+                        (
+                            format!("Video saved to {place}. The lecture slides couldn't be made: {short}"),
+                            format!("Video saved to {place}, but the lecture slides couldn't be made: {short}"),
+                        )
+                    }
+                    (None, false) => (
+                        format!("Video and lecture slides saved to {place}"),
+                        format!("Video and lecture slides saved to {place}. Open Saved videos to find them."),
+                    ),
+                    (None, true) => (format!("Video saved to {place}"), format!("Video saved to {place}. Open Saved videos to find it.")),
+                };
+                self.notice = Some(notice);
                 self.replace_rendering_row(video, Msg::Activity { icon: IconName::Check, ok: true, text, meta });
             }
             QueueEvent::Failed { scene, error, .. } => {
                 let short = studio_render::short_error(&error);
-                let where_ = scene.map(|s| format!("Scene {}: ", s + 1)).unwrap_or_default();
+                let where_ = scene.map(|s| format!("Chapter {}: ", s + 1)).unwrap_or_default();
                 self.jobs[ix].status = JobStatus::Failed(format!("{where_}{short}"));
                 self.projects[video.0].videos[video.1].status = VideoStatus::Failed;
                 if let (Some(s), true) = (scene, mine)

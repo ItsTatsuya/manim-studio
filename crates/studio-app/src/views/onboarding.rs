@@ -266,7 +266,7 @@ impl Workspace {
                     .flex_col()
                     .gap(px(16.))
                     .max_w(px(CONTENT_W))
-                    .child(point(IconName::Board, "You approve a storyboard first", "Nothing is built until the plan looks right. That keeps usage low."))
+                    .child(point(IconName::Board, "You approve the script first", "Nothing is created until the script looks right. That keeps usage low."))
                     .child(point(IconName::Key, "Uses the plan you already have", "Claude or ChatGPT. Studio never stores your password."))
                     .child(point(IconName::Film, "Renders locally, fast", "1080p in seconds, with captions and a natural voice.")),
             )

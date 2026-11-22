@@ -233,6 +233,7 @@ fn plan_for(case: &Case, bench: &Bench, exe: &Path, replan: bool, work: &Path) -
         resume: None,
         tools: vec![],
         ephemeral: true,
+        images: vec![],
     })?;
     if let Some(e) = out.error {
         bail!("planning {} failed: {e}", case.id);
@@ -320,6 +321,7 @@ fn run_one(case: &Case, sb: &Storyboard, v: &Variant, run: u32, bench: &Bench, e
             resume,
             tools: EDIT_TOOLS.to_vec(),
             ephemeral: false,
+            images: vec![],
         })
     };
     let mut build = Usage::default();

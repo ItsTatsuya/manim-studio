@@ -319,6 +319,7 @@ impl Workspace {
         let switch = self.toggle("auto-switch", self.prefs.auto_switch_provider, cx, |w, v| w.prefs.auto_switch_provider = v);
         let lean = self.toggle("lean", self.prefs.lean_context, cx, |w, v| w.prefs.lean_context = v);
         let escalate = self.toggle("escalate", self.prefs.escalate_repairs, cx, |w, v| w.prefs.escalate_repairs = v);
+        let review = self.toggle("visual-review", self.prefs.visual_review, cx, |w, v| w.prefs.visual_review = v);
         let usage = self.toggle("show-usage", self.prefs.show_usage, cx, |w, v| w.prefs.show_usage = v);
         let repairs = self.dropdown(
             "repairs",
@@ -353,6 +354,7 @@ impl Workspace {
                     .child(item("Planning", "Storyboards and questions. A small model with Auto reasoning is enough.", planning, false, cx))
                     .child(item("Building", "Writes and repairs scene code. Also set from the chat box. Auto reasoning builds with low effort on Sonnet (fewer tokens, fewer repairs in our tests).", build, false, cx))
                     .child(item("Automatic repairs", "Script errors go back to the assistant.", repairs, false, cx))
+                    .child(item("Look over new videos", "After a video is created, the assistant looks at a frame or two of each chapter and fixes overlapping or cut-off text. Costs a few thousand tokens.", review, false, cx))
                     .child(item("Think harder on repeat errors", "Each failed repair raises reasoning one step, then it drops back.", escalate, true, cx)),
             )
             .child(faint(auto_note, cx).text_size(text::CAPS).mt(px(-10.)).px(px(2.)))
@@ -595,7 +597,7 @@ impl Workspace {
             .disabled(!ready)
             .on_click(click(cx, |this, _, cx| this.preview_voice(cx)));
         group(cx)
-            .child(item("Narration", "Read each scene's narration aloud and time the scene to it.", narration, false, cx))
+            .child(item("Narration", "Read each chapter's narration aloud and time the chapter to it.", narration, false, cx))
             .child(item("Natural voice", natural_desc, natural, false, cx))
             .child(item("Voice quality", quality_desc, quality, false, cx))
             .child(item("Unusual words", espeak_desc, espeak, false, cx))
@@ -620,6 +622,7 @@ impl Workspace {
     fn settings_rendering(&mut self, cx: &mut Context<Self>) -> AnyElement {
         use crate::engine::{BACKENDS, ENCODERS, OUTPUTS};
         let output = self.dropdown("output", &OUTPUTS.map(|(n, _)| n), self.prefs.output, cx, |this, i, _, _| this.prefs.output = i);
+        let slides = self.dropdown("slides", &crate::engine::SLIDES, self.prefs.slides, cx, |this, i, _, _| this.prefs.slides = i);
         let renderer = self.dropdown("renderer", &BACKENDS.map(|(n, _)| n), self.prefs.renderer, cx, |this, i, _, _| this.prefs.renderer = i);
         let encoder = self.dropdown("encoder", &ENCODERS.map(|(n, _)| n), self.prefs.encoder, cx, |this, i, _, _| this.prefs.encoder = i);
         use crate::engine::NaturalVoice as Dl;
@@ -654,6 +657,7 @@ impl Workspace {
         };
         let render = group(cx)
             .child(item("Output", "Resolution and frame rate of rendered videos. Scenes rendered at another size render again.", output, false, cx))
+            .child(item("Lecture slides", "Also saves the video as slides next to it: one slide per chapter: that chapter's key frame exactly as it is in the video, with no text added. Open the PDF anywhere; the PowerPoint file can be edited. You can change this per video.", slides, false, cx))
             .child(item("Renderer", "Automatic times GPU and CPU on your scene and keeps the faster.", renderer, false, cx))
             .child(item("Encoder", "Hardware encoding is much faster on most graphics cards.", encoder, false, cx))
             .child(item("ffmpeg", ffmpeg_desc, ffmpeg, true, cx));
