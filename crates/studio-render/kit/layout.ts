@@ -12,7 +12,7 @@ const BOXES: Record<string, Box> = {
   kicker: { left: -6.2, right: -1.3, top: 3.7, bottom: 2.9 },
   work: { left: -6.2, right: -1.3, top: 2.8, bottom: -3.4 },
   figure: { left: -0.45, right: 6.5, top: 3.2, bottom: -3.3 },
-  full: { left: -5.0, right: 5.0, top: 3.4, bottom: -3.4 },
+  full: { left: -5.0, right: 5.0, top: 2.75, bottom: -3.4 },
 };
 
 /** Space between items stacked in a region. */
@@ -72,6 +72,12 @@ export class Region {
     const top = last ? last.getBottom()[1] - gap : b.top;
     m.moveTo([b.left + m.width / 2, top - m.height / 2, 0]);
     this.items.push(m);
+    track(m, this.name);
+    return m;
+  }
+
+  /** Count `m` as part of this region where it already is (a piece placed with its parts). Returns `m`. */
+  adopt<M extends Mobject>(m: M): M {
     track(m, this.name);
     return m;
   }
