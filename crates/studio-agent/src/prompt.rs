@@ -90,21 +90,23 @@ pub fn digest_for(types: &str, kind: DigestKind) -> String {
 /// A worked scene showing the house idioms: palette, heading, roles, pacing to the
 /// narration, the thumbnail mark.
 pub const EXAMPLE_SCENE: &str = r#"import { Scene, Text, MathTex, Circle, Line, Create, Write, FadeIn, DOWN, RIGHT } from "manim";
-import { palette, heading } from "../lib/kit";
+import { palette } from "../lib/kit";
+import { heading, work, figure } from "../lib/layout";
 
 export default class Diameter extends Scene {
   construct() {
     const c = palette(this.theme);
-    // 1. "Here is a circle."  2. "The radius runs from the centre to the edge."
+    // 1. "Here is a circle."  2. "The radius runs from the centre to the {r}edge."
     // 3. "The diameter is twice the radius."
     this.play(Write(heading("Radius and diameter")), { runTime: 1 });
-    const circle = Circle(2, { color: c.primary });
+    const circle = figure.place(Circle(2, { color: c.primary }));
     this.play(Create(circle), { runTime: this.narrate(1) });
     const r = Line(circle.getCenter(), circle.getCenter().add(RIGHT.mul(2)), { color: c.accent });
+    this.play(Create(r), { runTime: this.narrate(2) });
     const label = MathTex("r", { color: c.accent }).nextTo(r, DOWN, 0.15);
-    this.play(Create(r), FadeIn(label), { runTime: this.narrate(2) });
-    const rule = Text("The diameter is twice the radius", { role: "body" }).toEdge(DOWN, 1.2);
-    const eq = MathTex("d = 2 r").nextTo(rule, DOWN, 0.3);
+    this.play(FadeIn(label), { runTime: Math.min(0.4, this.cue("r")) });
+    const rule = work.push(Text("The diameter is twice the radius", { role: "body" }));
+    const eq = work.push(MathTex("d = 2 r"));
     this.play(Write(rule), Write(eq), { runTime: this.narrate(3) });
     this.mark("thumbnail");
     this.wait(1);
@@ -151,8 +153,9 @@ pub fn build_system(digest: &str) -> String {
 The current folder is one video:
 - scenes/NN-slug.ts: one scene per file, played in file-name order. Each file is
   `export default class Name extends Scene {{ construct() {{ ... }} }}`.
-- lib/kit.ts: helpers. `import {{ palette, heading, card }} from "../lib/kit";`
-  palette(this.theme) gives colours; heading(text) is a top-left slide title; card(content, fill, stroke) boxes content.
+- lib/kit.ts: helpers. `import {{ palette, card }} from "../lib/kit";`
+  palette(this.theme) gives colours; card(content, fill, stroke) boxes content.
+- lib/layout.ts: where things go (Studio keeps it current; don't edit it). `import {{ heading, work, figure, full }} from "../lib/layout";`
 - lib/art.ts (yours to create): SVG pictures used by more than one scene, as functions taking the palette.
 - assets/: images, SVGs and sounds, referenced by relative path.
 
@@ -160,11 +163,10 @@ Rules:
 - Scenes are TypeScript run by manim-rust: the Manim Community API in camelCase. Import only from "manim" and relative files. No DOM, Node, fs or network.
 - Never hard-code colours. `const c = palette(this.theme);` then c.primary, c.secondary, c.accent, c.positive, c.negative, c.text, c.muted, c.key_fill, c.background. Text uses roles: Text("…", {{ role: "title" | "heading" | "body" | "caption" | "hand" }}).
 - MathTex takes Typst math, not LaTeX: "A = pi r^2", "1/2 dot b h", "sqrt(x)", "\"cm\"^2", "integral_0^1 x dif x".
-- The frame is 14.2 × 8 units, origin at the centre, y up. Keep text within x ±6.5, y ±3.6; wrap long text with maxWidth.
+- Place content only through regions. Never pass coordinates for text (no moveTo, shift, toEdge or toCorner with numbers or vectors). heading(text) is the title, in a band above the left column. work.push(m) stacks equations, worked steps and answers down the left column, each below the last; it holds about seven lines, so when a new part of the working starts, `this.play(work.clear())` fades the stack out and the next push starts at the top again. figure is the right-hand panel: `figure.axes({{ xRange, yRange, numbers: true, xLabel, yLabel }})` gives axes that fill it, with their titles in `ax.labels` (show them with the axes; use c2p for points), `figure.place(m)` centres any other drawing. `full.place(m)` is a full-width statement card. A region shrinks what is too big for it. A tick or note beside a step goes in with it: `work.push(VGroup(step, note).arrange(RIGHT))`. A label on a drawing goes beside what it labels with nextTo. Studio checks after every animation that everything is inside its region.
 - Text must not overlap other text once an animation ends, and must not cross-fade over other text. When new text takes the place of old text, FadeOut or Transform the old one in the same play() call; place new text with nextTo/arrange/VGroup relative to what is on screen, never at a position something else already uses.
 - Text in a box: card(Text(...), fill, stroke) sizes the box to the text. Never move text onto a fixed-size Rectangle. A label beside an icon, tick or shape goes there with nextTo(it, RIGHT, {{ buff: 0.25 }}), never at its own hard-coded position.
 - Draw pictures (people, desks, devices, documents, icons, objects) as one SVG, not as piles of Rectangles and Circles: `SVGMobject(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 90">…</svg>`, {{ height: 2 }})` with colours from the palette (`fill="${{c.primary}}"`). Use rect, circle, ellipse, line, polyline, polygon and path with flat fills and strokes; no gradients, filters, images or <text> (labels are Text objects placed beside the picture, so they follow the house style). To point at a picture, scale it briefly (`pic.animate.scale(1.1)` and back) or draw SurroundingRectangle around it; Indicate and colour changes paint every part of it one colour.
-- The top band (y > 2.6) is the heading's. Put body content, equations and diagrams below it.
 - Call this.mark("thumbnail") at the scene's most representative moment.
 - Each scene is narrated, sentence by sentence (numbered in the storyboard). Call `this.narrate(n)` immediately before the animation that sentence n describes, for every sentence, in order. It returns that sentence's length in seconds (or the seconds until its first cue); use it for the runTime of what it describes. If the previous sentence is still being spoken, narrate() first waits for it, so the voice always matches what is on screen. Studio holds the last frame until the last sentence ends. Don't time anything off `NARRATION.seconds`.
 - A `{{id}}` inside the narration is a cue: the moment the next word is spoken. Call `this.cue(id)` immediately before the animation for that moment, for every cue, in order. Never show a value before the voice says it. cue() waits for that moment and returns the seconds until the next cue or the end of the sentence, so keep that animation no longer: a pop takes `Math.min(0.3, this.cue("c20"))`.
@@ -404,7 +406,7 @@ pub fn review(frames: &[ReviewFrame]) -> String {
         p.push_str(&format!("{}  chapter {} at {:.1} s  ({})\n", f.image, f.chapter, f.at, f.file));
     }
     p.push_str(
-        "\nFix each problem with the smallest change to that chapter's script file, placing things with the layout helpers (nextTo, arrange, buff, toEdge) instead of guessing coordinates. Leave the narration, timing and story as they are, and leave chapters that look clean alone. Reply with one sentence: what you fixed, or \"Looks clean.\"",
+        "\nFix each problem with the smallest change to that chapter's script file, placing things through the layout regions (heading, work.push, figure, full) and nextTo instead of coordinates. Leave the narration, timing and story as they are, and leave chapters that look clean alone. Reply with one sentence: what you fixed, or \"Looks clean.\"",
     );
     p
 }
@@ -416,6 +418,31 @@ pub struct Failure {
     pub diagnostic: String,
     /// The source lines involved (`  12 | code`), when known.
     pub excerpt: Option<String>,
+}
+
+/// Most problems of one scene a repair is told about at once.
+const PROBLEMS_PER_REPAIR: usize = 4;
+
+/// A scene's check problems (message, scene time) as one diagnostic: the first few, then
+/// how many more, so one repair can fix them together.
+pub fn problems(found: &[(&str, f64)]) -> String {
+    let mut seen: Vec<&str> = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
+    for (message, time) in found {
+        if seen.contains(message) {
+            continue;
+        }
+        seen.push(message);
+        if parts.len() < PROBLEMS_PER_REPAIR {
+            parts.push(format!("{message} at {time:.1} s"));
+        }
+    }
+    let more = seen.len().saturating_sub(parts.len());
+    let mut out = parts.join("; also ");
+    if more > 0 {
+        out.push_str(&format!(" (and {more} more like these)"));
+    }
+    out
 }
 
 /// Every failed check of a turn, sent back in one repair turn with only what is needed.
@@ -447,7 +474,7 @@ pub fn layout_excerpt(path: &std::path::Path, message: &str) -> Option<String> {
         .lines()
         .enumerate()
         .filter(|(_, l)| quoted.iter().any(|q| l.contains(q)))
-        .take(4)
+        .take(8)
         .map(|(i, l)| format!("  {} | {}", i + 1, l.trim()))
         .collect();
     (!lines.is_empty()).then(|| lines.join("\n"))
@@ -502,11 +529,19 @@ mod plan_option_tests {
     }
 
     #[test]
+    fn a_repair_hears_about_several_problems() {
+        let found = [("a", 1.0), ("b", 2.0), ("a", 3.0), ("c", 4.0), ("d", 5.0), ("e", 6.0), ("f", 7.0)];
+        assert_eq!(problems(&found), "a at 1.0 s; also b at 2.0 s; also c at 4.0 s; also d at 5.0 s (and 2 more like these)");
+        assert_eq!(problems(&found[..1]), "a at 1.0 s");
+    }
+
+    #[test]
     fn cues_reach_the_prompts() {
         assert!(plan(&opts(120)).contains("c is {c20}twenty"));
         let system = build_system("");
         assert!(system.contains("A `{id}` inside the narration is a cue"));
         assert!(system.contains("Never show a value before the voice says it."));
+        assert!(system.contains("Place content only through regions. Never pass coordinates for text"));
         // Marks stay visible to the builder and don't change the numbering.
         assert_eq!(
             numbered("If r is ten, c is {c20}twenty. {line}They lie on one line."),

@@ -102,6 +102,9 @@ struct SceneResult {
     problem: Option<String>,
     error: Option<String>,
     lines: usize,
+    /// Lines that put text at coordinates instead of through a region.
+    #[serde(default)]
+    text_at_coords: usize,
     thumb: Option<String>,
 }
 
@@ -247,9 +250,7 @@ fn plan_for(case: &Case, bench: &Bench, exe: &Path, replan: bool, work: &Path) -
 fn prepare(dir: &Path, v: &Variant) -> Result<PathBuf> {
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir.join("scenes"))?;
-    std::fs::create_dir_all(dir.join("lib"))?;
-    let kit = studio_render::sample::AREA_OF_A_CIRCLE.iter().find(|(p, _)| *p == "lib/kit.ts").map(|(_, b)| *b).context("no kit")?;
-    std::fs::write(dir.join("lib/kit.ts"), kit)?;
+    studio_render::kit::install(dir)?;
     let system = dir.join("AGENTS.md");
     std::fs::write(&system, system_prompt(v.recipe))?;
     Ok(system)
@@ -284,7 +285,10 @@ fn check_all(dir: &Path, sb: &Storyboard) -> Checked {
             continue;
         }
         let r = match check(&narrated_request(dir, &path, &scene.say)) {
-            Ok(t) => Ok((t.problems.len(), t.duration, t.problems.first().map(|p| format!("{} at {:.1} s", p.message, p.time)).unwrap_or_default())),
+            Ok(t) => {
+                let found: Vec<(&str, f64)> = t.problems.iter().map(|p| (p.message.as_str(), p.time)).collect();
+                Ok((t.problems.len(), t.duration, prompt::problems(&found)))
+            }
             Err(e) => {
                 let e = format!("{e:#}");
                 Err((studio_render::short_error(&e), studio_render::error_line(&e)))
@@ -392,6 +396,7 @@ fn run_one(case: &Case, sb: &Storyboard, v: &Variant, run: u32, bench: &Bench, e
             problem: r.as_ref().ok().filter(|x| x.0 > 0).map(|x| x.2.clone()),
             error: r.as_ref().err().map(|e| e.0.clone()),
             lines: std::fs::read_to_string(path).map(|s| s.lines().count()).unwrap_or(0),
+            text_at_coords: std::fs::read_to_string(path).map(|s| text_at_coords(&s)).unwrap_or(0),
             thumb,
         });
     }
@@ -412,6 +417,7 @@ struct Agg {
     dur_err: f64,
     dur_n: u32,
     lines: u32,
+    text_at_coords: u32,
 }
 
 fn summary(results: &[RunResult], plan_usage: &Usage) -> String {
@@ -433,6 +439,7 @@ fn summary(results: &[RunResult], plan_usage: &Usage) -> String {
             a.ok += s.ok as u32;
             a.problems += s.problems as u32;
             a.lines += s.lines as u32;
+            a.text_at_coords += s.text_at_coords as u32;
             if let Some(d) = s.duration_s {
                 a.dur_err += (d - s.planned_s as f64).abs() / s.planned_s.max(1) as f64;
                 a.dur_n += 1;
@@ -441,7 +448,7 @@ fn summary(results: &[RunResult], plan_usage: &Usage) -> String {
     }
     let base = order.first().and_then(|v| by.get(v)).map(|a| (a.usage.billed() as f64 / a.runs as f64, a.usage.cost_usd / a.runs as f64));
     let mut md = String::from("# Token benchmark\n\nPer run means (one run = one storyboard built, checked and repaired). \"Billed\" is fresh input + cache writes + output; cache reads are listed separately (cheap, but not free). Cost is the CLI's API-price estimate. Quality: scenes passing the engine check first time / after repairs, layout problems left, and how far scene lengths land from the plan.\n\n");
-    md.push_str("| variant | runs | billed | vs first | cache read | output | calls | cost $ | vs first | time s | first pass | final pass | repairs | missing | layout left | length off | lines/scene |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
+    md.push_str("| variant | runs | billed | vs first | cache read | output | calls | cost $ | vs first | time s | first pass | final pass | repairs | missing | layout left | length off | lines/scene | text at coords |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
     for v in &order {
         let a = &by[v];
         let n = a.runs as f64;
@@ -451,7 +458,7 @@ fn summary(results: &[RunResult], plan_usage: &Usage) -> String {
         let (vb, vc) = base.map_or((String::new(), String::new()), |(b, c)| (rel(billed, b), rel(cost, c)));
         let pct = |k: u32| if a.scenes > 0 { format!("{:.0}%", k as f64 * 100.0 / a.scenes as f64) } else { "-".into() };
         md.push_str(&format!(
-            "| {v} | {} | {:.0} | {vb} | {:.0} | {:.0} | {:.1} | {cost:.3} | {vc} | {:.0} | {} | {} | {:.1} | {} | {} | {} | {:.0} |\n",
+            "| {v} | {} | {:.0} | {vb} | {:.0} | {:.0} | {:.1} | {cost:.3} | {vc} | {:.0} | {} | {} | {:.1} | {} | {} | {} | {:.0} | {} |\n",
             a.runs,
             billed,
             a.usage.cache_read as f64 / n,
@@ -465,6 +472,7 @@ fn summary(results: &[RunResult], plan_usage: &Usage) -> String {
             a.problems,
             if a.dur_n > 0 { format!("{:.0}%", a.dur_err * 100.0 / a.dur_n as f64) } else { "-".into() },
             a.lines as f64 / a.scenes.max(1) as f64,
+            a.text_at_coords,
         ));
     }
     if plan_usage.calls > 0 {
@@ -497,6 +505,23 @@ fn report(results: &[RunResult], plans: &[(Case, Storyboard)]) -> String {
         h.push_str("</table>");
     }
     h
+}
+
+/// Lines that make text (Text, MathTex) and place it at coordinates: moveTo, shift, toEdge
+/// or toCorner given numbers or a vector, or vec(...).
+fn text_at_coords(src: &str) -> usize {
+    src.lines()
+        .filter(|l| l.contains("Text(") || l.contains("MathTex("))
+        .filter(|l| {
+            l.contains("vec(")
+                || ["moveTo(", "shift(", "toEdge(", "toCorner("].iter().any(|call| {
+                    l.match_indices(call).any(|(i, _)| {
+                        let arg = l[i + call.len()..].trim_start();
+                        arg.starts_with('[') || arg.starts_with('-') || arg.starts_with(|c: char| c.is_ascii_digit())
+                    })
+                })
+        })
+        .count()
 }
 
 /// `--check <video folder>`: run every scene through the engine check and print problems.
@@ -610,6 +635,12 @@ mod tests {
         ] {
             assert_eq!(prompt::sentences(text), studio_render::voice::sentences(text), "{text}");
         }
+    }
+
+    #[test]
+    fn counts_text_placed_at_coordinates() {
+        let src = "const a = Text(\"x\").moveTo([-4, 2, 0]);\nconst b = work.push(MathTex(\"y\"));\nconst c = MathTex(\"z\").nextTo(d, DOWN);\nconst e = Text(\"w\").shift(vec(1, 0));\nconst f = Circle(1).moveTo([1, 1, 0]);";
+        assert_eq!(text_at_coords(src), 2);
     }
 
     /// The worked example in the system prompt must itself pass the engine check.
