@@ -465,9 +465,7 @@ pub fn new_video(project: &Project, title: &str, request: &str) -> Option<Video>
     let dir = unique(&project.dir, &slug(title));
     std::fs::create_dir_all(dir.join("scenes")).ok()?;
     std::fs::create_dir_all(dir.join("assets")).ok()?;
-    std::fs::create_dir_all(dir.join("lib")).ok()?;
-    let kit = studio_render::sample::AREA_OF_A_CIRCLE.iter().find(|(p, _)| *p == "lib/kit.ts").map(|(_, b)| *b)?;
-    std::fs::write(dir.join("lib").join("kit.ts"), kit).ok()?;
+    studio_render::kit::install(&dir).ok()?;
     let v = Video {
         title: title.into(),
         status: VideoStatus::Draft,

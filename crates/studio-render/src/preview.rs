@@ -82,7 +82,9 @@ const TIMING_HOOK: &str = r#"(() => {
           if (last && Object.getPrototypeOf(last) === Object.prototype) items[items.length - 1] = { ...last, runTime: plan[i] };
           else items.push({ runTime: plan[i] });
         }
-        return play.apply(this, items);
+        const out = play.apply(this, items);
+        checkRegions(this);
+        return out;
       };
       // Holds until scene time `t`. The engine rounds a wait down to whole frames, which
       // would put the picture ahead of the voice, and more so with every sentence; this
@@ -90,6 +92,43 @@ const TIMING_HOOK: &str = r#"(() => {
       const hold = (scene, t) => {
         const frames = Math.ceil((t - scene.time) * scene.fps - 1e-6);
         if (frames > 0) wait.call(scene, frames / scene.fps);
+      };
+      // Scenes that use lib/layout.ts: after every play, each thing placed in a region must
+      // still be inside it, and any other text must sit inside one of the regions.
+      const checkRegions = (scene) => {
+        const layout = globalThis.__LAYOUT;
+        if (!layout) return;
+        const TOL = 0.08;
+        const inside = (bb, b) => bb[0] >= b.left - TOL && bb[2] <= b.right + TOL && bb[1] >= b.bottom - TOL && bb[3] <= b.top + TOL;
+        const spans = (bb) => "x " + bb[0].toFixed(1) + " to " + bb[2].toFixed(1) + ", y " + bb[1].toFixed(1) + " to " + bb[3].toFixed(1);
+        const report = (key, a, message) => {
+          if (globalThis.__REGION_SEEN[key]) return;
+          globalThis.__REGION_SEEN[key] = true;
+          globalThis.__REGION_PROBLEMS.push({ kind: "region", time: scene.time, play: null, a, b: null, message });
+        };
+        const placed = [];
+        for (const { m, region } of layout.items) {
+          if (!scene.isOnScreen(m)) continue;
+          const bb = [m.getLeft()[0], m.getBottom()[1], m.getRight()[0], m.getTop()[1]];
+          placed.push(bb);
+          const box = layout.boxes[region];
+          if (!box || inside(bb, box)) continue;
+          let text = null;
+          try { text = typeof m.text === "string" && m.text ? m.text : null; } catch (e) {}
+          const what = text ? 'text "' + text + '"' : "a " + (m.kind || "group");
+          const stack = layout.stacks && layout.stacks[region];
+          const full = bb[1] < box.bottom - TOL && stack && stack.includes(m)
+            ? "; the " + region + " column is full: this.play(" + region + ".clear()) before pushing more, or use fewer lines"
+            : "";
+          report(region + "|" + (text || m.kind), text || m.kind || "group", what + " goes outside the " + region + " region (it spans " + spans(bb) + ")" + full);
+        }
+        const zones = ["kicker", "work", "figure"].map((k) => layout.boxes[k]).filter(Boolean);
+        for (const it of scene.inspect()) {
+          if (!it.text || it.opacity < 0.05) continue;
+          if (placed.some((bb) => bb.every((v, i) => Math.abs(v - it.bbox[i]) < 1e-3))) continue;
+          if (zones.some((box) => inside(it.bbox, box))) continue;
+          report("none|" + it.label, it.label, 'text "' + it.label + '" is not in a layout region (it spans ' + spans(it.bbox) + "); place it with heading, work.push, figure or full");
+        }
       };
       const length = (n) => {
         const d = ((globalThis.NARRATION || {}).lines || [])[n - 1];
@@ -143,6 +182,8 @@ const TIMING_HOOK: &str = r#"(() => {
     globalThis.__WAIT_IX = 0;
     globalThis.__PLAY_IX = 0;
     globalThis.__NARR = { end: 0, starts: {}, used: {} };
+    globalThis.__REGION_PROBLEMS = [];
+    globalThis.__REGION_SEEN = {};
     return run.call(this, cls);
   };
   wrapped.__studio = true;
@@ -323,8 +364,22 @@ fn load_with(req: &OpenScene, output: Output, plan: Option<&TimingPlan>) -> Resu
         };
         pad_for_narration(&host, until);
     }
-    let timeline = host.timeline().ok_or_else(|| anyhow!("the scene did not run"))?;
+    let mut timeline = host.timeline().ok_or_else(|| anyhow!("the scene did not run"))?;
+    timeline.problems.extend(region_problems(&host));
     Ok((host, scene, timeline))
+}
+
+/// What the region check (in [`install_hooks`]) found during the last run.
+fn region_problems(host: &ScriptHost) -> Vec<manim::check::Problem> {
+    #[derive(serde::Deserialize)]
+    struct Found {
+        kind: String,
+        time: f64,
+        a: String,
+        message: String,
+    }
+    let found: Vec<Found> = host.eval_json("globalThis.__REGION_PROBLEMS || []").unwrap_or_default();
+    found.into_iter().map(|f| manim::check::Problem { kind: f.kind, time: f.time, play: None, a: f.a, b: None, message: f.message }).collect()
 }
 
 /// Hold the last frame until the narration (plus a short tail) has finished.
@@ -903,6 +958,60 @@ export default class N extends Scene {
             assert!((pop - spoken).abs() < 0.05, "{pop} for {cue:?}, spoken at {spoken}");
         }
         assert_eq!(t.markers.iter().filter(|m| m.name == "narrate:2").count(), 1, "cue already started sentence 2");
+    }
+
+    /// A scene run in a folder with the layout kit; its problems.
+    fn laid_out(tag: &str, body: &str) -> Vec<String> {
+        let dir = std::env::temp_dir().join(format!("studio-layout-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("scenes")).unwrap();
+        crate::kit::install(&dir).unwrap();
+        let path = dir.join("scenes/01-l.ts");
+        std::fs::write(&path, format!("import {{ Scene, Text, MathTex, Dot, Create, FadeIn, Write }} from \"manim\";\n\
+             import {{ heading, work, figure, full }} from \"../lib/layout\";\n\
+             export default class L extends Scene {{ construct() {{ {body} }} }}")).unwrap();
+        let req = OpenScene { path, root: dir.clone(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: None, narration_lines: vec![], narration_cues: vec![] };
+        let t = load(&req, Output::new(320, 180, 30.0)).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        t.2.problems.iter().filter(|p| p.kind == "region").map(|p| p.message.clone()).collect()
+    }
+
+    #[test]
+    fn regions_place_and_stack_content() {
+        let found = laid_out("ok", r#"
+            this.play(Write(heading("Two equations, two lines")), { runTime: 0.3 });
+            for (const tex of ["3 r + 2 c = 70", "r + 4 c = 90", "r = 10", "c = 20"]) this.play(FadeIn(work.push(MathTex(tex))), { runTime: 0.2 });
+            const ax = figure.axes({ xRange: [0, 40, 10], yRange: [0, 40, 10], numbers: true, xLabel: "r (notebook price)", yLabel: "c (pen-box price)" });
+            this.play(Create(ax), FadeIn(ax.labels), { runTime: 0.3 });
+            const d = Dot(ax.c2p(10, 20));
+            this.play(FadeIn(d), FadeIn(MathTex("(10, 20)").nextTo(d)), { runTime: 0.2 });
+            this.play(work.clear(), { runTime: 0.2 });
+            this.play(FadeIn(work.push(Text("A sentence long enough that the work column has to shrink it to fit", { role: "body" }))), { runTime: 0.2 });
+            this.play(FadeIn(full.place(Text("Solving = finding the points common to all the lines.", { role: "heading" }))), { runTime: 0.2 });"#);
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn content_outside_its_region_is_a_problem() {
+        let found = laid_out("bad", r#"
+            for (let i = 0; i < 12; i++) this.play(FadeIn(work.push(MathTex("x = " + i))), { runTime: 0.1 });
+            this.play(FadeIn(Text("Loose text", { role: "body" }).moveTo([-0.9, 0, 0])), { runTime: 0.1 });
+            const t = figure.place(Text("Moved away", { role: "body" }));
+            this.play(FadeIn(t), { runTime: 0.1 });
+            this.play(t.animate.shift([-4, 0, 0]), { runTime: 0.1 });"#);
+        // Steps 9 to 12 run off the bottom of the work column: each is named.
+        let below = found.iter().filter(|m| m.starts_with("text \"x = ") && m.contains("outside the work region")).count();
+        assert_eq!((below, found.len()), (4, 6), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("text \"Loose text\" is not in a layout region")), "{found:?}");
+        assert!(found.iter().any(|m| m.starts_with("text \"Moved away\" goes outside the figure region")), "{found:?}");
+        assert!(found[0].ends_with("the work column is full: this.play(work.clear()) before pushing more, or use fewer lines"), "{found:?}");
+    }
+
+    /// Scenes that don't use the layout kit are checked as before.
+    #[test]
+    fn scenes_without_regions_are_not_region_checked() {
+        let found = laid_out("free", r#"this.play(FadeIn(Text("Anywhere", { role: "body" }).moveTo([-0.9, 0, 0])), { runTime: 0.1 });"#);
+        assert!(found.is_empty(), "{found:?}");
     }
 
     /// Like the preview thread: one scene after another on the same thread, retimed.

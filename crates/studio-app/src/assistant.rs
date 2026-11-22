@@ -125,9 +125,11 @@ fn digest() -> &'static str {
     D.get_or_init(|| prompt::digest_for(studio_render::TYPES, prompt::Recipe::default().digest))
 }
 
-/// Write the system prompt files into the video folder if they changed. They are the
+/// Write the system prompt files (and the layout kit they rely on) into the video folder if they changed. They are the
 /// same bytes every turn, so the provider's prompt cache serves them.
 fn system_files(dir: &Path) -> std::io::Result<(PathBuf, PathBuf)> {
+    // The prompt places content through lib/layout.ts, so every video needs the current one.
+    studio_render::kit::refresh(dir)?;
     let build = dir.join("AGENTS.md");
     let text = prompt::build_system_with(digest(), prompt::Recipe::default());
     if std::fs::read_to_string(&build).ok().as_deref() != Some(text.as_str()) {
@@ -874,8 +876,8 @@ impl Workspace {
                 Ok(t) if t.problems.is_empty() => None,
                 Ok(t) => {
                     let p = &t.problems[0];
-                    let msg = format!("{} at {:.1} s", p.message, p.time);
-                    Some((msg, None, Issue::Layout { count: t.problems.len(), first: p.message.clone() }))
+                    let found: Vec<(&str, f64)> = t.problems.iter().map(|p| (p.message.as_str(), p.time)).collect();
+                    Some((prompt::problems(&found), None, Issue::Layout { count: t.problems.len(), first: p.message.clone() }))
                 }
                 Err(e) => {
                     let short = studio_render::short_error(e);
