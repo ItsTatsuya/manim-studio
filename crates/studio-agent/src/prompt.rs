@@ -156,6 +156,15 @@ The current folder is one video:
 - lib/kit.ts: helpers. `import {{ palette, card }} from "../lib/kit";`
   palette(this.theme) gives colours; card(content, fill, stroke) boxes content.
 - lib/layout.ts: where things go (Studio keeps it current; don't edit it). `import {{ heading, work, figure, full }} from "../lib/layout";`
+- lib/lesson.ts: the pieces lessons are made of (Studio keeps it current; don't edit it). `import {{ lesson }} from "../lib/lesson";` then `const k = lesson(this);` (k.c is the palette). Play what their methods return.
+  k.EquationCard(tex, colour, tag): an equation card; work.push it, then .enter(), .focus(), .dim().
+  k.Steps([tex, ...]): numbered worked steps; `this.play(steps.next())` pushes the next one into work.
+  k.AnswerBox(tex, sub?, colour?): the final answer in a green box; work.push it, then .enter().
+  k.Callout(text, sub?): one idea in a line; work.push it, then .enter().
+  `const p = k.Plot({{ xRange: [0, 40], yRange: [0, 40], step: 10, xLabel, yLabel }})` fills figure: p.show(); p.line(f, colour, {{ dashed }}) draws y = f(x) end to end (the same f drawn again with dashed: true lands exactly on the first); p.dot([x, y], colour, label?) pops; p.crossing([x, y], colour?) pulses a dot twice and marks it on both axes; p.slopeTriangle(f, x, run, label); p.probe(f, from, to, readout?) slides a ring along the line with a live readout, p.probeTo([x, y]) moves it off, p.probeOut(); p.at([x, y]) is the scene point.
+  k.StatementCard(text, accentWord?): a full-width card over the dimmed stage; .enter(), .exit().
+  k.StrikeOut(m) crosses out a mistake; k.PauseCard(seconds) (play it without a runTime); k.CaseTable(rows) with table.next().
+  Build lesson content from these pieces; draw other shapes only for what they don't cover.
 - lib/art.ts (yours to create): SVG pictures used by more than one scene, as functions taking the palette.
 - assets/: images, SVGs and sounds, referenced by relative path.
 
@@ -542,6 +551,7 @@ mod plan_option_tests {
         assert!(system.contains("A `{id}` inside the narration is a cue"));
         assert!(system.contains("Never show a value before the voice says it."));
         assert!(system.contains("Place content only through regions. Never pass coordinates for text"));
+        assert!(system.contains("Build lesson content from these pieces"));
         // Marks stay visible to the builder and don't change the numbering.
         assert_eq!(
             numbered("If r is ten, c is {c20}twenty. {line}They lie on one line."),

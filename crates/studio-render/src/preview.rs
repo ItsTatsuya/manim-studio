@@ -960,20 +960,26 @@ export default class N extends Scene {
         assert_eq!(t.markers.iter().filter(|m| m.name == "narrate:2").count(), 1, "cue already started sentence 2");
     }
 
-    /// A scene run in a folder with the layout kit; its problems.
+    /// A scene run in a folder with the layout kit; its region problems.
     fn laid_out(tag: &str, body: &str) -> Vec<String> {
-        let dir = std::env::temp_dir().join(format!("studio-layout-{tag}-{}", std::process::id()));
+        run_in_kit(tag, body, 0).into_iter().filter(|m| m.contains("region")).map(|m| m.rsplit_once(" at ").map_or(m.clone(), |(a, _)| a.to_string())).collect()
+    }
+
+    /// Every problem of a scene run with the full kit, in house style `style`.
+    fn run_in_kit(tag: &str, body: &str, style: usize) -> Vec<String> {
+        let dir = std::env::temp_dir().join(format!("studio-kit-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("scenes")).unwrap();
         crate::kit::install(&dir).unwrap();
         let path = dir.join("scenes/01-l.ts");
         std::fs::write(&path, format!("import {{ Scene, Text, MathTex, Dot, Create, FadeIn, Write }} from \"manim\";\n\
              import {{ heading, work, figure, full }} from \"../lib/layout\";\n\
+             import {{ lesson }} from \"../lib/lesson\";\n\
              export default class L extends Scene {{ construct() {{ {body} }} }}")).unwrap();
-        let req = OpenScene { path, root: dir.clone(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: None, narration_lines: vec![], narration_cues: vec![] };
-        let t = load(&req, Output::new(320, 180, 30.0)).unwrap();
+        let req = OpenScene { path, root: dir.clone(), theme_json: crate::style::json(style).into(), scene: None, globals: vec![], narration: None, narration_lines: vec![], narration_cues: vec![] };
+        let t = load(&req, Output::new(320, 180, 30.0)).unwrap_or_else(|e| panic!("{e:#}"));
         let _ = std::fs::remove_dir_all(&dir);
-        t.2.problems.iter().filter(|p| p.kind == "region").map(|p| p.message.clone()).collect()
+        t.2.problems.iter().map(|p| format!("{} at {:.2}", p.message, p.time)).collect()
     }
 
     #[test]
@@ -1005,6 +1011,53 @@ export default class N extends Scene {
         assert!(found.iter().any(|m| m.starts_with("text \"Loose text\" is not in a layout region")), "{found:?}");
         assert!(found.iter().any(|m| m.starts_with("text \"Moved away\" goes outside the figure region")), "{found:?}");
         assert!(found[0].ends_with("the work column is full: this.play(work.clear()) before pushing more, or use fewer lines"), "{found:?}");
+    }
+
+    /// Every lesson piece runs, keeps to its region and passes the layout check, in every
+    /// house style: the S03 and S04 moments of a two-lines lesson, built only from kit pieces.
+    #[test]
+    fn lesson_pieces_run_cleanly_in_every_style() {
+        let body = r#"
+            const k = lesson(this);
+            const c = k.c;
+            this.play(Write(heading("Two equations, two lines")), { runTime: 0.3 });
+            const one = work.push(k.EquationCard("3 r + 2 c = 70", c.primary, "Order 1"));
+            const two = work.push(k.EquationCard("r + 4 c = 90", c.secondary, "Order 2"));
+            this.play(one.enter(), two.enter(), { runTime: 0.4 });
+            const p = k.Plot({ xRange: [0, 40], yRange: [0, 40], step: 10, xLabel: "r", yLabel: "c" });
+            this.play(p.show(), two.dim(), { runTime: 0.5 });
+            const steps = k.Steps(["r = 0 arrow c = 35", "r = 10 arrow c = 20", "r = 20 arrow c = 5"]);
+            for (const pt of [[0, 35], [10, 20], [20, 5]]) this.play(steps.next(), p.dot(pt, c.primary), { runTime: 0.3 });
+            this.play(p.line((r) => 35 - 1.5 * r, c.primary), { runTime: 0.4 });
+            this.play(p.probe((r) => 35 - 1.5 * r, 0, 20, (r, v) => "3 dot " + Math.round(r) + " + 2 dot " + Math.round(v) + " = 70"), { runTime: 0.8 });
+            this.play(p.probeTo([30, 18]), { runTime: 0.3 });
+            this.play(p.probeOut(), { runTime: 0.2 });
+            this.play(work.clear(), { runTime: 0.3 });
+            const idea = work.push(k.Callout("One equation = one line of answers."));
+            this.play(idea.enter(), { runTime: 0.3 });
+            for (const pt of [[2, 22], [30, 15]]) this.play(p.dot(pt, c.secondary), { runTime: 0.2 });
+            this.play(p.line((r) => 22.5 - 0.25 * r, c.secondary), { runTime: 0.4 });
+            this.play(p.line((r) => 35 - 1.5 * r, c.secondary, { dashed: true }), { runTime: 0.3 });
+            this.play(p.crossing([10, 20]), { runTime: 1.2 });
+            this.play(p.slopeTriangle((r) => 22.5 - 0.25 * r, 24, 8, "-1/4"), { runTime: 0.3 });
+            const ans = work.push(k.AnswerBox("r = 10, quad c = 20", "notebook and pen box"));
+            this.play(ans.enter(), { runTime: 0.4 });
+            this.play(k.StrikeOut(ans), { runTime: 0.2 });
+            const card = k.StatementCard("Solving = finding the points common to all the lines.", "common");
+            this.play(card.enter(), { runTime: 0.4 });
+            this.play(card.exit(), { runTime: 0.2 });"#;
+        let cards = r#"
+            const k = lesson(this);
+            this.play(Write(heading("Exam practice")), { runTime: 0.3 });
+            this.play(k.PauseCard(0.3));
+            const table = k.CaseTable([["k", "ratios", "solutions"], ["6", "1/2, 1/2, 1/2", "infinitely many"], ["-6", "-1/2, -1/2, 1/2", "none"]]);
+            for (let i = 0; i < 3; i++) this.play(table.next(), { runTime: 0.2 });"#;
+        for style in 0..crate::style::STYLES.len() {
+            for (name, scene) in [("graph", body), ("cards", cards)] {
+                let found = run_in_kit(&format!("lesson-{name}-{style}"), scene, style);
+                assert!(found.is_empty(), "{name} in style {style}: {found:?}");
+            }
+        }
     }
 
     /// Scenes that don't use the layout kit are checked as before.
