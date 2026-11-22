@@ -51,7 +51,7 @@ impl Workspace {
                     .hover_style(|s| s.bg(t.surface_3))
                     .tooltip(studio_ui::components::Tooltip::text("Click to edit what is said"))
                     .on_click(cx.listener(move |this, _, window, cx| this.edit_narration_line(i, window, cx)))
-                    .child(if s.say.trim().is_empty() { "Nothing is said in this chapter. Click to write it.".to_string() } else { s.say.clone() })
+                    .child(if s.say.trim().is_empty() { "Nothing is said in this chapter. Click to write it.".to_string() } else { s.spoken() })
                     .into_any_element()
             };
             div()

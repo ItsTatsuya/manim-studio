@@ -39,15 +39,18 @@ fn main() -> Result<()> {
         let narration = if say.trim().is_empty() {
             None
         } else {
-            let parts: Vec<(PathBuf, String, f64)> = voice::sentences(&say)
-                .into_iter()
-                .map(|s| voice::line(&s, &spec, &cache).map(|l| (l.wav, s, l.seconds)))
-                .collect::<Result<_>>()?;
-            let lines: Vec<f64> = parts.iter().map(|p| p.2).collect();
-            let wavs: Vec<PathBuf> = parts.iter().map(|p| p.0.clone()).collect();
+            let spoken = voice::speak(&say, &spec, &cache)?;
+            let lines: Vec<f64> = spoken.sentences.iter().map(|s| s.seconds).collect();
+            let wavs: Vec<PathBuf> = spoken.sentences.iter().map(|s| s.wav.clone()).collect();
             let track = voice::compose(&wavs, &voice::sequential_starts(&lines), &cache)?;
-            println!("scene {}: {} sentences, {:.1} s of speech", i + 1, parts.len(), lines.iter().sum::<f64>());
-            Some(Narration { wav: track.wav, seconds: track.seconds, text: say, parts: parts.into_iter().map(|p| (p.0, p.1)).collect() })
+            println!("scene {}: {} sentences, {} cues, {:.1} s of speech", i + 1, lines.len(), spoken.cues.len(), lines.iter().sum::<f64>());
+            Some(Narration {
+                wav: track.wav,
+                seconds: track.seconds,
+                text: say,
+                parts: spoken.sentences.into_iter().map(|s| (s.wav, s.text)).collect(),
+                cues: spoken.cues,
+            })
         };
         scenes.push(SceneSpec { path, title: format!("Scene {}", i + 1), key_time: None, expected: None, narration });
     }

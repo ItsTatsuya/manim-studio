@@ -3,7 +3,8 @@
 //!
 //! ```text
 //! manim-studio render-worker --script scenes/03-unroll.ts --root <video> [--timeout 600]
-//!     [--narration track.wav | --narration-part s1.wav --narration-part s2.wav ... --narration-starts out.starts]
+//!     [--narration track.wav | --narration-part s1.wav --narration-part s2.wav ... --narration-starts out.starts
+//!      --narration-cues '[{"id":"c20","line":1,"at":1.2}]']
 //!     [manim flags: -r 1920x1080 --fps 30 --format mp4 -o out.mp4 --theme style.json --fonts DIR ...]
 //! ```
 //!
@@ -41,6 +42,7 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
     let mut narration: Option<PathBuf> = None;
     let mut parts: Vec<PathBuf> = Vec::new();
     let mut starts_file: Option<PathBuf> = None;
+    let mut cues: Vec<crate::cues::CueTime> = Vec::new();
     let mut silence = false;
     let mut rest = Vec::new();
     let mut it = args.into_iter();
@@ -51,6 +53,9 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
             "--narration" => narration = Some(it.next().context("--narration needs a WAV file")?.into()),
             "--narration-part" => parts.push(it.next().context("--narration-part needs a WAV file")?.into()),
             "--narration-starts" => starts_file = Some(it.next().context("--narration-starts needs a path")?.into()),
+            "--narration-cues" => {
+                cues = serde_json::from_str(&it.next().context("--narration-cues needs JSON")?).context("reading --narration-cues")?;
+            }
             "--silence" => silence = true,
             "--timeout" => {
                 timeout = Duration::from_secs_f64(it.next().context("--timeout needs seconds")?.parse()?);
@@ -87,7 +92,7 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
     if let Some(n) = seconds {
         let dry = ScriptHost::load(&script, options.clone())?;
         let scene = scene_of(&dry)?;
-        dry.set_global_json("NARRATION", &crate::preview::narration_json(n, &lines))?;
+        dry.set_global_json("NARRATION", &crate::preview::narration_json(n, &lines, &cues))?;
         crate::preview::install_hooks(&dry, None)?;
         let mut c = config.clone();
         c.dry_run = true;
@@ -105,7 +110,7 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
     let host = ScriptHost::load(&script, options)?;
     let scene = scene_of(&host)?;
     if let Some(n) = seconds {
-        host.set_global_json("NARRATION", &crate::preview::narration_json(n, &lines))?;
+        host.set_global_json("NARRATION", &crate::preview::narration_json(n, &lines, &cues))?;
     }
     crate::preview::install_hooks(&host, plan.as_ref())?;
     let events = manim::events::Events::new(config.progress);

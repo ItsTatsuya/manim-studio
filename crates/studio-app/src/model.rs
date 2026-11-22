@@ -301,6 +301,8 @@ pub struct VoiceLine {
     pub parts: Vec<VoicePart>,
     /// Where each sentence starts in the track (seconds).
     pub starts: Vec<f32>,
+    /// When each cue mark is spoken, after its sentence starts.
+    pub cues: Vec<studio_render::cues::CueTime>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -320,7 +322,7 @@ impl VoiceLine {
 #[derive(Clone, Debug)]
 pub struct Scene {
     pub title: String,
-    /// Narration.
+    /// Narration as written, cue marks included. Show [`Scene::spoken`] to read.
     pub say: String,
     /// What appears on screen (drawing terms, for the assistant).
     pub visual: String,
@@ -333,6 +335,11 @@ pub struct Scene {
 }
 
 impl Scene {
+    /// The narration as it is heard: without cue marks.
+    pub fn spoken(&self) -> String {
+        studio_render::voice::plain(&self.say)
+    }
+
     /// Real length when the engine has run the scene, else the planned one.
     pub fn length(&self) -> f32 {
         self.engine.duration.unwrap_or(self.seconds as f32)

@@ -829,6 +829,7 @@ impl Workspace {
                         globals: vec![],
                         narration: s.engine.voice.as_ref().map(|v| v.seconds as f64),
                         narration_lines: s.engine.voice.as_ref().map(crate::model::VoiceLine::lines).unwrap_or_default(),
+                        narration_cues: s.engine.voice.as_ref().map(|v| v.cues.clone()).unwrap_or_default(),
                     },
                 ))
             })
@@ -971,6 +972,7 @@ impl Workspace {
                     globals: vec![],
                     narration: s.engine.voice.as_ref().map(|v| v.seconds as f64),
                     narration_lines: s.engine.voice.as_ref().map(crate::model::VoiceLine::lines).unwrap_or_default(),
+                    narration_cues: s.engine.voice.as_ref().map(|v| v.cues.clone()).unwrap_or_default(),
                 };
                 Some((i, file, req))
             })
@@ -1369,7 +1371,7 @@ mod tests {
     }
 
     fn voice() -> VoiceLine {
-        VoiceLine { wav: "track.wav".into(), seconds: 3.0, text: "Hello.".into(), parts: Vec::new(), starts: Vec::new() }
+        VoiceLine { wav: "track.wav".into(), seconds: 3.0, text: "Hello.".into(), parts: Vec::new(), starts: Vec::new(), cues: Vec::new() }
     }
 
     // A build gives storyboard scenes (no script yet, narration already spoken) their files:

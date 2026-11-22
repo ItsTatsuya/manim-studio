@@ -9,6 +9,7 @@ use std::sync::{Mutex, OnceLock};
 use anyhow::{Context, Result, bail};
 
 use crate::cache::Fnv;
+use crate::cues::CueTime;
 
 /// Which voice and how fast.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -73,6 +74,7 @@ pub fn espeak() -> Option<crate::kokoro::espeak::Espeak> {
 /// Drop the loaded model so the next line reloads it (e.g. to pick up espeak-ng).
 pub fn reset_kokoro() {
     *crate::lock(&KOKORO) = None;
+    crate::kokoro::forget_dictionaries();
 }
 
 impl VoiceSpec {
@@ -185,44 +187,64 @@ pub fn line(text: &str, spec: &VoiceSpec, cache_dir: &Path) -> Result<Line> {
 /// or not.
 pub const SENTENCE_GAP: f64 = 0.4;
 
-/// A narration line split into sentences (short fragments join the sentence before).
-pub fn sentences(text: &str) -> Vec<String> {
-    let out = split_sentences(text);
-    let mut merged: Vec<String> = Vec::new();
-    for s in out {
-        match merged.last_mut() {
-            Some(prev) if s.split_whitespace().count() < 3 => {
-                prev.push(' ');
-                prev.push_str(&s);
-            }
-            _ => merged.push(s),
-        }
-    }
-    merged
+/// A narration script's sentences, without cue marks (short fragments join the sentence
+/// before).
+pub use studio_script::sentences;
+
+/// A script as it is heard and shown: without cue marks.
+pub use studio_script::strip as plain;
+
+/// One spoken sentence.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpokenSentence {
+    pub wav: PathBuf,
+    pub seconds: f64,
+    /// The words spoken (no cue marks).
+    pub text: String,
 }
 
-/// Split at `.`, `!` or `?` that is followed by whitespace or the end of the text, so
-/// "3.14" stays whole. Every piece is trimmed and non-empty. Shared by [`sentences`] and
-/// the caption cues, so both agree on where a sentence ends.
-fn split_sentences(text: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    let chars: Vec<char> = text.chars().collect();
-    for (i, &ch) in chars.iter().enumerate() {
-        cur.push(ch);
-        let end = matches!(ch, '.' | '!' | '?') && chars.get(i + 1).is_none_or(|c| c.is_whitespace());
-        if end {
-            let s = cur.trim().to_string();
-            if !s.is_empty() {
-                out.push(s);
-            }
-            cur.clear();
+/// A narration script, spoken.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Spoken {
+    pub sentences: Vec<SpokenSentence>,
+    pub cues: Vec<CueTime>,
+}
+
+/// Speak a script sentence by sentence (each cached, so the scene can place it) and time
+/// its cue marks.
+pub fn speak(script: &str, spec: &VoiceSpec, cache_dir: &Path) -> Result<Spoken> {
+    let mut spoken = Spoken { sentences: Vec::new(), cues: Vec::new() };
+    for (i, sentence) in studio_script::marked_sentences(script).into_iter().enumerate() {
+        let Line { wav, seconds } = line(&sentence.text, spec, cache_dir)?;
+        if !sentence.marks.is_empty() {
+            let words = word_times(&sentence.text, spec, &wav, seconds);
+            spoken.cues.extend(crate::cues::resolve(i + 1, &sentence, &words, seconds));
         }
+        spoken.sentences.push(SpokenSentence { wav, seconds, text: sentence.text });
     }
-    if !cur.trim().is_empty() {
-        out.push(cur.trim().to_string());
+    Ok(spoken)
+}
+
+/// When each word of a spoken sentence starts, kept beside its WAV.
+fn word_times(text: &str, spec: &VoiceSpec, wav: &Path, seconds: f64) -> Vec<crate::cues::Word> {
+    let stored = wav.with_extension("words.json");
+    if let Some(words) = crate::cues::load(&stored) {
+        return words;
     }
-    out
+    let timed = crate::guard(|| {
+        let g2p = crate::kokoro::g2p_for(kokoro_dir().context("no voice folder")?, spec.voice_id())?;
+        let quiet = crate::cues::silences(&read_wav(wav)?);
+        Ok(crate::cues::word_times(text, seconds, &quiet, |t| g2p.phonemize(t)))
+    });
+    match timed {
+        Ok(words) => {
+            // Only a cache: if it can't be written the times are worked out again.
+            let _ = crate::cues::store(&stored, &words);
+            words
+        }
+        // Without the dictionaries a cue is still close, and narration must not fail for it.
+        Err(_) => crate::cues::spelled_word_times(text, seconds),
+    }
 }
 
 /// Sentences one after another from 0 with `SENTENCE_GAP` between them.
@@ -372,7 +394,7 @@ pub struct Cue {
 /// Split a scene's narration into sentence cues spread over `seconds` by word count,
 /// starting at `offset`.
 pub fn cues(text: &str, offset: f64, seconds: f64) -> Vec<Cue> {
-    let sentences = split_sentences(text);
+    let sentences = studio_script::split_sentences(&studio_script::strip(text));
     // Long sentences split at commas so a cue stays readable (~12 words).
     let mut parts: Vec<String> = Vec::new();
     for s in sentences {
@@ -457,6 +479,12 @@ mod tests {
         assert_eq!(c.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["Pi is about 3.14 here.", "It never ends!"]);
         let c = cues("Take 2.5 and 0.75", 0.0, 2.0);
         assert_eq!(c.len(), 1);
+    }
+
+    #[test]
+    fn captions_never_show_cue_marks() {
+        let c = cues("If r is ten, c is {c20}twenty. {line}They line up.", 0.0, 4.0);
+        assert_eq!(c.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["If r is ten, c is twenty.", "They line up."]);
     }
 
     fn wav_bytes(rate: u32, channels: u16, samples: usize) -> Vec<u8> {

@@ -17,6 +17,7 @@
 mod fetch;
 pub mod tools;
 pub mod cache;
+pub mod cues;
 pub mod events;
 pub mod export;
 pub mod fonts;

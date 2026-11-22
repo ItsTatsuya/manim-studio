@@ -513,6 +513,7 @@ impl Workspace {
             globals: vec![],
             narration: v.scenes.get(scene)?.engine.voice.as_ref().map(|l| l.seconds as f64),
             narration_lines: v.scenes.get(scene)?.engine.voice.as_ref().map(VoiceLine::lines).unwrap_or_default(),
+            narration_cues: v.scenes.get(scene)?.engine.voice.as_ref().map(|l| l.cues.clone()).unwrap_or_default(),
         })
     }
 
@@ -920,24 +921,18 @@ impl Workspace {
                                 return (i, text, Ok(None));
                             }
                             // Each sentence on its own, so the scene can place it.
-                            let spoken: Result<Vec<VoicePart>, String> = studio_render::voice::sentences(&text)
-                                .into_iter()
-                                .map(|s| {
-                                    studio_render::voice::line(&s, &spec, &cache)
-                                        .map(|l| VoicePart { wav: l.wav, seconds: l.seconds as f32, text: s })
-                                        .map_err(|e| format!("{e:#}"))
+                            let line = studio_render::voice::speak(&text, &spec, &cache)
+                                .and_then(|spoken| {
+                                    if spoken.sentences.is_empty() {
+                                        return Ok(None);
+                                    }
+                                    let lines: Vec<f64> = spoken.sentences.iter().map(|s| s.seconds).collect();
+                                    let starts = studio_render::voice::sequential_starts(&lines);
+                                    let wavs: Vec<PathBuf> = spoken.sentences.iter().map(|s| s.wav.clone()).collect();
+                                    let track = studio_render::voice::compose(&wavs, &starts, &cache)?;
+                                    Ok(Some((track, spoken, starts)))
                                 })
-                                .collect();
-                            let line = spoken.and_then(|parts| {
-                                if parts.is_empty() {
-                                    return Ok(None);
-                                }
-                                let lines: Vec<f64> = parts.iter().map(|p| p.seconds as f64).collect();
-                                let starts = studio_render::voice::sequential_starts(&lines);
-                                let wavs: Vec<PathBuf> = parts.iter().map(|p| p.wav.clone()).collect();
-                                let track = studio_render::voice::compose(&wavs, &starts, &cache).map_err(|e| format!("{e:#}"))?;
-                                Ok(Some((track, parts, starts)))
-                            });
+                                .map_err(|e| format!("{e:#}"));
                             (i, text, line)
                         })
                         .collect::<Vec<_>>()
@@ -963,12 +958,13 @@ impl Workspace {
                                 continue;
                             }
                         };
-                        let new = line.map(|(l, parts, starts)| VoiceLine {
+                        let new = line.map(|(l, spoken, starts)| VoiceLine {
                             wav: l.wav,
                             seconds: l.seconds as f32,
                             text,
-                            parts,
+                            parts: spoken.sentences.into_iter().map(|s| VoicePart { wav: s.wav, seconds: s.seconds as f32, text: s.text }).collect(),
                             starts: starts.iter().map(|s| *s as f32).collect(),
+                            cues: spoken.cues,
                         });
                         if s.engine.voice != new {
                             s.engine.voice = new;
@@ -1210,6 +1206,7 @@ impl Workspace {
             globals: vec![],
             narration: None,
             narration_lines: vec![],
+            narration_cues: vec![],
         })
     }
 
@@ -1569,8 +1566,9 @@ impl Workspace {
                     narration: s.engine.voice.as_ref().map(|v| studio_render::queue::Narration {
                         wav: v.wav.clone(),
                         seconds: v.seconds as f64,
-                        text: v.text.clone(),
+                        text: studio_render::voice::plain(&v.text),
                         parts: v.parts.iter().map(|p| (p.wav.clone(), p.text.clone())).collect(),
+                        cues: v.cues.clone(),
                     }),
                 })
             })
