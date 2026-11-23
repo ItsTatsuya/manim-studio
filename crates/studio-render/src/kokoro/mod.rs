@@ -235,7 +235,7 @@ mod runtime {
 }
 
 /// ONNX Runtime allows one environment per process; share it between model loads.
-fn environment(dir: &Path) -> Result<&'static ort::environment::Environment> {
+pub(crate) fn environment(dir: &Path) -> Result<&'static ort::environment::Environment> {
     static ENV: std::sync::OnceLock<ort::environment::Environment> = std::sync::OnceLock::new();
     if let Some(env) = ENV.get() {
         return Ok(env);
@@ -243,6 +243,26 @@ fn environment(dir: &Path) -> Result<&'static ort::environment::Environment> {
     let builder = ort::init_from(dir.join(runtime::FILE)).map_err(|e| anyhow::anyhow!("loading the voice runtime: {e}"))?;
     let env = builder.with_name("manim-studio").with_telemetry(false).build()?;
     Ok(ENV.get_or_init(|| env))
+}
+
+/// Whether the ONNX Runtime library is in `dir` (shared by every voice that runs on it).
+pub(crate) fn runtime_present(dir: &Path) -> bool {
+    supported() && runtime::present(dir)
+}
+
+/// What fetching the ONNX Runtime library transfers.
+pub(crate) const RUNTIME_DOWNLOAD: u64 = runtime::DOWNLOAD;
+
+/// Fetch the ONNX Runtime library into `dir` unless it is there.
+pub(crate) fn download_runtime(dir: &Path, cancel: &AtomicBool, progress: impl FnMut(u64)) -> Result<()> {
+    if !supported() {
+        bail!("{UNSUPPORTED}");
+    }
+    std::fs::create_dir_all(dir)?;
+    if runtime::present(dir) {
+        return Ok(());
+    }
+    runtime::download(dir, cancel, progress)
 }
 
 /// Dictionaries already read, by folder and accent: the model and the cue timing share
@@ -383,7 +403,7 @@ const BREATH: f32 = 0.28;
 pub(crate) const EDGE: f32 = 0.06;
 
 /// The samples between the first and last audible sound, with a short edge kept.
-fn trim_silence(wave: &[f32]) -> &[f32] {
+pub(crate) fn trim_silence(wave: &[f32]) -> &[f32] {
     const THRESHOLD: f32 = 0.012;
     let edge = (EDGE * SAMPLE_RATE as f32) as usize;
     match (wave.iter().position(|s| s.abs() > THRESHOLD), wave.iter().rposition(|s| s.abs() > THRESHOLD)) {

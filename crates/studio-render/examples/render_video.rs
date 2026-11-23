@@ -31,7 +31,7 @@ fn main() -> Result<()> {
         .as_array()
         .map(|a| a.iter().map(|b| b["say"].as_str().unwrap_or("").to_string()).collect())
         .unwrap_or_default();
-    let spec = voice::VoiceSpec { voice: None, rate: 1.0 };
+    let spec = voice::VoiceSpec { voice: None, rate: 1.0, ..Default::default() };
     let cache = voice::cache_dir(&dir);
     let mut scenes = Vec::new();
     for (i, path) in sample::scene_files(&dir).into_iter().enumerate() {

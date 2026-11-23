@@ -1,6 +1,10 @@
-//! Narration: text to a WAV file with Kokoro, the natural voice that runs on this
-//! computer (downloaded once from Settings or onboarding). Each line is cached by a
-//! hash of its text and voice settings.
+//! Narration: text to a WAV file with a voice that runs on this computer: Kokoro, the
+//! default, or Chatterbox, which speaks in the voice of a reference clip (each downloaded
+//! once from Settings). Each line is cached by a hash of its text and voice settings.
+//!
+//! An engine hands back raw 24 kHz samples; the quiet around them is trimmed here, once,
+//! for every engine, because the word timing behind `{cue}` marks ([`crate::cues`]) assumes
+//! speech starts and ends within a short edge of the file.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -11,9 +15,40 @@ use anyhow::{Context, Result, bail};
 use crate::cache::Fnv;
 use crate::cues::CueTime;
 
+/// What turns text into speech.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Engine {
+    /// Kokoro-82M: eleven ready-made voices, adjustable speed. The default.
+    #[default]
+    Kokoro,
+    /// Chatterbox Turbo: speaks like a reference clip (voice cloning), at one speed.
+    Chatterbox,
+}
+
+impl Engine {
+    pub const ALL: [Engine; 2] = [Engine::Kokoro, Engine::Chatterbox];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Engine::Kokoro => "Kokoro",
+            Engine::Chatterbox => "Chatterbox (your own voice)",
+        }
+    }
+
+    /// Whether the speed setting changes how this engine speaks.
+    pub fn has_speed(self) -> bool {
+        self == Engine::Kokoro
+    }
+}
+
 /// Which voice and how fast.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VoiceSpec {
+    /// Which engine speaks. Kokoro unless a teacher chose otherwise.
+    pub engine: Engine,
+    /// Chatterbox: the reference clip to sound like (a prepared clip, see
+    /// [`crate::chatterbox::prepare_reference`]).
+    pub reference: Option<PathBuf>,
     /// A Kokoro voice id ([`crate::kokoro::VOICES`]). `None`, or an id Kokoro doesn't
     /// know (such as a system voice saved by an older version), uses the default voice.
     pub voice: Option<String>,
@@ -32,6 +67,8 @@ pub struct Speaker {
 pub const NOT_DOWNLOADED: &str = "The natural voice isn't downloaded yet (Settings → Voice & captions)";
 
 static KOKORO_DIR: OnceLock<PathBuf> = OnceLock::new();
+static CHATTERBOX_DIR: OnceLock<PathBuf> = OnceLock::new();
+static CHATTERBOX: Mutex<Option<crate::chatterbox::Chatterbox>> = Mutex::new(None);
 /// 0 = High, 1 = Standard (see [`crate::kokoro::Quality`]).
 static KOKORO_QUALITY: AtomicU8 = AtomicU8::new(0);
 static KOKORO: Mutex<Option<crate::kokoro::Kokoro>> = Mutex::new(None);
@@ -43,6 +80,21 @@ pub fn set_kokoro_dir(dir: PathBuf) {
 
 pub fn kokoro_dir() -> Option<&'static Path> {
     KOKORO_DIR.get().map(PathBuf::as_path)
+}
+
+/// Where the Chatterbox model lives (call once at startup).
+pub fn set_chatterbox_dir(dir: PathBuf) {
+    let _ = CHATTERBOX_DIR.set(dir);
+}
+
+pub fn chatterbox_dir() -> Option<&'static Path> {
+    CHATTERBOX_DIR.get().map(PathBuf::as_path)
+}
+
+/// The Chatterbox voice is downloaded. It runs on the ONNX Runtime library that sits with
+/// Kokoro's files.
+pub fn chatterbox_ready() -> bool {
+    matches!((chatterbox_dir(), kokoro_dir()), (Some(m), Some(r)) if crate::chatterbox::installed(m, r))
 }
 
 /// The model quality the user picked (it may not be downloaded yet).
@@ -74,6 +126,7 @@ pub fn espeak() -> Option<crate::kokoro::espeak::Espeak> {
 /// Drop the loaded model so the next line reloads it (e.g. to pick up espeak-ng).
 pub fn reset_kokoro() {
     *crate::lock(&KOKORO) = None;
+    *crate::lock(&CHATTERBOX) = None;
     crate::kokoro::forget_dictionaries();
 }
 
@@ -86,6 +139,15 @@ impl VoiceSpec {
         }
     }
 
+    /// This voice can speak now: its engine's model is downloaded, and Chatterbox has a
+    /// reference clip.
+    pub fn ready(&self) -> bool {
+        match self.engine {
+            Engine::Kokoro => kokoro_ready(),
+            Engine::Chatterbox => chatterbox_ready() && self.reference.as_deref().is_some_and(Path::is_file),
+        }
+    }
+
     /// `None` until the natural voice is downloaded.
     pub fn speaker(&self) -> Option<Speaker> {
         Some(Speaker { voice: self.voice_id().to_string(), quality: kokoro_usable()? })
@@ -95,6 +157,14 @@ impl VoiceSpec {
         let mut h = Fnv::default();
         h.write(b"voice-v3");
         h.write(text.as_bytes());
+        if self.engine == Engine::Chatterbox {
+            // Another model, and another voice for every reference clip. It has no speed.
+            h.write(b"Chatterbox(turbo-q4)");
+            if let Some(clip) = self.reference.as_deref().and_then(|p| std::fs::read(p).ok()) {
+                h.write(&clip);
+            }
+            return h.finish();
+        }
         let speaker = self.speaker();
         // Same text as the old `Speaker::Kokoro(id, quality)` debug form, so cached lines stay valid.
         if let Some(Speaker { voice, quality }) = &speaker {
@@ -119,6 +189,17 @@ pub fn synthesize(text: &str, spec: &VoiceSpec, out: &Path) -> Result<f64> {
     if !crate::kokoro::supported() {
         bail!("{}", crate::kokoro::UNSUPPORTED);
     }
+    let samples = match spec.engine {
+        Engine::Kokoro => speak_kokoro(text, spec)?,
+        Engine::Chatterbox => speak_chatterbox(text, spec)?,
+    };
+    crate::kokoro::write_wav(&tmp, &samples)?;
+    let secs = wav_seconds(&tmp)?;
+    std::fs::rename(&tmp, out)?;
+    Ok(secs)
+}
+
+fn speak_kokoro(text: &str, spec: &VoiceSpec) -> Result<Vec<f32>> {
     let Speaker { voice, quality } = spec.speaker().context(NOT_DOWNLOADED)?;
     let dir = kokoro_dir().context("no voice folder")?;
     let mut slot = crate::lock(&KOKORO);
@@ -131,12 +212,39 @@ pub fn synthesize(text: &str, spec: &VoiceSpec, out: &Path) -> Result<f64> {
     if spoken.as_ref().err().is_some_and(crate::is_engine_panic) {
         *slot = None;
     }
-    let samples = spoken?;
-    drop(slot);
-    crate::kokoro::write_wav(&tmp, &samples)?;
-    let secs = wav_seconds(&tmp)?;
-    std::fs::rename(&tmp, out)?;
-    Ok(secs)
+    spoken
+}
+
+/// Shown when Chatterbox is asked to speak without a model or a reference clip.
+pub const CHATTERBOX_MISSING: &str = "The Chatterbox voice isn't ready: download it and choose a reference clip (Settings → Voice & captions)";
+
+fn speak_chatterbox(text: &str, spec: &VoiceSpec) -> Result<Vec<f32>> {
+    if !spec.ready() {
+        bail!("{CHATTERBOX_MISSING}");
+    }
+    let (models, runtime) = (chatterbox_dir().context("no voice folder")?, kokoro_dir().context("no voice folder")?);
+    let reference = read_wav(spec.reference.as_deref().context(CHATTERBOX_MISSING)?)?;
+    let mut slot = crate::lock(&CHATTERBOX);
+    if slot.is_none() {
+        *slot = Some(crate::guard(|| crate::chatterbox::Chatterbox::load(models, runtime))?);
+    }
+    let spoken = crate::guard(|| slot.as_mut().expect("loaded").speak(text, &reference));
+    if spoken.as_ref().err().is_some_and(crate::is_engine_panic) {
+        *slot = None;
+    }
+    Ok(finish_speech(&spoken?))
+}
+
+/// An engine's raw samples as narration: the quiet around the speech goes, so cue timing
+/// counts from the first sound and the scene adds the gap between sentences, and the
+/// loudest peak is held under full scale (the model's output can overshoot, which would
+/// clip).
+fn finish_speech(raw: &[f32]) -> Vec<f32> {
+    const CEILING: f32 = 0.95;
+    let trimmed = crate::kokoro::trim_silence(raw);
+    let peak = trimmed.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+    let scale = if peak > CEILING { CEILING / peak } else { 1.0 };
+    trimmed.iter().map(|s| s * scale).collect()
 }
 
 /// Length of a PCM WAV file in seconds (reads the RIFF header).
@@ -232,7 +340,10 @@ fn word_times(text: &str, spec: &VoiceSpec, wav: &Path, seconds: f64) -> Vec<cra
         return words;
     }
     let timed = crate::guard(|| {
-        let g2p = crate::kokoro::g2p_for(kokoro_dir().context("no voice folder")?, spec.voice_id())?;
+        // Chatterbox speaks US English, and reads the same dictionaries Kokoro does; without
+        // them (Kokoro never downloaded) the fallback below counts by spelling.
+        let accent = if spec.engine == Engine::Kokoro { spec.voice_id() } else { crate::kokoro::DEFAULT_VOICE };
+        let g2p = crate::kokoro::g2p_for(kokoro_dir().context("no voice folder")?, accent)?;
         let quiet = crate::cues::silences(&read_wav(wav)?);
         Ok(crate::cues::word_times(text, seconds, &quiet, |t| g2p.phonemize(t)))
     });
@@ -265,7 +376,7 @@ pub fn sequential_starts(lines: &[f64]) -> Vec<f64> {
 /// wild start time must not ask for gigabytes.
 const MAX_SAMPLES: usize = 24_000 * 3600;
 
-fn read_wav(path: &Path) -> Result<Vec<f32>> {
+pub(crate) fn read_wav(path: &Path) -> Result<Vec<f32>> {
     let b = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     parse_wav(&b).with_context(|| format!("reading {}", path.display()))
 }
@@ -466,6 +577,82 @@ mod tests {
     #[test]
     fn splits_sentences() {
         assert_eq!(sentences("Here's a pizza. If we double it, do we? Yes. Let's see!"), vec!["Here's a pizza.", "If we double it, do we? Yes. Let's see!"]);
+    }
+
+    /// Whatever an engine puts around its speech, cue timing sees speech start and end
+    /// within the usual short edge, and loud output does not clip.
+    #[test]
+    fn engine_output_is_trimmed_for_cue_timing() {
+        let rate = crate::kokoro::SAMPLE_RATE as usize;
+        let mut raw = vec![0.0f32; rate * 3 / 2];
+        raw.extend((0..rate * 2).map(|i| 1.4 * (i as f32 * 0.07).sin()));
+        raw.extend(vec![0.0f32; rate * 2]);
+        let kept = finish_speech(&raw);
+        let edge = (crate::kokoro::EDGE * rate as f32) as usize;
+        assert!((kept.len() as i64 - (rate * 2 + 2 * edge) as i64).abs() < 2 * edge as i64, "{}", kept.len());
+        assert!(kept.iter().all(|s| s.abs() <= 0.951), "held under full scale");
+        // The first word starts at the edge, not at the 1.5 s the engine left empty.
+        let seconds = kept.len() as f64 / rate as f64;
+        let words = crate::cues::word_times("bbbb bbbb", seconds, &crate::cues::silences(&kept), |t| t.to_string());
+        assert!((words[0].start - f64::from(crate::kokoro::EDGE)).abs() < 0.01, "{words:?}");
+        assert!(words[1].start < seconds - 0.2, "{words:?}");
+        assert!(finish_speech(&vec![0.0; 1000]).is_empty());
+    }
+
+    /// With the real models (set `CHATTERBOX_DIR`, `CHATTERBOX_RUNTIME`, `CHATTERBOX_REFERENCE`;
+    /// skipped otherwise): a marked script is spoken by Chatterbox and its cues are timed
+    /// from the audio like Kokoro's, for any engine.
+    #[test]
+    fn chatterbox_lines_get_cue_times() {
+        let var = |k: &str| std::env::var_os(k).map(PathBuf::from);
+        let (Some(models), Some(runtime), Some(clip)) = (var("CHATTERBOX_DIR"), var("CHATTERBOX_RUNTIME"), var("CHATTERBOX_REFERENCE")) else { return };
+        set_chatterbox_dir(models);
+        set_kokoro_dir(runtime);
+        let dir = std::env::temp_dir().join(format!("studio-cb-speak-{}", std::process::id()));
+        let reference = dir.join("reference.wav");
+        crate::chatterbox::prepare_reference(&clip, &reference).unwrap();
+        let spec = VoiceSpec { engine: Engine::Chatterbox, reference: Some(reference), ..Default::default() };
+        assert!(spec.ready());
+        let spoken = speak("If r is ten, then c is {c20}twenty. And {d}they line up exactly.", &spec, &dir).unwrap();
+        assert_eq!(spoken.sentences.len(), 2);
+        assert_eq!(spoken.cues.len(), 2);
+        let edge = f64::from(crate::kokoro::EDGE);
+        for (cue, sentence) in spoken.cues.iter().zip(&spoken.sentences) {
+            eprintln!("{} at {:.2} of {:.2} s", cue.id, cue.at, sentence.seconds);
+            assert!(cue.at > edge && cue.at < sentence.seconds, "{cue:?}");
+        }
+        // The first cue is near the end of its sentence, the second near the start of the second half.
+        assert!(spoken.cues[0].at > spoken.sentences[0].seconds * 0.5, "{:?}", spoken.cues);
+        for s in &spoken.sentences {
+            let samples = read_wav(&s.wav).unwrap();
+            let loud = |x: &[f32]| x.iter().any(|v| v.abs() > 0.02);
+            let edge_samples = (0.2 * crate::kokoro::SAMPLE_RATE as f64) as usize;
+            assert!(loud(&samples[..edge_samples]) && loud(&samples[samples.len() - edge_samples..]), "speech reaches both ends of {}", s.text);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn engines_and_speeds() {
+        assert_eq!(VoiceSpec::default().engine, Engine::Kokoro, "Kokoro stays the default");
+        assert!(Engine::Kokoro.has_speed() && !Engine::Chatterbox.has_speed());
+        // A Chatterbox line never shares a cached file with a Kokoro line, and each reference clip is its own voice.
+        let dir = std::env::temp_dir().join(format!("studio-engine-key-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a.wav"), dir.join("b.wav"));
+        crate::kokoro::write_wav(&a, &vec![0.1; 4000]).unwrap();
+        crate::kokoro::write_wav(&b, &vec![0.2; 4000]).unwrap();
+        let spec = |engine, reference: Option<&PathBuf>| VoiceSpec { engine, reference: reference.cloned(), rate: 1.0, ..Default::default() };
+        let keys = [
+            spec(Engine::Kokoro, None).key("Hello."),
+            spec(Engine::Chatterbox, Some(&a)).key("Hello."),
+            spec(Engine::Chatterbox, Some(&b)).key("Hello."),
+        ];
+        assert!(keys[0] != keys[1] && keys[1] != keys[2] && keys[0] != keys[2]);
+        let slow = VoiceSpec { rate: 0.8, ..spec(Engine::Chatterbox, Some(&a)) };
+        assert_eq!(slow.key("Hello."), keys[1], "no speed control, so no new cache entry for it");
+        assert!(!spec(Engine::Chatterbox, Some(&a)).ready(), "not without the model");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

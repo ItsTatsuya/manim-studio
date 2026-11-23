@@ -870,7 +870,7 @@ impl Workspace {
     }
 
     fn voice_spec(&self) -> studio_render::voice::VoiceSpec {
-        studio_render::voice::VoiceSpec { voice: self.prefs.voice.clone(), rate: SPEEDS[self.prefs.speed.min(SPEEDS.len() - 1)].1 }
+        studio_render::voice::VoiceSpec { voice: self.prefs.voice.clone(), rate: SPEEDS[self.prefs.speed.min(SPEEDS.len() - 1)].1, ..Default::default() }
     }
 
     /// Speak every scene's narration line of `video` in the background (cached per line),

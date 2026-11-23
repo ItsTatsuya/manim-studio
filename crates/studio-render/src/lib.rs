@@ -17,6 +17,7 @@
 mod fetch;
 pub mod tools;
 pub mod cache;
+pub mod chatterbox;
 pub mod cues;
 pub mod kit;
 pub mod events;
