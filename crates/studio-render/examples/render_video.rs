@@ -31,7 +31,7 @@ fn main() -> Result<()> {
         .as_array()
         .map(|a| a.iter().map(|b| b["say"].as_str().unwrap_or("").to_string()).collect())
         .unwrap_or_default();
-    let spec = voice::VoiceSpec { voice: None, rate: 1.0 };
+    let spec = voice::VoiceSpec { voice: None, rate: 1.0, ..Default::default() };
     let cache = voice::cache_dir(&dir);
     let mut scenes = Vec::new();
     for (i, path) in sample::scene_files(&dir).into_iter().enumerate() {
@@ -72,6 +72,7 @@ fn main() -> Result<()> {
         export: out.clone(),
         fonts_dir: None,
         captions: Captions::Srt,
+        audio: Default::default(),
         watermark: None,
         title: "Headless render".into(),
         slides: studio_render::slides::Formats { pdf: true, pptx: true },

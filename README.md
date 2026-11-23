@@ -62,6 +62,8 @@ crates/
     src/style.rs        house styles (Slate, Whiteboard, Clean, Phosphor, Playground, Documentary) as engine themes
     src/voice.rs        narration (Kokoro, else the system voice), WAV cache, captions
     src/kokoro/         Kokoro-82M on ONNX Runtime + misaki G2P port, model download
+    src/chatterbox/     optional second voice: Chatterbox Turbo (voice cloning) on the same runtime
+    src/mix.rs          music bed that ducks under the voice, soft sounds on dot pops and the answer box
     samples/            the bundled "Area of a circle" lesson, installed on first run
   studio-app/    the desktop binary (+ `studio-engine`, the console-subsystem render worker)
     src/app.rs          Workspace root: navigation, actions, key bindings, playback
@@ -151,6 +153,12 @@ when a variant wins on both tokens and quality.
   espeak-ng (GPL) is only ever run as a separate program, for words not in the dictionaries;
   Settings → Voice can fetch it on Windows (unpacked from the official MSI, no install).
   Distributing a build needs these projects' licence notices.
+- Optional second voice (Settings → Voice & captions → Voice engine): Chatterbox Turbo (MIT, English),
+  which speaks like a recording of the teacher (about 725 MB, same ONNX Runtime, nothing is sent anywhere).
+  Kokoro stays the default and speaks whenever Chatterbox isn't ready. Cue timing works for either engine.
+- Sound (same page, each switched off by default): a calm synthesized music bed that dips under the
+  narration, a soft tick on dot pops and a chime on the answer box. The lesson kit marks those moments
+  (`sfx:pop`, `sfx:answer`); the export mixes the sounds in, so no cached scene changes.
 - Watermarks (Settings → Rendering): text or an image, placed on a 3×3 grid with size,
   opacity, margin, colour and shadow, previewed live with the same geometry the export uses
   (`studio_render::export::place`). Drawn once on the exported MP4 in the same ffmpeg pass

@@ -93,6 +93,14 @@ pub struct Prefs {
     /// Index into `engine::SPEEDS`.
     pub speed: usize,
     pub watermark: WatermarkPrefs,
+    /// The music bed and soft sounds mixed into exported videos (all off by default).
+    pub audio: studio_render::mix::AudioMix,
+    /// Voice engine: index into `studio_render::voice::Engine::ALL` (Kokoro first).
+    pub voice_engine: usize,
+    /// Chatterbox: the prepared copy of the teacher's reference recording, in the data folder.
+    pub voice_reference: Option<std::path::PathBuf>,
+    /// The teacher said they may use the voice in the reference recording.
+    pub clone_consent: bool,
     /// Natural voice model: index into `studio_render::kokoro::Quality::ALL` (Standard first).
     pub voice_model: usize,
     /// 0 off, 1 .srt file, 2 burned in + .srt.
@@ -155,6 +163,10 @@ impl Default for Prefs {
             voice: None,
             speed: 1,
             watermark: WatermarkPrefs::default(),
+            audio: studio_render::mix::AudioMix::default(),
+            voice_engine: 0,
+            voice_reference: None,
+            clone_consent: false,
             voice_model: 0,
             captions: 1,
             slides: 0,
@@ -249,6 +261,7 @@ impl Prefs {
         self.house_style = self.house_style.min(studio_render::style::STYLES.len() - 1);
         self.repair_tries = self.repair_tries.min(MAX_REPAIR_TRIES);
         self.update_channel = self.update_channel.min(1);
+        self.voice_engine = self.voice_engine.min(studio_render::voice::Engine::ALL.len() - 1);
         self.volume = if self.volume.is_finite() { self.volume.clamp(0., 1.) } else { 1. };
         self
     }
@@ -280,6 +293,19 @@ mod tests {
         assert_eq!(p.house_style, studio_render::style::STYLES.len() - 1);
         assert_eq!(p.update_channel, 1);
         assert_eq!(p.volume, 1.0);
+    }
+
+    /// Settings saved before the second engine and the sound options keep working: Kokoro
+    /// speaks, captions stay as they were, and nothing is added to the audio.
+    #[test]
+    fn older_settings_keep_kokoro_and_add_no_sounds() {
+        let p: Prefs = serde_json::from_str(r#"{ "voice": "bf_emma", "speed": 2, "captions": 2 }"#).unwrap();
+        let p = p.sanitized();
+        assert_eq!(studio_render::voice::Engine::ALL[p.voice_engine], studio_render::voice::Engine::Kokoro);
+        assert_eq!((p.voice.as_deref(), p.speed, p.captions), (Some("bf_emma"), 2, 2));
+        assert!(!p.audio.any() && !p.clone_consent && p.voice_reference.is_none());
+        let wild: Prefs = serde_json::from_str(r#"{ "voice_engine": 40 }"#).unwrap();
+        assert_eq!(wild.sanitized().voice_engine, 1, "an unknown engine becomes the last one known, never a crash");
     }
 
     #[test]

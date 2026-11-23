@@ -1,4 +1,4 @@
-// Studio lesson kit v1. Studio keeps this file up to date; change scenes, not this file.
+// Studio lesson kit v2. Studio keeps this file up to date; change scenes, not this file.
 //
 // The pieces lessons are made of, each with its own entrance and emphasis, placed through
 // the layout regions. `const k = lesson(this);` once per scene, then e.g.
@@ -35,6 +35,13 @@ function numbers(m: Mobject): Mobject[] {
   return out;
 }
 type Fn = (x: number) => number;
+
+/**
+ * Soft sounds. Studio's player marks the moment a tagged animation starts (`sfx:pop`,
+ * `sfx:answer`) and the export puts a quiet sound there when the teacher has asked for it.
+ * Wrap the animation in another and the tag is lost: play pieces as they are returned.
+ */
+const sound = <A extends Animation>(a: A, kind: "pop" | "answer"): A => Object.assign(a, { __sfx: kind });
 
 /** What a piece adds to a mobject. */
 type Piece<T> = Mobject & T;
@@ -124,7 +131,7 @@ export function lesson(scene: Scene) {
     const content = sub ? VGroup(eq, Text(sub, { role: "caption", color: c.muted })).arrange(DOWN, { buff: 0.14 }) : eq;
     const { group } = panel(content, { fill: c.background, stroke: colour, padX: 0.45, padY: 0.28, tint: [colour, 0.22, 0.06], shadow: [0.35, 0.3, 0.2] });
     return Object.assign(group, {
-      enter: (): Animation => FadeIn(group, { scale: 0.85, ...POP }),
+      enter: (): Animation => sound(FadeIn(group, { scale: 0.85, ...POP }), "answer"),
     }) as Piece<{ enter(): Animation }>;
   }
 
@@ -192,9 +199,9 @@ export function lesson(scene: Scene) {
       dot(p: Point2, colour: string, label = ""): Animation {
         const d = inFigure(Dot(at(p), { color: colour, radius: 0.1, zIndex: 3 }));
         const pop = GrowFromCenter(d, POP);
-        if (!label) return pop;
+        if (!label) return sound(pop, "pop");
         const l = inFigure(MathTex(label, { color: colour, fontSize: 30 }).nextTo(d, UP, 0.15).shift([0.3, 0, 0]));
-        return AnimationGroup(pop, FadeIn(l));
+        return sound(AnimationGroup(pop, FadeIn(l)), "pop");
       },
       /** Where lines cross: a gold dot pulses twice, dashed guides drop to both axes, and gold numbers mark it there. */
       crossing(p: Point2, colour: string = c.accent): Animation {
@@ -213,10 +220,10 @@ export function lesson(scene: Scene) {
           .map((t) => all.reduce<Mobject | null>((best, n) => (dist(n.getCenter(), t.getCenter()) < (best ? dist(best.getCenter(), t.getCenter()) : 0.6) ? n : best), null))
           .filter((n): n is Mobject => n !== null);
         hidden.push(...hide);
-        return Succession(
+        return sound(Succession(
           GrowFromCenter(d, POP), pulse(), pulse(),
           AnimationGroup(Create(gx), Create(gy), ...hide.map((n) => n.animate.setOpacity(0)), ...tags.map((t) => FadeIn(t))),
-        );
+        ), "pop");
       },
       /** Rise over run on y = f(x), from x to x + run, with the slope written beside it. */
       slopeTriangle(f: Fn, x: number, run: number, label: string, colour: string = c.muted): Animation {

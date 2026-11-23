@@ -436,9 +436,79 @@ pub fn join_dissolve(
     Ok(())
 }
 
+/// Mix `extra` (the music bed and soft sounds, a WAV) into the audio of a joined video.
+/// The picture is copied untouched. `has_audio` says whether the video already carries
+/// narration; without it, `extra` becomes its only audio.
+pub fn add_audio(ffmpeg: &Path, video: &Path, extra: &Path, has_audio: bool, out: &Path, cancelled: &dyn Fn() -> bool) -> Result<()> {
+    let tmp = out.with_extension("partial.mp4");
+    let mut cmd = Command::new(ffmpeg);
+    cmd.args(["-y", "-hide_banner", "-loglevel", "error"]).arg("-i").arg(video).arg("-i").arg(extra);
+    if has_audio {
+        cmd.args([
+            "-filter_complex",
+            "[0:a]aresample=48000[n];[1:a]aresample=48000[x];[n][x]amix=inputs=2:normalize=0:duration=longest[a]",
+            "-map",
+            "0:v",
+            "-map",
+            "[a]",
+        ]);
+    } else {
+        cmd.args(["-map", "0:v", "-map", "1:a"]);
+    }
+    cmd.args(["-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]).arg(&tmp);
+    let (status, err) = match run_child(&mut cmd, cancelled) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+    };
+    if !status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        bail!("{}", last_line(&err));
+    }
+    std::fs::rename(&tmp, out).with_context(|| format!("writing {}", out.display()))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Needs ffmpeg (skipped otherwise): a bed is added to a silent video and mixed into a
+    /// voiced one, and the picture length does not change.
+    #[test]
+    fn mixes_extra_audio_into_the_video() {
+        let Some(ff) = crate::ffmpeg_path() else { return };
+        let dir = std::env::temp_dir().join(format!("studio-addaudio-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let make = |name: &str, audio: bool| {
+            let p = dir.join(name);
+            let mut c = Command::new(&ff);
+            c.args(["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=15:duration=2"]);
+            if audio {
+                c.args(["-f", "lavfi", "-i", "sine=frequency=330:duration=2", "-c:a", "aac", "-shortest"]);
+            }
+            assert!(quiet(c.args(["-pix_fmt", "yuv420p"]).arg(&p)).status().unwrap().success());
+            p
+        };
+        let extra = dir.join("extra.wav");
+        crate::kokoro::write_wav(&extra, &crate::mix::render(&[], 2.0, &[], crate::mix::AudioMix { music: true, ..Default::default() })).unwrap();
+        let probe = ff.with_file_name(if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" });
+        for has_audio in [false, true] {
+            let video = make(if has_audio { "voiced.mp4" } else { "silent.mp4" }, has_audio);
+            let out = dir.join(format!("out-{has_audio}.mp4"));
+            add_audio(&ff, &video, &extra, has_audio, &out, &|| false).unwrap();
+            if probe.is_file() {
+                let o = Command::new(&probe).args(["-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "csv=p=0"]).arg(&out).output().unwrap();
+                let text = String::from_utf8_lossy(&o.stdout);
+                assert!(text.contains("video") && text.contains("audio"), "{text}");
+                let v: f64 = text.lines().find(|l| l.starts_with("video")).and_then(|l| l.split(',').nth(1)).and_then(|d| d.parse().ok()).unwrap();
+                assert!((v - 2.0).abs() < 0.15, "{text}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// Needs ffmpeg: three 2 s clips dissolve into one 2 × 3 − 2 × 0.5 = 5 s video with audio.
     #[test]
