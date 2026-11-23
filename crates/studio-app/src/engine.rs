@@ -626,15 +626,8 @@ impl Workspace {
             margin: w.margin.clamp(WM_RANGES[2].0, WM_RANGES[2].1),
             color: WM_COLORS[w.color.min(WM_COLORS.len() - 1)].1.map(str::to_string),
             shadow: w.shadow,
+            until_last_scene: false,
         })
-    }
-
-    /// The watermark for videos in project `p`.
-    pub fn watermark_for(&self, p: usize) -> Option<studio_render::export::Watermark> {
-        if self.projects.get(p).is_none_or(|p| p.no_watermark) {
-            return None;
-        }
-        self.default_watermark()
     }
 
     /// Set watermark slider `ix` (size, opacity, margin) from window x-coordinate `x`.
@@ -1616,7 +1609,7 @@ impl Workspace {
                 2 => studio_render::queue::Captions::Burned,
                 _ => studio_render::queue::Captions::Srt,
             },
-            watermark: self.watermark_for(pi),
+            watermark: self.video_watermark((pi, vi)),
             title: video.title.clone(),
             slides: slide_formats(self.video_slides((pi, vi))),
         });

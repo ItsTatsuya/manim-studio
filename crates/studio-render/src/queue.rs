@@ -337,6 +337,8 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Arc<Shared>, tx: &asyn
     let lengths: Vec<f64> = starts.iter().enumerate().map(|(i, s)| starts.get(i + 1).copied().unwrap_or(duration) - s).collect();
     let fade = export::dissolve_for(&lengths);
     let starts: Vec<f64> = starts.iter().enumerate().map(|(i, s)| s - i as f64 * fade).collect();
+    // The corner logo stops where the end card (the last scene) begins.
+    let watermark_until = job.watermark.as_ref().filter(|w| w.until_last_scene && starts.len() > 1).and_then(|_| starts.last().copied());
     let duration = duration - fade * lengths.len().saturating_sub(1) as f64;
     let cues: Vec<crate::voice::Cue> = job
         .scenes
@@ -405,6 +407,7 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Arc<Shared>, tx: &asyn
             &export::Finish {
                 captions: burn.then_some(srt.as_path()),
                 watermark: job.watermark.as_ref(),
+                watermark_until,
                 font: font.as_deref(),
                 text_rgb: &export::rgb(color("text").as_deref(), "FFFFFF"),
                 shadow_rgb: &export::rgb(color("background").as_deref(), "000000"),

@@ -3,6 +3,9 @@
 //! sentences are always split on the text without them, so adding a mark never renumbers
 //! `this.narrate(n)`.
 
+pub mod latex;
+pub mod teacher;
+
 /// An id is at most this long.
 const MAX_ID: usize = 32;
 

@@ -139,11 +139,35 @@ fn unescape(s: &str) -> String {
     s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
 }
 
-/// Text inside `<{tag}>…</{tag}>` runs, with a newline at each `</{para}>`. One pass over
-/// the markup: every tag is looked at once.
-fn xml_text(xml: &str, tag: &str, para: &str) -> String {
-    let close = format!("</{tag}>");
+/// The tags a document format uses for text.
+struct Markup {
+    /// A run of text.
+    run: &'static str,
+    /// A paragraph, ended by a line break.
+    para: &'static str,
+    /// A line break inside a paragraph.
+    br: &'static str,
+    /// A table cell and a table row.
+    cell: &'static str,
+    row: &'static str,
+}
+
+const WORD: Markup = Markup { run: "w:t", para: "w:p", br: "w:br", cell: "w:tc", row: "w:tr" };
+const SLIDE: Markup = Markup { run: "a:t", para: "a:p", br: "a:br", cell: "a:tc", row: "a:tr" };
+
+/// The element name at the start of a tag's inside (`w:t xml:space="preserve"` -> `w:t`).
+fn tag_name(inner: &str) -> &str {
+    inner.split(|c: char| c.is_whitespace() || c == '/').next().unwrap_or("")
+}
+
+/// The text of the document's runs, a line per paragraph or line break. A table comes out
+/// as one line per row with `|` between its cells, so a script's time, narration and
+/// on-screen columns stay together. One pass over the markup: every tag is looked at once.
+fn xml_text(xml: &str, m: &Markup) -> String {
+    let close = format!("</{}>", m.run);
     let mut out = String::new();
+    // Cells open (tables inside tables count once, in the outer cell).
+    let mut cells = 0u32;
     let mut i = 0;
     while let Some(rel) = xml[i..].find('<') {
         let t = i + rel;
@@ -151,10 +175,27 @@ fn xml_text(xml: &str, tag: &str, para: &str) -> String {
         let end = t + gt + 1;
         let inner = &xml[t + 1..end - 1];
         if let Some(closing) = inner.strip_prefix('/') {
-            if closing.trim() == para {
+            let name = closing.trim();
+            if name == m.para {
+                out.push(if cells > 0 { ' ' } else { '\n' });
+            } else if name == m.cell {
+                cells = cells.saturating_sub(1);
+                if cells == 0 {
+                    out.push_str(" | ");
+                }
+            } else if name == m.row && cells == 0 {
+                if out.ends_with(" | ") {
+                    out.truncate(out.len() - 3);
+                }
                 out.push('\n');
             }
-        } else if !inner.ends_with('/') && inner.split(|c: char| c.is_whitespace() || c == '/').next() == Some(tag) {
+        } else if tag_name(inner) == m.br {
+            out.push(if cells > 0 { ' ' } else { '\n' });
+        } else if inner.ends_with('/') {
+            // Empty elements (<w:tab/>, <w:t/>) carry no text.
+        } else if tag_name(inner) == m.cell {
+            cells += 1;
+        } else if tag_name(inner) == m.run {
             // A run: its text goes to the closing tag, which is skipped in one step.
             let Some(len) = xml[end..].find(&close) else { break };
             out.push_str(&unescape(&xml[end..end + len]));
@@ -171,7 +212,7 @@ fn docx(path: &Path) -> Result<String> {
     let mut z = zip::ZipArchive::new(f).context("not a Word document")?;
     let mut budget = MAX_ARCHIVE_XML_BYTES;
     let xml = zip_entry(&mut z, "word/document.xml", &mut budget)?;
-    Ok(xml_text(&xml, "w:t", "w:p"))
+    Ok(xml_text(&xml, &WORD))
 }
 
 fn pptx(path: &Path) -> Result<String> {
@@ -189,7 +230,7 @@ fn pptx(path: &Path) -> Result<String> {
     let mut budget = MAX_ARCHIVE_XML_BYTES;
     for (n, name) in slides {
         let xml = zip_entry(&mut z, &name, &mut budget)?;
-        out.push_str(&format!("Slide {n}\n{}\n\n", xml_text(&xml, "a:t", "a:p")));
+        out.push_str(&format!("Slide {n}\n{}\n\n", xml_text(&xml, &SLIDE)));
     }
     Ok(out)
 }
@@ -205,9 +246,24 @@ mod tests {
             xml.push_str("<w:r><w:t>ab</w:t></w:r><w:tab/><w:t/>");
         }
         xml.push_str("</w:p><w:p><w:t>end</w:t></w:p>");
-        let t = xml_text(&xml, "w:t", "w:p");
+        let t = xml_text(&xml, &WORD);
         assert_eq!(t.len(), 20_000 * 2 + 1 + 3 + 1);
         assert!(t.ends_with("end\n"));
+    }
+
+    #[test]
+    fn tables_come_out_as_rows_and_breaks_as_lines() {
+        let cell = |ps: &[&str]| format!("<w:tc>{}</w:tc>", ps.iter().map(|p| format!("<w:p><w:r><w:t>{p}</w:t></w:r></w:p>")).collect::<String>());
+        let xml = format!(
+            "<w:body><w:p><w:r><w:t>a = 1</w:t></w:r><w:r><w:br w:type=\"textWrapping\"/></w:r><w:r><w:t xml:space=\"preserve\">b = 2</w:t></w:r></w:p><w:tbl><w:tr>{}{}{}</w:tr><w:tr>{}{}{}</w:tr></w:tbl><w:p><w:r><w:t>end</w:t></w:r></w:p></w:body>",
+            cell(&["Time"]), cell(&["Say"]), cell(&["Show"]),
+            cell(&["0:00"]), cell(&["One.", "Two."]), cell(&[]),
+        );
+        assert_eq!(tidy(&xml_text(&xml, &WORD)), "a = 1
+b = 2
+Time | Say | Show
+0:00 | One. Two. |
+end");
     }
 
     #[test]

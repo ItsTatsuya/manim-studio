@@ -714,9 +714,24 @@ impl Workspace {
         match r.kind {
             TurnKind::Plan | TurnKind::Revise => {
                 let mut refresh_voice = false;
-                let parsed = prompt::parse_storyboard(&r.text);
+                // A video made from a teacher's script: the reply is cue marks, and the
+                // teacher's own words are checked against it.
+                let mut told: Vec<String> = Vec::new();
+                let teacher = self.projects[video.0].videos[video.1].dir.as_deref().and_then(crate::teacher::load);
+                let parsed = match teacher {
+                    Some(saved) => {
+                        let request = self.projects[video.0].videos[video.1].request.clone().unwrap_or_default();
+                        let (parsed, lines) = crate::teacher::from_reply(&saved, &request, matches!(r.kind, TurnKind::Plan), &r.text);
+                        told = lines;
+                        parsed
+                    }
+                    None => prompt::parse_storyboard(&r.text).map_err(|e| e.to_string()),
+                };
                 let v = &mut self.projects[video.0].videos[video.1];
                 v.busy = None;
+                for text in told {
+                    v.chat.push(Msg::Activity { icon: IconName::Info, ok: true, text, meta: String::new() });
+                }
                 match parsed {
                     Ok(sb) => {
                         v.title = sb.title.clone();
@@ -1165,13 +1180,20 @@ impl Workspace {
         // Copy the documents into the video and read their text off the UI thread; the
         // plan condenses them into source notes that later turns reuse.
         self.set_working((pi, vi), Some(format!("Reading {} document{}", docs.len(), if docs.len() == 1 { "" } else { "s" })));
-        let sources_dir = dir.map(|d| d.join("sources"));
+        let sources_dir = dir.as_ref().map(|d| d.join("sources"));
+        let style = self.prefs.house_style;
+        let asked = request.clone();
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let read = cx
                 .background_executor()
                 .spawn(async move {
                     let mut texts = Vec::new();
                     let mut errors = Vec::new();
+                    // The documents' whole text: a teacher's script is read from it, not from the condensed part.
+                    let mut full = Vec::new();
+                    // Pictures next to the documents: a script's logo.
+                    let images: Vec<PathBuf> = docs.iter().filter(|d| crate::teacher::is_image(d)).cloned().collect();
+                    let docs: Vec<PathBuf> = docs.into_iter().filter(|d| !crate::teacher::is_image(d)).collect();
                     // About 24k characters across all documents keeps the plan turn small.
                     let budget = 24_000 / docs.len().max(1);
                     for d in &docs {
@@ -1186,22 +1208,36 @@ impl Workspace {
                                     let stem = d.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "document".into());
                                     let _ = std::fs::write(sd.join(format!("{stem}.md")), format!("# {name}\n\n{}\n", t.trim()));
                                 }
-                                texts.push(format!("[{name}]\n{}", studio_docs::truncate(&t, budget)))
+                                texts.push(format!("[{name}]\n{}", studio_docs::truncate(&t, budget)));
+                                full.push(t);
                             }
                             Ok(_) => errors.push(format!("{name} has no readable text (a scanned PDF?)")),
                             Err(e) => errors.push(format!("{name}: {e:#}")),
                         }
                     }
-                    (texts, errors)
+                    // A teacher's own script is used as written, not summarised.
+                    let script = crate::teacher::prepare(&asked, &full, &images, dir.as_deref(), style);
+                    (texts, errors, script)
                 })
                 .await;
             this.update(cx, |this, cx| {
-                let (texts, errors) = read;
+                let (texts, errors, script) = read;
                 for e in errors {
                     this.push_msg((pi, vi), Msg::Activity { icon: IconName::Info, ok: false, text: e, meta: String::new() });
                 }
                 this.set_working((pi, vi), None);
-                let p = this.plan_prompt(&request, &texts, this.prefs.house_style);
+                let p = match script {
+                    Some(prepared) => {
+                        if let Some(dir) = this.projects[pi].videos[vi].dir.clone() {
+                            crate::teacher::save(&dir, &prepared.saved);
+                        }
+                        for (ok, text) in prepared.lines {
+                            this.push_msg((pi, vi), Msg::Activity { icon: if ok { IconName::Check } else { IconName::Info }, ok, text, meta: String::new() });
+                        }
+                        prepared.saved.plan_prompt(&request)
+                    }
+                    None => this.plan_prompt(&request, &texts, this.prefs.house_style),
+                };
                 this.start_turn((pi, vi), TurnKind::Plan, p, true, effort, cx);
             })
             .ok();
@@ -1240,6 +1276,17 @@ impl Workspace {
             return;
         }
         let style = v.settings.style.unwrap_or(self.prefs.house_style);
+        // A teacher's script read before: plan from it again.
+        if let Some(saved) = v.dir.as_deref().and_then(crate::teacher::load) {
+            let p = saved.plan_prompt(&request);
+            if let Some(v) = self.video_mut(video) {
+                v.busy = Some(Busy::Planning);
+            }
+            let effort = self.prefs.planning_reasoning.effort(Some(Effort::Low));
+            self.start_turn(video, TurnKind::Plan, p, true, effort, cx);
+            cx.notify();
+            return;
+        }
         let mut texts: Vec<String> = v
             .dir
             .as_ref()
@@ -1297,7 +1344,11 @@ impl Workspace {
             v.busy = Some(Busy::Revising);
         }
         let effort = self.prefs.planning_reasoning.effort(Some(Effort::Low));
-        self.start_turn(video, TurnKind::Revise, prompt::revise(&sb, &note), true, effort, cx);
+        let prompt = match self.video().dir.as_deref().and_then(crate::teacher::load) {
+            Some(saved) => studio_agent::teacher::revise(&saved.script, &sb, &note),
+            None => prompt::revise(&sb, &note),
+        };
+        self.start_turn(video, TurnKind::Revise, prompt, true, effort, cx);
         true
     }
 
