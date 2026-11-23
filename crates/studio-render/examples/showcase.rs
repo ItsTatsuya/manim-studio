@@ -13,7 +13,7 @@ fn main() -> anyhow::Result<()> {
     let path = match std::env::var("SHOWCASE_SCRIPT") { Ok(p) => std::path::PathBuf::from(p), Err(_) => showcase::install(&dir)? };
     let output = Output::new(960, 540, 30.0);
     for (i, s) in style::STYLES.iter().enumerate() {
-        let req = OpenScene { path: path.clone(), root: dir.clone(), theme_json: style::json(i).into(), scene: None, globals: vec![], narration: None, narration_lines: vec![], narration_cues: vec![] };
+        let req = OpenScene { path: path.clone(), root: dir.clone(), theme_json: style::json(i).into(), scene: None, globals: vec![], narration: None, narration_lines: vec![], narration_cues: vec![], critic: None };
         let (host, _, t) = load(&req, output)?;
         for (k, time) in [thumbnail_time(&t), 1.0].iter().enumerate() {
             let file = out.join(format!("{}-{k}.png", s.id));

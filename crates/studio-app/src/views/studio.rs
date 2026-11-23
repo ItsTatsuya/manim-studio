@@ -178,7 +178,7 @@ impl Workspace {
                         .when_some(issue.filter(|_| error.is_none()), |d, issue| match issue {
                             Issue::Layout { count, first } => d.child(
                                 div().id("layout-issues").child(
-                                    Chip::new(if count == 1 { "1 layout issue".to_string() } else { format!("{count} layout issues") })
+                                    Chip::new(if count == 1 { "1 issue".to_string() } else { format!("{count} issues") })
                                         .icon(IconName::Info),
                                 )
                                 .tooltip(studio_ui::components::tooltip::Tooltip::text(first)),
@@ -459,10 +459,10 @@ impl Workspace {
                                     .ghost()
                                     .with_icon(IconName::Spark)
                                     .disabled(self.busy(self.current))
-                                    .tooltip("The assistant looks at the video and fixes overlapping or cut-off text")
+                                    .tooltip("The assistant looks at stills of every chapter and fixes what is wrong")
                                     .on_click(click(cx, |this, _, cx| {
                                         let v = this.current;
-                                        this.review_look(v, false, cx);
+                                        this.review_look(v, false, 0, cx);
                                     })),
                             )
                         })
@@ -913,7 +913,7 @@ impl Workspace {
             (Some(Issue::Error { line: Some(l), .. }), _) => Chip::new(format!("Error · line {l}")).tone(Tone::Err),
             (Some(Issue::Error { .. }), _) => Chip::new("Error").tone(Tone::Err),
             (Some(Issue::Layout { count, .. }), _) => {
-                Chip::new(if *count == 1 { "1 layout issue".to_string() } else { format!("{count} layout issues") }).icon(IconName::Info)
+                Chip::new(if *count == 1 { "1 issue".to_string() } else { format!("{count} issues") }).icon(IconName::Info)
             }
             (None, true) => Chip::new("Check passed").tone(Tone::Ok).icon(IconName::Check),
             (None, false) => Chip::new("Checking…"),

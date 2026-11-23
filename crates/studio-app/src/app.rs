@@ -171,6 +171,8 @@ pub struct Workspace {
     pub edit_whole: bool,
     /// Videos whose creation already had its visual review (so a repair after it does not start another).
     pub reviewed: std::collections::HashSet<(usize, usize)>,
+    /// The contact sheets a look turn is reading, until its reply is turned into repairs.
+    pub look_sheets: std::collections::HashMap<(usize, usize), Vec<studio_agent::prompt::LookSheet>>,
     pub right_tab: RightTab,
     pub playing: bool,
     pub playhead: f32,
@@ -430,6 +432,7 @@ impl Workspace {
             scene: 0,
             edit_whole: false,
             reviewed: Default::default(),
+            look_sheets: Default::default(),
             right_tab: RightTab::Assistant,
             playing: false,
             playhead: 0.,

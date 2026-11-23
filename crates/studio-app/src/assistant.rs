@@ -28,15 +28,17 @@ pub enum TurnKind {
     /// Repair scene index `scene`, attempt `k`. `build`: the repairs follow a build (so
     /// when they finish, the studio opens and the render can start).
     Repair { scene: usize, k: u8, build: bool },
-    /// The assistant looks at frames of the video and fixes what looks wrong. `build`: it
-    /// follows a build (so when it ends, the studio opens and the render can start).
-    Review { build: bool },
+    /// The assistant looks at contact sheets of the video and lists what looks wrong; what
+    /// it lists goes to a repair. `build`: it follows a build (so when it ends, the studio
+    /// opens and the render can start). `used`: the repair tries already spent, so what the
+    /// look finds counts against the limit.
+    Review { build: bool, used: u8 },
 }
 
 impl TurnKind {
     /// A build, or the repairs that follow one.
     fn is_build(&self) -> bool {
-        matches!(self, TurnKind::Build | TurnKind::Repair { build: true, .. } | TurnKind::Review { build: true })
+        matches!(self, TurnKind::Build | TurnKind::Repair { build: true, .. } | TurnKind::Review { build: true, .. })
     }
 }
 
@@ -64,6 +66,14 @@ fn carry_engine(fresh: &mut [crate::model::Scene], old: Vec<crate::model::Scene>
     }
     leftover.extend(old.filter_map(|mut o| o.engine.thumb.take().map(|t| t.0)));
     leftover
+}
+
+/// The repair try that follows a look pass which listed `found` problems after `used` tries
+/// were spent, if one is left: what the look finds counts against the same limit as the
+/// engine check's failures.
+fn look_attempt(used: u8, tries: u8, found: usize) -> Option<u8> {
+    let attempt = used.saturating_add(1);
+    (found > 0 && attempt <= tries).then_some(attempt)
 }
 
 /// Modification time and size of the scene scripts (`scenes/` and `lib/`), keyed by path.
@@ -512,7 +522,12 @@ impl Workspace {
             model: tier.size().model(provider.agent()),
             effort,
             resume,
-            tools: if planning { vec![] } else { EDIT_TOOLS.to_vec() },
+            tools: match kind {
+                _ if planning => vec![],
+                // Looking at pictures: read them, change nothing.
+                TurnKind::Review { .. } => vec!["Read"],
+                _ => EDIT_TOOLS.to_vec(),
+            },
             ephemeral: planning,
             images,
         };
@@ -595,7 +610,9 @@ impl Workspace {
         let video = self.running[ix].video;
         let provider = self.running[ix].provider;
         let kind = self.running[ix].kind.clone();
-        let quiet = matches!(kind, TurnKind::Plan | TurnKind::Revise);
+        // These turns' words are read here, not shown, and they don't become the session
+        // that repairs continue.
+        let quiet = matches!(kind, TurnKind::Plan | TurnKind::Revise | TurnKind::Review { .. });
         match ev {
             AgentEvent::Started { session } => {
                 if !quiet
@@ -760,7 +777,13 @@ impl Workspace {
                     self.refresh_voice(video, cx);
                 }
             }
-            TurnKind::Build | TurnKind::Edit | TurnKind::Repair { .. } | TurnKind::Review { .. } => {
+            TurnKind::Review { build, used } => {
+                if let Some(u) = usage {
+                    self.push_msg(video, Msg::Usage(u));
+                }
+                self.on_looked(video, build, used, &r.text, cx);
+            }
+            TurnKind::Build | TurnKind::Edit | TurnKind::Repair { .. } => {
                 if let Some(u) = usage {
                     self.push_msg(video, Msg::Usage(u));
                 }
@@ -832,6 +855,8 @@ impl Workspace {
                         narration: s.engine.voice.as_ref().map(|v| v.seconds as f64),
                         narration_lines: s.engine.voice.as_ref().map(crate::model::VoiceLine::lines).unwrap_or_default(),
                         narration_cues: s.engine.voice.as_ref().map(|v| v.cues.clone()).unwrap_or_default(),
+                        // Dead air, too brief, too small and off-cue count as failures here.
+                        critic: Some(s.engine.voice.as_ref().map(crate::model::VoiceLine::critic).unwrap_or_default()),
                     },
                 ))
             })
@@ -877,7 +902,9 @@ impl Workspace {
                 Ok(t) => {
                     let p = &t.problems[0];
                     let found: Vec<(&str, f64)> = t.problems.iter().map(|p| (p.message.as_str(), p.time)).collect();
-                    Some((prompt::problems(&found), None, Issue::Layout { count: t.problems.len(), first: p.message.clone() }))
+                    // A timing or readability finding names the line it follows: show it.
+                    let line = t.problems.iter().find_map(|p| studio_render::critic::message_line(&p.message));
+                    Some((prompt::problems(&found), line, Issue::Layout { count: t.problems.len(), first: p.message.clone() }))
                 }
                 Err(e) => {
                     let short = studio_render::short_error(e);
@@ -911,6 +938,7 @@ impl Workspace {
                         file: path.strip_prefix(&dir).unwrap_or(path).to_string_lossy().replace('\\', "/"),
                         diagnostic: msg.clone(),
                         excerpt: prompt::repair_excerpt(path, *line).or_else(|| prompt::layout_excerpt(path, msg)),
+                        seen: false,
                     })
                     .collect();
                 let what = if list.len() == 1 { format!("chapter {}", scene + 1) } else { format!("{} chapters", list.len()) };
@@ -942,17 +970,19 @@ impl Workspace {
             return;
         }
         // A video that was just created gets a look-over before it is called done.
-        if self.prefs.visual_review && kind.is_build() && !self.reviewed.contains(&video) {
-            return self.review_look(video, true, cx);
+        if self.prefs.visual_review && kind.is_build() && !self.reviewed.contains(&video) && attempt <= tries {
+            // What the look finds is repaired like any failure, so it needs a try left.
+            return self.review_look(video, true, attempt.saturating_sub(1), cx);
         }
         self.finish_assistant_work(video, kind, true, cx);
     }
 
-    /// The visual review: draw frames of each chapter, then ask the assistant to look at
-    /// them and fix what is wrong (overlapping or cut-off text, crowding). `build`: it
-    /// follows the creation of the video.
-    pub fn review_look(&mut self, video: (usize, usize), build: bool, cx: &mut Context<Self>) {
-        let kind = TurnKind::Review { build };
+    /// The look pass: stills at the end of each cue of every chapter, tiled into contact
+    /// sheets, for the assistant to look at and list what is wrong. What it lists goes to a
+    /// repair (`on_looked`). `build`: it follows the creation of the video. `used`: the
+    /// repair tries already spent, which the repair this leads to continues from.
+    pub fn review_look(&mut self, video: (usize, usize), build: bool, used: u8, cx: &mut Context<Self>) {
+        let kind = TurnKind::Review { build, used };
         let v = &self.projects[video.0].videos[video.1];
         let Some(dir) = v.dir.clone() else { return self.finish_assistant_work(video, kind, true, cx) };
         let Some(ffmpeg) = studio_render::ffmpeg_path() else {
@@ -975,6 +1005,7 @@ impl Workspace {
                     narration: s.engine.voice.as_ref().map(|v| v.seconds as f64),
                     narration_lines: s.engine.voice.as_ref().map(crate::model::VoiceLine::lines).unwrap_or_default(),
                     narration_cues: s.engine.voice.as_ref().map(|v| v.cues.clone()).unwrap_or_default(),
+                    critic: Some(s.engine.voice.as_ref().map(crate::model::VoiceLine::critic).unwrap_or_default()),
                 };
                 Some((i, file, req))
             })
@@ -998,49 +1029,92 @@ impl Workspace {
             self.refresh_thumbs_for(video);
         }
         cx.notify();
-        let frames_dir = dir.join(".cache").join("review");
+        let sheets_dir = dir.join(".cache").join("review");
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let dir2 = dir.clone();
             let made = cx
                 .background_executor()
                 .spawn(async move {
-                    let _ = std::fs::remove_dir_all(&frames_dir);
-                    std::fs::create_dir_all(&frames_dir).map_err(|e| format!("{e}"))?;
-                    let mut out: Vec<prompt::ReviewFrame> = Vec::new();
+                    let _ = std::fs::remove_dir_all(&sheets_dir);
+                    std::fs::create_dir_all(&sheets_dir).map_err(|e| format!("{e}"))?;
+                    let rel = |p: &Path| p.strip_prefix(&dir2).unwrap_or(p).to_string_lossy().replace('\\', "/");
+                    let mut out: Vec<prompt::LookSheet> = Vec::new();
+                    let mut number = 1;
                     for (i, file, req) in jobs {
-                        // A chapter that can't be drawn is the repair loop's business, not the review's.
-                        let Ok(frames) = studio_render::preview::review_frames(&req, studio_render::Output::new(1280, 720, 30.0)) else { continue };
-                        for (k, (at, frame)) in frames.into_iter().enumerate() {
-                            let img = frames_dir.join(format!("{:02}-{}.jpg", i + 1, k + 1));
-                            studio_render::slides::frame_to_jpeg(&ffmpeg, &frame, &img).map_err(|e| format!("{e:#}"))?;
-                            let rel = |p: &Path| p.strip_prefix(&dir2).unwrap_or(p).to_string_lossy().replace('\\', "/");
-                            out.push(prompt::ReviewFrame { image: rel(&img), file: rel(&file), chapter: i + 1, at });
+                        // A chapter that can't be drawn is the repair loop's business, not the look's.
+                        let Ok(stills) = studio_render::critic::look_frames(&req, studio_render::Output::new(1280, 720, 30.0)) else { continue };
+                        let refs: Vec<&studio_render::Frame> = stills.iter().map(|(_, f)| f).collect();
+                        let per = studio_render::critic::SHEET_COLS * studio_render::critic::SHEET_ROWS;
+                        for (s, sheet) in studio_render::critic::contact_sheets(&refs, number).iter().enumerate() {
+                            let img = sheets_dir.join(format!("{:02}-{}.jpg", i + 1, s + 1));
+                            studio_render::slides::frame_to_jpeg(&ffmpeg, sheet, &img).map_err(|e| format!("{e:#}"))?;
+                            let tiles = stills
+                                .iter()
+                                .skip(s * per)
+                                .take(per)
+                                .enumerate()
+                                .map(|(k, (m, _))| prompt::LookTile {
+                                    n: number + s * per + k,
+                                    chapter: i + 1,
+                                    file: rel(&file),
+                                    at: m.time,
+                                    line: m.line,
+                                    said: m.said.clone(),
+                                })
+                                .collect();
+                            out.push(prompt::LookSheet { image: rel(&img), tiles });
                         }
+                        number += stills.len();
                     }
                     Ok::<_, String>(out)
                 })
                 .await;
-            this.update(cx, |this, cx| this.on_review_frames(video, build, made, cx)).ok();
+            this.update(cx, |this, cx| this.on_look_sheets(video, build, used, made, cx)).ok();
         })
         .detach();
     }
 
-    fn on_review_frames(&mut self, video: (usize, usize), build: bool, made: Result<Vec<prompt::ReviewFrame>, String>, cx: &mut Context<Self>) {
-        let kind = TurnKind::Review { build };
+    fn on_look_sheets(&mut self, video: (usize, usize), build: bool, used: u8, made: Result<Vec<prompt::LookSheet>, String>, cx: &mut Context<Self>) {
+        let kind = TurnKind::Review { build, used };
         // Stopped, or the app moved on, while the pictures were drawn.
         if !matches!(self.projects[video.0].videos[video.1].busy, Some(Busy::Reviewing)) {
             return;
         }
-        let frames = match made {
-            Ok(f) if !f.is_empty() => f,
+        let sheets = match made {
+            Ok(s) if !s.is_empty() => s,
             // Nothing to look at, or the pictures could not be made: the video is still fine.
             _ => return self.finish_assistant_work(video, kind, true, cx),
         };
         let dir = self.projects[video.0].videos[video.1].dir.clone().unwrap_or_default();
-        let images: Vec<PathBuf> = frames.iter().map(|f| dir.join(&f.image)).collect();
+        let images: Vec<PathBuf> = sheets.iter().map(|s| dir.join(&s.image)).collect();
+        let text = prompt::look(&sheets);
+        self.look_sheets.insert(video, sheets);
         let effort = self.prefs.build_reasoning.effort(Some(Effort::Low));
         self.set_working(video, Some("Checking how it looks".into()));
-        self.start_turn_with(video, kind, prompt::review(&frames), false, effort, images, cx);
+        self.start_turn_with(video, kind, text, false, effort, images, cx);
+    }
+
+    /// The assistant's list of what looks wrong: repair it like a failed check, counted
+    /// against the repair limit.
+    fn on_looked(&mut self, video: (usize, usize), build: bool, used: u8, reply: &str, cx: &mut Context<Self>) {
+        let kind = TurnKind::Review { build, used };
+        let sheets = self.look_sheets.remove(&video).unwrap_or_default();
+        let dir = self.projects[video.0].videos[video.1].dir.clone().unwrap_or_default();
+        let found = prompt::look_failures(&sheets, &prompt::parse_look(reply), &dir);
+        let tries = self.prefs.repair_tries;
+        let (Some(&(chapter, _)), Some(attempt)) = (found.first(), look_attempt(used, tries, found.len())) else {
+            return self.finish_assistant_work(video, kind, true, cx);
+        };
+        let list: Vec<prompt::Failure> = found.into_iter().map(|(_, f)| f).collect();
+        let what = if list.len() == 1 { format!("chapter {chapter}") } else { format!("{} chapters", list.len()) };
+        self.push_msg(video, Msg::Activity { icon: IconName::Info, ok: true, text: format!("Looking over the video found something to fix in {what}."), meta: String::new() });
+        let base = self.prefs.build_reasoning.effort(Some(Effort::High));
+        let effort = if self.prefs.escalate_repairs && attempt > 1 { Some(base.unwrap_or(Effort::Medium).raise()) } else { base };
+        if let Some(v) = self.video_mut(video) {
+            v.busy = Some(Busy::Fixing { scene: chapter, k: attempt, of: tries });
+        }
+        self.set_working(video, Some(format!("Fixing {what} · try {attempt} of {tries}")));
+        self.start_turn(video, TurnKind::Repair { scene: chapter.saturating_sub(1), k: attempt, build }, prompt::repair_all(&list), false, effort, cx);
     }
 
     fn finish_assistant_work(&mut self, video: (usize, usize), kind: TurnKind, ok: bool, cx: &mut Context<Self>) {
@@ -1361,8 +1435,8 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
-    use super::carry_engine;
-    use crate::model::{Scene, VoiceLine};
+    use super::{carry_engine, look_attempt};
+    use crate::model::{Scene, VoiceLine, VoicePart};
     use studio_agent::prompt::Beat;
 
     fn scene(say: &str, file: Option<&str>) -> Scene {
@@ -1388,5 +1462,34 @@ mod tests {
         carry_engine(&mut built, vec![planned, other]);
         assert_eq!(built[0].engine.voice, Some(voice()));
         assert_eq!(built[1].engine.voice, None, "a changed line is spoken again");
+    }
+
+    // The look pass shares the repair limit with the engine check: what it finds is a repair
+    // try, and none is left once the tries are spent.
+    #[test]
+    fn what_the_look_finds_counts_against_the_repair_limit() {
+        assert_eq!(look_attempt(0, 3, 2), Some(1));
+        assert_eq!(look_attempt(2, 3, 1), Some(3));
+        assert_eq!(look_attempt(3, 3, 1), None, "the tries are spent");
+        assert_eq!(look_attempt(0, 0, 1), None, "repairs are off");
+        assert_eq!(look_attempt(0, 3, 0), None, "nothing was found");
+    }
+
+    // The critic hears what the narrator says, with the words the script cues.
+    #[test]
+    fn a_voice_line_gives_the_critic_its_words() {
+        let line = VoiceLine {
+            wav: "track.wav".into(),
+            seconds: 2.5,
+            text: "If r is ten, c is {c20}twenty.".into(),
+            parts: vec![VoicePart { wav: "none.wav".into(), seconds: 2.5, text: "If r is ten, c is twenty.".into() }],
+            starts: vec![0.0],
+            cues: vec![studio_render::cues::CueTime { id: "c20".into(), line: 1, at: 1.7 }],
+        };
+        let words = line.critic().words;
+        assert_eq!(words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>(), ["if", "r", "is", "ten", "c", "is", "twenty"]);
+        let twenty = words.last().unwrap();
+        assert_eq!((twenty.cue.as_deref(), twenty.at), (Some("c20"), 1.7));
+        assert!(words.iter().filter(|w| w.cue.is_some()).count() == 1);
     }
 }

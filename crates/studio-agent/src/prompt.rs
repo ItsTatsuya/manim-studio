@@ -180,6 +180,11 @@ Rules:
 - Each scene is narrated, sentence by sentence (numbered in the storyboard). Call `this.narrate(n)` immediately before the animation that sentence n describes, for every sentence, in order. It returns that sentence's length in seconds (or the seconds until its first cue); use it for the runTime of what it describes. If the previous sentence is still being spoken, narrate() first waits for it, so the voice always matches what is on screen. Studio holds the last frame until the last sentence ends. Don't time anything off `NARRATION.seconds`.
 - A `{{id}}` inside the narration is a cue: the moment the next word is spoken. Call `this.cue(id)` immediately before the animation for that moment, for every cue, in order. Never show a value before the voice says it. cue() waits for that moment and returns the seconds until the next cue or the end of the sentence, so keep that animation no longer: a pop takes `Math.min(0.3, this.cue("c20"))`.
 - Pace for the class: let narrate() and cue() set the pace; add this.wait(seconds) only for a short beat after a key result.
+- Studio checks timing and readability after the engine check, and a failure is sent back to you like an error:
+  - Dead air: the picture may not stand still for more than 3 s while the voice is speaking. Spread what a sentence shows over its length (use the runTime narrate() returns, or a step coming in, or Indicate or .focus() on the part being said). A pause that must stand still, such as time to think, is called `this.mark("hold")` just before it.
+  - Too brief: a text stays on screen at least 0.5 s plus 0.3 s a word before it is replaced or faded out.
+  - Too small: reading text is at least 28 px at 1080p. Never set fontSize below 16 or scale text down; regions shrink what is too big, so split or shorten long lines instead.
+  - Off-cue: a number or term the narration marks with a cue is shown no more than 0.4 s before the voice says it; show it with its this.cue(id).
 - The scenes play back to back as one continuous video, with a short dissolve between them. Don't open a scene with the video title or a scene number; carry on from the previous scene (reuse its heading wording, colours and positions for recurring objects), and end on the scene's key result rather than fading everything out.
 - Change only the files you are asked to change. Don't open other scenes unless asked.
 - Work in as few steps as possible: write several files at once with parallel tool calls, and don't read files back after writing them.
@@ -390,43 +395,163 @@ pub fn edit(request: &str, scope: Option<(&str, &str, &str)>, assets: &[String])
     p
 }
 
-/// One picture for the visual review: a frame of a chapter, and the script that draws it.
-pub struct ReviewFrame {
-    /// Path of the picture, relative to the video folder.
-    pub image: String,
-    /// Path of the chapter's script, relative to the video folder.
-    pub file: String,
+/// One still in a contact sheet of the look pass.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LookTile {
+    /// Its number on the sheet, counted over the whole video from 1.
+    pub n: usize,
+    /// Which chapter (1-based) and its script, relative to the video folder.
     pub chapter: usize,
-    /// Where in the chapter the frame is, in seconds.
+    pub file: String,
+    /// Scene time of the still, in seconds.
     pub at: f64,
+    /// The line of the script whose animation was running then.
+    pub line: Option<u32>,
+    /// The last words the voice has said by then.
+    pub said: String,
 }
 
-/// Ask the assistant to look at how the finished chapters look and fix what is wrong. The
-/// frames are pictures it opens with its file reader.
-pub fn review(frames: &[ReviewFrame]) -> String {
+/// A contact sheet: one picture of stills tiled two across, numbered top left.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LookSheet {
+    /// Path of the picture, relative to the video folder.
+    pub image: String,
+    pub tiles: Vec<LookTile>,
+}
+
+/// The look pass: ask the assistant to look at the contact sheets and only list what is
+/// wrong. The list comes back as JSON, and what is in it goes to a repair turn.
+pub fn look(sheets: &[LookSheet]) -> String {
     let mut p = String::from(
-        "Look at how the video looks. Open each picture below (they are frames of the finished chapters, as a viewer sees them) and check:\n\
-- text overlapping other text, a drawing or a label\n\
-- anything cut off by, or touching, the edge of the frame\n\
-- text too small to read from the back of a classroom\n\
-- crowded or uneven spacing, or a label that is not next to what it labels\n\n",
+        "Look at how the finished video looks. Open each contact sheet below with your file reader. Each is stills of one chapter, two across, numbered in the top left corner; every still is the picture at the end of one moment of the narration, and the words the voice has said by then are given for it.\n\n",
     );
-    for f in frames {
-        p.push_str(&format!("{}  chapter {} at {:.1} s  ({})\n", f.image, f.chapter, f.at, f.file));
+    for s in sheets {
+        p.push_str(&format!("{}\n", s.image));
+        for t in &s.tiles {
+            p.push_str(&format!("  {}: chapter {} at {:.1} s", t.n, t.chapter, t.at));
+            if !t.said.is_empty() {
+                p.push_str(&format!(", voice has said \"…{}\"", t.said));
+            }
+            p.push('\n');
+        }
     }
     p.push_str(
-        "\nFix each problem with the smallest change to that chapter's script file, placing things through the layout regions (heading, work.push, figure, full) and nextTo instead of coordinates. Leave the narration, timing and story as they are, and leave chapters that look clean alone. Reply with one sentence: what you fixed, or \"Looks clean.\"",
+        "\nList overlaps, clipped content, empty halves of the screen, unreadable text, and anything on screen that the narration hasn't said yet. Report a problem only if you can see it. Do not edit any file. Reply with JSON only, no prose and no code fences: an array with one object for each problem, {\"still\": <number>, \"problem\": \"what is wrong and where, in one sentence\"}, or [] if everything looks right.",
     );
     p
 }
 
+/// A problem the assistant saw in a still.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Seen {
+    pub still: usize,
+    pub problem: String,
+}
+
+/// What the assistant's reply to [`look`] lists: its JSON array, wherever in the reply it is
+/// (a code fence or a sentence around it is fine). Anything else, "Looks clean" included,
+/// is no problems.
+pub fn parse_look(reply: &str) -> Vec<Seen> {
+    #[derive(Deserialize)]
+    struct Raw {
+        #[serde(alias = "frame", alias = "tile")]
+        still: serde_json::Value,
+        #[serde(alias = "issue", alias = "detail")]
+        problem: String,
+    }
+    // The first '[' that starts a list of objects, up to its matching ']'.
+    let mut found: Vec<Raw> = Vec::new();
+    for (start, _) in reply.match_indices('[') {
+        let mut depth = 0usize;
+        let mut in_string = false;
+        let mut escaped = false;
+        let mut end = None;
+        for (i, c) in reply[start..].char_indices() {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' if in_string => escaped = true,
+                '"' => in_string = !in_string,
+                '[' if !in_string => depth += 1,
+                ']' if !in_string => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(start + i + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(list) = end.and_then(|e| serde_json::from_str::<Vec<Raw>>(&reply[start..e]).ok()) {
+            found = list;
+            break;
+        }
+    }
+    let mut out: Vec<Seen> = Vec::new();
+    for r in found {
+        let still = match &r.still {
+            serde_json::Value::Number(n) => n.as_u64().map(|n| n as usize),
+            serde_json::Value::String(s) => s.trim().trim_start_matches('#').parse().ok(),
+            _ => None,
+        };
+        let problem = r.problem.trim().to_string();
+        if let Some(still) = still.filter(|_| !problem.is_empty())
+            && !out.iter().any(|s| s.still == still && s.problem == problem)
+        {
+            out.push(Seen { still, problem });
+        }
+    }
+    out
+}
+
+/// Most problems of one chapter the look pass sends to a repair.
+const SEEN_PER_CHAPTER: usize = 4;
+
+/// What was seen, as repairs: one for each chapter, naming the time of every still and the
+/// line of the script that was running then. Stills that aren't on a sheet are dropped. The
+/// chapter (1-based) comes with each.
+pub fn look_failures(sheets: &[LookSheet], seen: &[Seen], dir: &std::path::Path) -> Vec<(usize, Failure)> {
+    let tile = |n: usize| sheets.iter().flat_map(|s| &s.tiles).find(|t| t.n == n);
+    let mut chapters: Vec<(usize, String, Vec<String>, Vec<u32>)> = Vec::new();
+    for s in seen {
+        let Some(t) = tile(s.still) else { continue };
+        let at = match t.line {
+            Some(l) => format!("at {:.1} s (still {}, line {l})", t.at, t.n),
+            None => format!("at {:.1} s (still {})", t.at, t.n),
+        };
+        let slot = match chapters.iter().position(|c| c.0 == t.chapter) {
+            Some(i) => i,
+            None => {
+                chapters.push((t.chapter, t.file.clone(), Vec::new(), Vec::new()));
+                chapters.len() - 1
+            }
+        };
+        let (_, _, parts, lines) = &mut chapters[slot];
+        if parts.len() < SEEN_PER_CHAPTER {
+            parts.push(format!("{at} {}", s.problem.trim_end_matches('.')));
+            lines.extend(t.line.filter(|l| !lines.contains(l)));
+        }
+    }
+    chapters
+        .into_iter()
+        .map(|(chapter, file, parts, lines)| {
+            let excerpt: Vec<String> = lines.iter().filter_map(|l| repair_excerpt(&dir.join(&file), Some(*l))).collect();
+            (chapter, Failure { file, diagnostic: parts.join("; also "), excerpt: (!excerpt.is_empty()).then(|| excerpt.join("\n")), seen: true })
+        })
+        .collect()
+}
+
 /// One scene that failed the engine check.
+#[derive(Clone, Debug)]
 pub struct Failure {
     /// Path relative to the video folder.
     pub file: String,
     pub diagnostic: String,
     /// The source lines involved (`  12 | code`), when known.
     pub excerpt: Option<String>,
+    /// Found by looking at stills of the finished chapter (the look pass), not by the
+    /// engine check.
+    pub seen: bool,
 }
 
 /// Most problems of one scene a repair is told about at once.
@@ -458,7 +583,11 @@ pub fn problems(found: &[(&str, f64)]) -> String {
 pub fn repair_all(failures: &[Failure]) -> String {
     let mut p = String::new();
     for f in failures {
-        p.push_str(&format!("{} fails the engine check: {}\n", f.file, f.diagnostic.trim()));
+        if f.seen {
+            p.push_str(&format!("Looking at stills of {} found: {}\n", f.file, f.diagnostic.trim()));
+        } else {
+            p.push_str(&format!("{} fails the engine check: {}\n", f.file, f.diagnostic.trim()));
+        }
         if let Some(x) = &f.excerpt {
             p.push_str(x.trim_end());
             p.push('\n');
@@ -557,6 +686,70 @@ mod plan_option_tests {
             numbered("If r is ten, c is {c20}twenty. {line}They lie on one line."),
             "1. \"If r is ten, c is {c20}twenty.\"  2. \"{line}They lie on one line.\""
         );
+    }
+
+    #[test]
+    fn critic_rules_reach_the_builder() {
+        let system = build_system("");
+        assert!(system.contains("the picture may not stand still for more than 3 s while the voice is speaking"));
+        assert!(system.contains("`this.mark(\"hold\")` just before it"));
+        assert!(system.contains("at least 0.5 s plus 0.3 s a word"));
+        assert!(system.contains("reading text is at least 28 px at 1080p"));
+        assert!(system.contains("no more than 0.4 s before the voice says it"));
+    }
+
+    fn sheets() -> Vec<LookSheet> {
+        let tile = |n, chapter, at, line, said: &str| LookTile { n, chapter, file: format!("scenes/0{chapter}-x.ts"), at, line, said: said.into() };
+        vec![
+            LookSheet { image: ".cache/review/sheet-1.jpg".into(), tiles: vec![tile(1, 1, 2.1, Some(7), "the first line"), tile(2, 1, 5.3, Some(12), ""), tile(3, 1, 8.0, None, "")] },
+            LookSheet { image: ".cache/review/sheet-2.jpg".into(), tiles: vec![tile(4, 2, 3.0, Some(3), "so we get twenty")] },
+        ]
+    }
+
+    #[test]
+    fn the_look_prompt_names_every_still() {
+        let p = look(&sheets());
+        assert!(p.contains(".cache/review/sheet-2.jpg\n  4: chapter 2 at 3.0 s, voice has said \"…so we get twenty\""));
+        assert!(p.contains("  2: chapter 1 at 5.3 s\n"));
+        assert!(p.contains("List overlaps, clipped content, empty halves of the screen, unreadable text, and anything on screen that the narration hasn't said yet."));
+        assert!(p.contains("Do not edit any file."));
+    }
+
+    #[test]
+    fn the_look_reply_is_read_from_whatever_surrounds_it() {
+        let seen = |still, problem: &str| Seen { still, problem: problem.into() };
+        let fenced = "Here is what I see:\n```json\n[{\"still\": 2, \"problem\": \"the label [r] overlaps the graph\"}, {\"frame\": \"4\", \"issue\": \"the right half is empty\"}]\n```\nThat's all.";
+        assert_eq!(parse_look(fenced), [seen(2, "the label [r] overlaps the graph"), seen(4, "the right half is empty")]);
+        // Nothing wrong, said any way.
+        for clean in ["[]", "Looks clean.", "```json\n[]\n```", "", "[not json at all]", "[{\"problem\": \"no still named\"}]"] {
+            assert!(parse_look(clean).is_empty(), "{clean}");
+        }
+        // Prose with brackets before the list, duplicates and empty problems.
+        let noisy = "Checked [3 sheets]. [{\"still\":1,\"problem\":\"a\"},{\"still\":1,\"problem\":\"a\"},{\"still\":2,\"problem\":\"  \"}]";
+        assert_eq!(parse_look(noisy), [seen(1, "a")]);
+    }
+
+    #[test]
+    fn what_was_seen_goes_back_as_repairs_with_time_and_line() {
+        let dir = std::env::temp_dir().join(format!("studio-look-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("scenes")).unwrap();
+        std::fs::write(dir.join("scenes/01-x.ts"), "a\nb\nc\nd\ne\nf\nthis.play(FadeIn(label));\n").unwrap();
+        let seen = [
+            Seen { still: 1, problem: "the label overlaps the graph.".into() },
+            Seen { still: 3, problem: "the right half is empty".into() },
+            Seen { still: 9, problem: "not on any sheet".into() },
+            Seen { still: 4, problem: "text is cut off at the edge".into() },
+        ];
+        let found = look_failures(&sheets(), &seen, &dir);
+        assert_eq!(found.iter().map(|(c, _)| *c).collect::<Vec<_>>(), [1, 2]);
+        let one = &found[0].1;
+        assert_eq!(one.file, "scenes/01-x.ts");
+        assert_eq!(one.diagnostic, "at 2.1 s (still 1, line 7) the label overlaps the graph; also at 8.0 s (still 3) the right half is empty");
+        assert_eq!(one.excerpt.as_deref(), Some("  7 | this.play(FadeIn(label));"));
+        assert!(one.seen);
+        let text = repair_all(std::slice::from_ref(one));
+        assert!(text.starts_with("Looking at stills of scenes/01-x.ts found: at 2.1 s"), "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
 }
