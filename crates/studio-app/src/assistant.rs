@@ -68,6 +68,14 @@ fn carry_engine(fresh: &mut [crate::model::Scene], old: Vec<crate::model::Scene>
     leftover
 }
 
+/// The repair try that follows a look pass which listed `found` problems after `used` tries
+/// were spent, if one is left: what the look finds counts against the same limit as the
+/// engine check's failures.
+fn look_attempt(used: u8, tries: u8, found: usize) -> Option<u8> {
+    let attempt = used.saturating_add(1);
+    (found > 0 && attempt <= tries).then_some(attempt)
+}
+
 /// Modification time and size of the scene scripts (`scenes/` and `lib/`), keyed by path.
 type FileStamps = std::collections::BTreeMap<PathBuf, (Option<std::time::SystemTime>, u64)>;
 
@@ -1094,13 +1102,9 @@ impl Workspace {
         let dir = self.projects[video.0].videos[video.1].dir.clone().unwrap_or_default();
         let found = prompt::look_failures(&sheets, &prompt::parse_look(reply), &dir);
         let tries = self.prefs.repair_tries;
-        let attempt = used.saturating_add(1);
-        let Some(&(chapter, _)) = found.first() else {
+        let (Some(&(chapter, _)), Some(attempt)) = (found.first(), look_attempt(used, tries, found.len())) else {
             return self.finish_assistant_work(video, kind, true, cx);
         };
-        if attempt > tries {
-            return self.finish_assistant_work(video, kind, true, cx);
-        }
         let list: Vec<prompt::Failure> = found.into_iter().map(|(_, f)| f).collect();
         let what = if list.len() == 1 { format!("chapter {chapter}") } else { format!("{} chapters", list.len()) };
         self.push_msg(video, Msg::Activity { icon: IconName::Info, ok: true, text: format!("Looking over the video found something to fix in {what}."), meta: String::new() });
@@ -1431,8 +1435,8 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
-    use super::carry_engine;
-    use crate::model::{Scene, VoiceLine};
+    use super::{carry_engine, look_attempt};
+    use crate::model::{Scene, VoiceLine, VoicePart};
     use studio_agent::prompt::Beat;
 
     fn scene(say: &str, file: Option<&str>) -> Scene {
@@ -1458,5 +1462,34 @@ mod tests {
         carry_engine(&mut built, vec![planned, other]);
         assert_eq!(built[0].engine.voice, Some(voice()));
         assert_eq!(built[1].engine.voice, None, "a changed line is spoken again");
+    }
+
+    // The look pass shares the repair limit with the engine check: what it finds is a repair
+    // try, and none is left once the tries are spent.
+    #[test]
+    fn what_the_look_finds_counts_against_the_repair_limit() {
+        assert_eq!(look_attempt(0, 3, 2), Some(1));
+        assert_eq!(look_attempt(2, 3, 1), Some(3));
+        assert_eq!(look_attempt(3, 3, 1), None, "the tries are spent");
+        assert_eq!(look_attempt(0, 0, 1), None, "repairs are off");
+        assert_eq!(look_attempt(0, 3, 0), None, "nothing was found");
+    }
+
+    // The critic hears what the narrator says, with the words the script cues.
+    #[test]
+    fn a_voice_line_gives_the_critic_its_words() {
+        let line = VoiceLine {
+            wav: "track.wav".into(),
+            seconds: 2.5,
+            text: "If r is ten, c is {c20}twenty.".into(),
+            parts: vec![VoicePart { wav: "none.wav".into(), seconds: 2.5, text: "If r is ten, c is twenty.".into() }],
+            starts: vec![0.0],
+            cues: vec![studio_render::cues::CueTime { id: "c20".into(), line: 1, at: 1.7 }],
+        };
+        let words = line.critic().words;
+        assert_eq!(words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>(), ["if", "r", "is", "ten", "c", "is", "twenty"]);
+        let twenty = words.last().unwrap();
+        assert_eq!((twenty.cue.as_deref(), twenty.at), (Some("c20"), 1.7));
+        assert!(words.iter().filter(|w| w.cue.is_some()).count() == 1);
     }
 }

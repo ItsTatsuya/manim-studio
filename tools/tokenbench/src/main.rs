@@ -799,7 +799,8 @@ mod tests {
         assert_eq!(text_at_coords(src), 2);
     }
 
-    /// The worked example in the system prompt must itself pass the engine check.
+    /// The worked example in the system prompt must itself pass the engine check and the
+    /// critic: a recipe that teaches what the checks reject would only cost repairs.
     #[test]
     fn example_scene_passes_the_check() {
         let dir = std::env::temp_dir().join(format!("tokenbench-example-{}", std::process::id()));
@@ -807,9 +808,14 @@ mod tests {
         prepare(&dir, &v).unwrap();
         let path = dir.join("scenes/02-diameter.ts");
         std::fs::write(&path, prompt::EXAMPLE_SCENE).unwrap();
-        let t = check(&scene_request(&dir, &path, Some(9.0))).unwrap();
+        let say = "Here is a circle. The radius runs from the centre to the {r}edge. The diameter is twice the radius, so it goes right across.";
+        let req = narrated_request(&dir, &path, say);
+        let t = check(&req).unwrap();
         assert!(t.problems.is_empty(), "{:?}", t.problems.iter().map(|p| &p.message).collect::<Vec<_>>());
-        assert!((t.duration - (9.0 + studio_render::preview::NARRATION_TAIL)).abs() < 0.6, "paced to the narration: {}", t.duration);
+        let voice = req.narration.unwrap();
+        // The scene writes its heading before the first sentence, so the voice starts a second late.
+        let over = t.duration - (voice + studio_render::preview::NARRATION_TAIL);
+        assert!((0.0..1.5).contains(&over), "paced to the narration: {} for a voice of {voice}", t.duration);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
