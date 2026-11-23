@@ -621,6 +621,10 @@ mod tests {
             eprintln!("{} at {:.2} of {:.2} s", cue.id, cue.at, sentence.seconds);
             assert!(cue.at > edge && cue.at < sentence.seconds, "{cue:?}");
         }
+        // The comma pause is really there in the audio, so cue times can snap to it.
+        let pauses = crate::cues::silences(&read_wav(&spoken.sentences[0].wav).unwrap());
+        eprintln!("pauses in sentence 1: {pauses:?}");
+        assert!(!pauses.is_empty(), "the comma pause is found with the same silence threshold Kokoro uses");
         // The first cue is near the end of its sentence, the second near the start of the second half.
         assert!(spoken.cues[0].at > spoken.sentences[0].seconds * 0.5, "{:?}", spoken.cues);
         for s in &spoken.sentences {

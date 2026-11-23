@@ -594,7 +594,7 @@ impl Workspace {
         };
         let preview = Button::new("voice-try", "Listen")
             .with_icon(IconName::Play)
-            .disabled(!self.voice_spec().ready())
+            .disabled(!(ready || self.chatterbox_active()))
             .on_click(click(cx, |this, _, cx| this.preview_voice(cx)));
         // The second engine: Chatterbox speaks like a recording of the teacher.
         use studio_render::voice::Engine;

@@ -156,7 +156,7 @@ The current folder is one video:
 - lib/kit.ts: helpers. `import {{ palette, card }} from "../lib/kit";`
   palette(this.theme) gives colours; card(content, fill, stroke) boxes content.
 - lib/layout.ts: where things go (Studio keeps it current; don't edit it). `import {{ heading, work, figure, full }} from "../lib/layout";`
-- lib/lesson.ts: the pieces lessons are made of (Studio keeps it current; don't edit it). `import {{ lesson }} from "../lib/lesson";` then `const k = lesson(this);` (k.c is the palette). Play what their methods return.
+- lib/lesson.ts: the pieces lessons are made of (Studio keeps it current; don't edit it). `import {{ lesson }} from "../lib/lesson";` then `const k = lesson(this);` (k.c is the palette). Play what their methods return, straight into this.play(...): a dot or the answer box wrapped in AnimationGroup or Succession loses its soft sound.
   k.EquationCard(tex, colour, tag): an equation card; work.push it, then .enter(), .focus(), .dim().
   k.Steps([tex, ...]): numbered worked steps; `this.play(steps.next())` pushes the next one into work.
   k.AnswerBox(tex, sub?, colour?): the final answer in a green box; work.push it, then .enter().

@@ -236,6 +236,7 @@ impl Chatterbox {
         let ids = self.tokenizer.encode(text)?;
         let longest = (ids.len() * 14 + 80).min(1024);
         let mut generated: Vec<i64> = vec![START_SPEECH];
+        let mut stopped = false;
         let mut feed = ids;
         let mut seen = 0usize;
         let mut past: Vec<DynValue> = Vec::new();
@@ -283,6 +284,7 @@ impl Chatterbox {
             };
             generated.push(next);
             if next == STOP_SPEECH {
+                stopped = true;
                 break;
             }
             past = self
@@ -291,6 +293,11 @@ impl Chatterbox {
                 .map(|(_, present)| out.remove(present.as_str()).with_context(|| format!("the language model gave no {present}")))
                 .collect::<Result<_>>()?;
             feed = vec![next];
+        }
+        // Running to the limit means the model lost its place: speech cut off mid-word is
+        // worse than an error the teacher can see (and retry or reword).
+        if !stopped {
+            bail!("the Chatterbox voice didn't finish this sentence; try rewording or shortening it");
         }
         let mut speech: Vec<i64> = voice.prompt.clone();
         speech.extend(generated.iter().skip(1).filter(|&&t| t != STOP_SPEECH));
