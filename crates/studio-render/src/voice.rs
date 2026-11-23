@@ -376,6 +376,24 @@ pub fn compose(parts: &[PathBuf], starts: &[f64], cache_dir: &Path) -> Result<Li
     Ok(Line { seconds: out.len() as f64 / rate, wav })
 }
 
+/// Add the audio of `wav` into `out` (24 kHz mono) starting at second `at`, growing `out`
+/// as needed. Used to hear a whole lesson's narration at once.
+pub fn overlay(out: &mut Vec<f32>, wav: &Path, at: f64) -> Result<()> {
+    let samples = read_wav(wav)?;
+    let from = (at.max(0.0) * crate::kokoro::SAMPLE_RATE as f64) as usize;
+    let end = from.saturating_add(samples.len());
+    if end > MAX_SAMPLES {
+        bail!("the narration track would be too long");
+    }
+    if out.len() < end {
+        out.resize(end, 0.0);
+    }
+    for (k, v) in samples.iter().enumerate() {
+        out[from + k] += v;
+    }
+    Ok(())
+}
+
 /// Where a video keeps its narration audio.
 pub fn cache_dir(video_dir: &Path) -> PathBuf {
     video_dir.join(".cache").join("voice")

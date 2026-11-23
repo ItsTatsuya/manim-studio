@@ -1,6 +1,7 @@
 //! The render queue: one video at a time, one engine process per scene, cached scenes
 //! skipped, then the scenes are joined into the lesson video.
 
+use anyhow::Context as _;
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -79,6 +80,8 @@ pub struct VideoRender {
     /// Extra fonts for the engine (`--fonts`).
     pub fonts_dir: Option<PathBuf>,
     pub captions: Captions,
+    /// The music bed and soft sounds mixed in at export (not part of any cached scene).
+    pub audio: crate::mix::AudioMix,
     /// Drawn on the exported video (not on the cached scenes).
     pub watermark: Option<export::Watermark>,
     /// The video's title, and which lecture-slide files to write beside it.
@@ -268,6 +271,8 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Arc<Shared>, tx: &asyn
     let mut starts: Vec<f64> = Vec::with_capacity(of);
     // Each scene's own length, for picking its slide frame.
     let mut scene_seconds: Vec<f64> = Vec::with_capacity(of);
+    // Where each scene asked for a soft sound, in scene time.
+    let mut scene_hits: Vec<Vec<crate::mix::Hit>> = Vec::with_capacity(of);
     let (mut rendered, mut cached, mut duration) = (0, 0, 0.0);
     let mut done_weight = 0.0;
     for (index, scene) in job.scenes.iter().enumerate() {
@@ -327,6 +332,7 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Arc<Shared>, tx: &asyn
                 Err(SceneError::Failed(e)) => return fail(Some(index), e),
             }
         }
+        scene_hits.push(crate::mix::load_hits(&out.with_extension("sfx")));
         done_weight += weights[index];
         let _ = tx.send_blocking(QueueEvent::Progress { id, fraction: (done_weight / total) as f32 });
         parts.push(out);
@@ -379,6 +385,8 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Arc<Shared>, tx: &asyn
         }
         for base in [&joined, &job.export] {
             let _ = std::fs::remove_file(base.with_extension("partial.mp4"));
+            let _ = std::fs::remove_file(base.with_extension("mixed.mp4"));
+            let _ = std::fs::remove_file(base.with_extension("mix.wav"));
             let _ = std::fs::remove_file(base.with_extension("parts.txt"));
         }
         let _ = std::fs::remove_dir_all(job.export.with_extension("finish"));
@@ -390,6 +398,16 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Arc<Shared>, tx: &asyn
     if let Err(e) = export::join_dissolve(&ffmpeg, &parts, &lengths, audio, &joined, &cancelled) {
         cleanup();
         return if crate::is_cancelled(&e) { QueueEvent::Cancelled { id } } else { fail(None, format!("joining scenes: {e:#}")) };
+    }
+    if job.audio.any() {
+        if cancelled() {
+            cleanup();
+            return QueueEvent::Cancelled { id };
+        }
+        if let Err(e) = mix_in(&ffmpeg, job, &parts, &starts, &scene_hits, duration, audio, &joined, &cancelled) {
+            cleanup();
+            return if crate::is_cancelled(&e) { QueueEvent::Cancelled { id } } else { fail(None, format!("adding music and sounds: {e:#}")) };
+        }
     }
     if finish {
         if cancelled() {
@@ -429,6 +447,52 @@ fn run_job(worker: &WorkerCommand, job: &VideoRender, s: &Arc<Shared>, tx: &asyn
         (Vec::new(), None)
     };
     QueueEvent::Done { id, path: job.export.clone(), elapsed: started.elapsed(), duration, rendered, cached, slides: slide_files, slides_problem }
+}
+
+/// Mix the music bed and soft sounds into the joined video. The bed is made for the whole
+/// lesson at once, ducked under the narration as it is heard in the video.
+#[allow(clippy::too_many_arguments)]
+fn mix_in(
+    ffmpeg: &Path,
+    job: &VideoRender,
+    parts: &[PathBuf],
+    starts: &[f64],
+    scene_hits: &[Vec<crate::mix::Hit>],
+    duration: f64,
+    has_audio: bool,
+    joined: &Path,
+    cancelled: &dyn Fn() -> bool,
+) -> anyhow::Result<()> {
+    use crate::{mix, voice};
+    let mut heard: Vec<f32> = Vec::new();
+    for ((scene, start), video) in job.scenes.iter().zip(starts).zip(parts) {
+        let Some(n) = &scene.narration else { continue };
+        if n.parts.is_empty() {
+            voice::overlay(&mut heard, &n.wav, *start)?;
+            continue;
+        }
+        let lengths: Vec<f64> = n.parts.iter().map(|(w, _)| voice::wav_seconds(w)).collect::<anyhow::Result<_>>()?;
+        let placed: Option<Vec<f64>> =
+            std::fs::read_to_string(video.with_extension("starts")).ok().and_then(|t| serde_json::from_str(&t).ok());
+        let at = placed.filter(|a| a.len() == n.parts.len()).unwrap_or_else(|| voice::sequential_starts(&lengths));
+        for ((wav, _), a) in n.parts.iter().zip(&at) {
+            voice::overlay(&mut heard, wav, start + a)?;
+        }
+    }
+    let hits: Vec<mix::Hit> = scene_hits.iter().zip(starts).flat_map(|(hs, s)| hs.iter().map(move |h| mix::Hit { at: h.at + s, ..*h })).collect();
+    let samples = mix::render(&heard, duration, &hits, job.audio);
+    if samples.is_empty() {
+        return Ok(());
+    }
+    drop(heard);
+    let wav = joined.with_extension("mix.wav");
+    let mixed = joined.with_extension("mixed.mp4");
+    let result = crate::kokoro::write_wav(&wav, &samples)
+        .and_then(|()| export::add_audio(ffmpeg, joined, &wav, has_audio, &mixed, cancelled))
+        .and_then(|()| std::fs::rename(&mixed, joined).with_context(|| format!("writing {}", joined.display())));
+    let _ = std::fs::remove_file(&wav);
+    let _ = std::fs::remove_file(&mixed);
+    result
 }
 
 /// Lecture slides from the scenes' key frames, beside the finished video. A failure here
@@ -528,6 +592,8 @@ fn render_scene(
     if let Some(f) = &job.fonts_dir {
         cmd.arg("--fonts").arg(f);
     }
+    // Where the lesson kit asked for soft sounds, kept beside the cached scene.
+    cmd.arg("--sfx-marks").arg(out.with_extension("sfx"));
     match &voice {
         Voice::Narration(wav) => {
             cmd.arg("--narration").arg(wav);
@@ -714,6 +780,7 @@ mod tests {
             export: std::env::temp_dir().join("studio-queue-test-none/out.mp4"),
             fonts_dir: None,
             captions: Captions::Off,
+            audio: Default::default(),
             watermark: None,
             title: String::new(),
             slides: slides::Formats::NONE,

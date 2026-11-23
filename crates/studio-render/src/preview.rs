@@ -82,6 +82,11 @@ const TIMING_HOOK: &str = r#"(() => {
           if (last && Object.getPrototypeOf(last) === Object.prototype) items[items.length - 1] = { ...last, runTime: plan[i] };
           else items.push({ runTime: plan[i] });
         }
+        // A kit piece tagged with a soft sound (a dot popping, the answer box) marks the
+        // moment it starts; the export puts the sound there if the teacher asked for it.
+        for (const item of items) {
+          if (item && (item.__sfx === "pop" || item.__sfx === "answer")) this.mark("sfx:" + item.__sfx);
+        }
         const out = play.apply(this, items);
         checkRegions(this);
         return out;
@@ -967,6 +972,11 @@ export default class N extends Scene {
 
     /// Every problem of a scene run with the full kit, in house style `style`.
     fn run_in_kit(tag: &str, body: &str, style: usize) -> Vec<String> {
+        timeline_in_kit(tag, body, style).problems.iter().map(|p| format!("{} at {:.2}", p.message, p.time)).collect()
+    }
+
+    /// The timeline of a scene run with the full kit, in house style `style`.
+    fn timeline_in_kit(tag: &str, body: &str, style: usize) -> TimelineInfo {
         let dir = std::env::temp_dir().join(format!("studio-kit-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("scenes")).unwrap();
@@ -979,7 +989,34 @@ export default class N extends Scene {
         let req = OpenScene { path, root: dir.clone(), theme_json: crate::style::json(style).into(), scene: None, globals: vec![], narration: None, narration_lines: vec![], narration_cues: vec![] };
         let t = load(&req, Output::new(320, 180, 30.0)).unwrap_or_else(|e| panic!("{e:#}"));
         let _ = std::fs::remove_dir_all(&dir);
-        t.2.problems.iter().map(|p| format!("{} at {:.2}", p.message, p.time)).collect()
+        t.2
+    }
+
+    /// A dot popping and the answer box appearing mark the moment they start, wherever the
+    /// scene plays them from; other animations leave no mark. The export reads these to
+    /// place soft sounds.
+    #[test]
+    fn kit_pieces_mark_where_sounds_belong() {
+        let t = timeline_in_kit("sfx", r#"
+            const k = lesson(this);
+            const plot = k.Plot({ xRange: [0, 40, 10], yRange: [0, 40, 10] });
+            this.play(plot.show(), { runTime: 0.5 });
+            this.wait(0.5);
+            this.play(plot.dot([10, 20], k.c.primary, "(10, 20)"), { runTime: 0.4 });
+            this.play(FadeIn(Dot()), { runTime: 0.3 });
+            this.wait(0.7);
+            this.play(plot.crossing([20, 10]), { runTime: 1.0 });
+            this.play(k.AnswerBox("r = 10").enter().set({ runTime: 0.4 }));
+            "#, 0);
+        let hits = crate::mix::hits(&t.markers);
+        let kinds: Vec<_> = hits.iter().map(|h| h.kind).collect();
+        assert_eq!(kinds, [crate::mix::Sfx::Pop, crate::mix::Sfx::Pop, crate::mix::Sfx::Answer], "{:?}", t.markers);
+        let starts: Vec<f64> = t.plays.iter().filter(|p| !p.wait).map(|p| p.start).collect();
+        // Each mark is where its animation starts: the dot after show() and a wait, the
+        // crossing after the plain dot, the box last.
+        assert!((hits[0].at - starts[1]).abs() < 0.05, "{hits:?} {starts:?}");
+        assert!((hits[1].at - starts[3]).abs() < 0.05, "{hits:?} {starts:?}");
+        assert!((hits[2].at - starts[4]).abs() < 0.05, "{hits:?} {starts:?}");
     }
 
     #[test]

@@ -93,6 +93,8 @@ pub struct Prefs {
     /// Index into `engine::SPEEDS`.
     pub speed: usize,
     pub watermark: WatermarkPrefs,
+    /// The music bed and soft sounds mixed into exported videos (all off by default).
+    pub audio: studio_render::mix::AudioMix,
     /// Natural voice model: index into `studio_render::kokoro::Quality::ALL` (Standard first).
     pub voice_model: usize,
     /// 0 off, 1 .srt file, 2 burned in + .srt.
@@ -155,6 +157,7 @@ impl Default for Prefs {
             voice: None,
             speed: 1,
             watermark: WatermarkPrefs::default(),
+            audio: studio_render::mix::AudioMix::default(),
             voice_model: 0,
             captions: 1,
             slides: 0,

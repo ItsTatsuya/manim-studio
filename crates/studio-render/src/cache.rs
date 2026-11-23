@@ -200,9 +200,10 @@ pub fn fonts_fingerprint(dir: Option<&Path>) -> String {
     fonts.iter().map(|(n, s)| format!("{n}:{s}")).collect::<Vec<_>>().join(",")
 }
 
-/// The sidecar files that sit next to a cached scene video (`.seconds`, `.starts`, and
+/// The sidecar files that sit next to a cached scene video (`.seconds`, `.starts`, `.sfx`
+/// (where soft sounds belong), and
 /// the `.output` label `prune` uses to keep one render per output preset).
-const SIDECARS: [&str; 3] = ["seconds", "starts", "output"];
+const SIDECARS: [&str; 4] = ["seconds", "starts", "sfx", "output"];
 
 /// Record which output preset a cached scene video was rendered for.
 pub fn write_output_label(video: &Path, output: Output) {

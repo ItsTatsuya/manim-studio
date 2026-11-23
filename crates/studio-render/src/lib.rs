@@ -23,6 +23,7 @@ pub mod events;
 pub mod export;
 pub mod fonts;
 pub mod kokoro;
+pub mod mix;
 pub mod preview;
 pub mod queue;
 pub mod sample;

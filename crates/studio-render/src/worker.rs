@@ -5,6 +5,7 @@
 //! manim-studio render-worker --script scenes/03-unroll.ts --root <video> [--timeout 600]
 //!     [--narration track.wav | --narration-part s1.wav --narration-part s2.wav ... --narration-starts out.starts
 //!      --narration-cues '[{"id":"c20","line":1,"at":1.2}]']
+//!     [--sfx-marks out.sfx]
 //!     [manim flags: -r 1920x1080 --fps 30 --format mp4 -o out.mp4 --theme style.json --fonts DIR ...]
 //! ```
 //!
@@ -43,6 +44,7 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
     let mut parts: Vec<PathBuf> = Vec::new();
     let mut starts_file: Option<PathBuf> = None;
     let mut cues: Vec<crate::cues::CueTime> = Vec::new();
+    let mut sfx_file: Option<PathBuf> = None;
     let mut silence = false;
     let mut rest = Vec::new();
     let mut it = args.into_iter();
@@ -56,6 +58,7 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
             "--narration-cues" => {
                 cues = serde_json::from_str(&it.next().context("--narration-cues needs JSON")?).context("reading --narration-cues")?;
             }
+            "--sfx-marks" => sfx_file = Some(it.next().context("--sfx-marks needs a path")?.into()),
             "--silence" => silence = true,
             "--timeout" => {
                 timeout = Duration::from_secs_f64(it.next().context("--timeout needs seconds")?.parse()?);
@@ -118,6 +121,10 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
     let mut track: Option<PathBuf> = None;
     let result = host.run(&scene, &config).and_then(|_| {
         let timeline = host.timeline();
+        // Where the lesson kit asked for soft sounds; the export places them if wanted.
+        if let (Some(f), Some(t)) = (&sfx_file, &timeline) {
+            let _ = std::fs::write(f, serde_json::to_string(&crate::mix::hits(&t.markers))?);
+        }
         let placed = !lines.is_empty() && timeline.as_ref().is_some_and(crate::preview::uses_narrate);
         if let Some(n) = seconds {
             let starts = match (&timeline, placed) {

@@ -1616,6 +1616,7 @@ impl Workspace {
                 2 => studio_render::queue::Captions::Burned,
                 _ => studio_render::queue::Captions::Srt,
             },
+            audio: self.prefs.audio,
             watermark: self.watermark_for(pi),
             title: video.title.clone(),
             slides: slide_formats(self.video_slides((pi, vi))),

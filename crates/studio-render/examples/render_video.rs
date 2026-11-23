@@ -72,6 +72,7 @@ fn main() -> Result<()> {
         export: out.clone(),
         fonts_dir: None,
         captions: Captions::Srt,
+        audio: Default::default(),
         watermark: None,
         title: "Headless render".into(),
         slides: studio_render::slides::Formats { pdf: true, pptx: true },
