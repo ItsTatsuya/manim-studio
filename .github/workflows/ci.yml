@@ -18,7 +18,9 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # A cold Windows build (clippy, then the tests) takes over 30 minutes, and the cache is
+    # only saved by a job that finishes, so a lower limit keeps every later run cold too.
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || 30 }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
