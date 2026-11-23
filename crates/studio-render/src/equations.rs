@@ -44,6 +44,7 @@ pub fn check(equations: &[String], theme_json: &str) -> Result<Vec<Option<String
         narration: None,
         narration_lines: vec![],
         narration_cues: vec![],
+        critic: None,
     };
     let result = std::thread::Builder::new()
         .stack_size(STACK)
