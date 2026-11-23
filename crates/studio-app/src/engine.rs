@@ -514,8 +514,9 @@ impl Workspace {
             narration: v.scenes.get(scene)?.engine.voice.as_ref().map(|l| l.seconds as f64),
             narration_lines: v.scenes.get(scene)?.engine.voice.as_ref().map(VoiceLine::lines).unwrap_or_default(),
             narration_cues: v.scenes.get(scene)?.engine.voice.as_ref().map(|l| l.cues.clone()).unwrap_or_default(),
-            // The same checks the assistant's repairs use, so what the strip says matches.
-            critic: Some(v.scenes.get(scene)?.engine.voice.as_ref().map(VoiceLine::critic).unwrap_or_default()),
+            // The critic runs with the assistant's checks (and repairs), not with the live
+            // preview: a hand-made or sample scene isn't flagged for how it is paced.
+            critic: None,
         })
     }
 

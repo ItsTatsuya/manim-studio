@@ -98,7 +98,8 @@ const TIMING_HOOK: &str = r#"(() => {
       const texts = (scene) => {
         const out = [];
         const items = scene.inspect();
-        const ms = scene.mobjects;
+        // inspect() leaves out what has no bounding box (an empty group): so must this.
+        const ms = scene.mobjects.filter((m) => m.bbox);
         let budget = 4000;
         const walk = (m, key) => {
           if (budget-- <= 0 || DRAWN[m.kind]) return;
@@ -1308,6 +1309,21 @@ export default class N extends Scene {
         let off = of("off-cue");
         assert!(off.len() == 1 && off[0].contains("\"c = 20\"") && off[0].contains("before the voice says \"twenty\""), "{found:?}");
         assert!(of("dead-air").is_empty(), "{found:?}");
+    }
+
+    /// An empty group on screen (figure labels nobody filled) has no bounding box, which
+    /// must not throw off the walk through what is shown: the text is still found.
+    #[test]
+    fn an_empty_group_on_screen_does_not_hide_text_from_the_critic() {
+        let say = "A sentence about nothing in particular that goes on for a bit.";
+        let body = r#"
+            const empty = VGroup();
+            this.add(empty);
+            const t = work.push(Text("tiny print here", { fontSize: 9 }));
+            this.play(FadeIn(t), { runTime: 0.5 });
+            this.play(Indicate(t), { runTime: 2.5 });"#;
+        let found = critiqued("empty", say, &[4.0], body);
+        assert!(found.iter().any(|(k, m)| k == "too-small" && m.contains("tiny print here")), "{found:?}");
     }
 
     /// Like the preview thread: one scene after another on the same thread, retimed.

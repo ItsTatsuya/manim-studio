@@ -354,7 +354,7 @@ impl Workspace {
                     .child(item("Planning", "Storyboards and questions. A small model with Auto reasoning is enough.", planning, false, cx))
                     .child(item("Building", "Writes and repairs scene code. Also set from the chat box. Auto reasoning builds with low effort on Sonnet (fewer tokens, fewer repairs in our tests).", build, false, cx))
                     .child(item("Automatic repairs", "Script errors, overlaps, pictures that stand still while the voice speaks, text on screen too briefly or too small, and values shown before they are said go back to the assistant.", repairs, false, cx))
-                    .child(item("Look over new videos", "After a video is created, the assistant looks at stills of each chapter, one for each moment of the narration, and what it finds goes back as a repair (it counts against Automatic repairs). Costs a few thousand tokens.", review, false, cx))
+                    .child(item("Look over new videos", "After a video is created, the assistant looks at stills of each chapter, one for each moment of the narration, and what it finds goes back as a repair (it counts against Automatic repairs). On by default; costs tens of thousands of tokens for a video of six chapters.", review, false, cx))
                     .child(item("Think harder on repeat errors", "Each failed repair raises reasoning one step, then it drops back.", escalate, true, cx)),
             )
             .child(faint(auto_note, cx).text_size(text::CAPS).mt(px(-10.)).px(px(2.)))
