@@ -4094,7 +4094,7 @@ dependencies = [
 [[package]]
 name = "manim"
 version = "0.1.0"
-source = "git+https://github.com/ItsTatsuya/manim-rust?rev=a5ef7d8b53a50f753098477fa3ea87748253079b#a5ef7d8b53a50f753098477fa3ea87748253079b"
+source = "git+https://github.com/ItsTatsuya/manim-rust?rev=89286911fc2c003269f267c2b2b71490e5d9ab38#89286911fc2c003269f267c2b2b71490e5d9ab38"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -7268,6 +7268,7 @@ dependencies = [
  "studio-agent",
  "studio-docs",
  "studio-render",
+ "studio-script",
  "studio-ui",
  "studio-updater",
  "trash",
@@ -7289,6 +7290,7 @@ version = "1.3.0"
 dependencies = [
  "anyhow",
  "async-channel",
+ "fancy-regex",
  "flate2",
  "manim",
  "ort",
@@ -7303,6 +7305,9 @@ dependencies = [
 [[package]]
 name = "studio-script"
 version = "1.3.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "studio-ui"

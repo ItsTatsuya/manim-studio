@@ -208,6 +208,49 @@ pub fn estimate(script: &str, lines: &[f64]) -> Vec<CueTime> {
         .collect()
 }
 
+/// One word of a narration as it is heard: for the critic, which checks what is on screen
+/// against what has been said.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpokenWord {
+    /// The word as written, lower case, without punctuation around it.
+    pub text: String,
+    /// The sentence it is in (1-based, as in `this.narrate(n)`).
+    pub line: usize,
+    /// Seconds after that sentence starts.
+    pub at: f64,
+    /// The id of the cue mark in front of it, if the script marks this word.
+    pub cue: Option<String>,
+}
+
+/// Every word of a narration script with when it starts. Word times come from the files
+/// stored beside each sentence's WAV (`wavs`, one per sentence, when they exist), else from
+/// the spelling; a marked word takes the time of its cue, which was worked out from the
+/// audio.
+pub fn spoken_words(script: &str, lines: &[f64], cues: &[CueTime], wavs: &[std::path::PathBuf]) -> Vec<SpokenWord> {
+    let mut out = Vec::new();
+    for (i, sentence) in studio_script::marked_sentences(script).iter().enumerate() {
+        let Some(&seconds) = lines.get(i) else { break };
+        let words = wavs
+            .get(i)
+            .and_then(|w| load(&w.with_extension("words.json")))
+            .unwrap_or_else(|| spelled_word_times(&sentence.text, seconds));
+        for (k, w) in words.iter().enumerate() {
+            let end = words.get(k + 1).map_or(sentence.text.len(), |n| n.at);
+            let text = sentence.text[w.at..end].trim().trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
+            if text.is_empty() {
+                continue;
+            }
+            // The same word `resolve` gives a mark.
+            let mark = sentence.marks.iter().find(|m| {
+                m.at < sentence.text.len() && words.iter().rev().find(|x| x.at <= m.at).is_some_and(|x| x.at == w.at)
+            });
+            let at = mark.and_then(|m| cues.iter().find(|c| c.line == i + 1 && c.id == m.id)).map_or(w.start, |c| c.at);
+            out.push(SpokenWord { text, line: i + 1, at, cue: mark.map(|m| m.id.clone()) });
+        }
+    }
+    out
+}
+
 /// Word times as stored: byte offset and whole milliseconds, so a time read back is the
 /// time that was worked out (a scene's cache key includes its cue times).
 #[derive(Serialize, Deserialize)]

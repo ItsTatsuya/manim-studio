@@ -14,6 +14,7 @@ mod prefs;
 mod probes;
 mod shortcuts;
 mod store;
+mod teacher;
 mod update;
 mod views;
 

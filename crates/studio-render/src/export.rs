@@ -218,6 +218,8 @@ pub struct Watermark {
     pub color: Option<String>,
     /// A soft shadow (style background colour) behind text.
     pub shadow: bool,
+    /// Not drawn on the last scene (an end card that has the logo itself).
+    pub until_last_scene: bool,
 }
 
 /// The watermark's top-left corner and box size for a `width`×`height` video, given the
@@ -236,6 +238,8 @@ pub fn place(at: (Align, Align), margin: f32, width: f32, height: f32, mark_w: f
 pub struct Finish<'a> {
     pub captions: Option<&'a Path>,
     pub watermark: Option<&'a Watermark>,
+    /// The watermark is hidden from this time on (seconds into the video).
+    pub watermark_until: Option<f64>,
     /// TTF for text watermarks (the bundled Inter).
     pub font: Option<&'a Path>,
     /// `RRGGBB` for watermark text and its shadow (from the house style).
@@ -243,6 +247,11 @@ pub struct Finish<'a> {
     pub shadow_rgb: &'a str,
     pub width: u32,
     pub height: u32,
+}
+
+/// The filter option that hides a watermark from `until` seconds on.
+fn visible_until(until: Option<f64>) -> String {
+    until.map(|t| format!(":enable='lt(t,{t:.3})'")).unwrap_or_default()
 }
 
 /// `#RRGGBB` → `RRGGBB` for ffmpeg colours, with a fallback.
@@ -289,7 +298,7 @@ pub fn finish(ffmpeg: &Path, video: &Path, f: &Finish, out: &Path, cancelled: &d
                     let px = ((f.width as f32 * w.size).round() as u32).max(8);
                     let (x, y) = (pos(w.at.0, "W", "w"), pos(w.at.1, "H", "h"));
                     graph.push(format!("[1:v]format=rgba,scale={px}:-1,colorchannelmixer=aa={op:.2}[wm]"));
-                    graph.push(format!("[{cur}][wm]overlay=x={x}:y={y}:format=auto[v]"));
+                    graph.push(format!("[{cur}][wm]overlay=x={x}:y={y}:format=auto{}[v]", visible_until(f.watermark_until)));
                 }
                 Mark::Text(text) => {
                     std::fs::write(work.join("mark.txt"), text.trim())?;
@@ -310,7 +319,8 @@ pub fn finish(ffmpeg: &Path, video: &Path, f: &Finish, out: &Path, cancelled: &d
                         String::new()
                     };
                     graph.push(format!(
-                        "[{cur}]drawtext={font}textfile='mark.txt':expansion=none:fontsize={size}:fontcolor=0x{color}@{op:.2}{shadow}:x={x}:y={y}[v]"
+                        "[{cur}]drawtext={font}textfile='mark.txt':expansion=none:fontsize={size}:fontcolor=0x{color}@{op:.2}{shadow}:x={x}:y={y}{}[v]",
+                        visible_until(f.watermark_until)
                     ));
                 }
             }
@@ -426,9 +436,79 @@ pub fn join_dissolve(
     Ok(())
 }
 
+/// Mix `extra` (the music bed and soft sounds, a WAV) into the audio of a joined video.
+/// The picture is copied untouched. `has_audio` says whether the video already carries
+/// narration; without it, `extra` becomes its only audio.
+pub fn add_audio(ffmpeg: &Path, video: &Path, extra: &Path, has_audio: bool, out: &Path, cancelled: &dyn Fn() -> bool) -> Result<()> {
+    let tmp = out.with_extension("partial.mp4");
+    let mut cmd = Command::new(ffmpeg);
+    cmd.args(["-y", "-hide_banner", "-loglevel", "error"]).arg("-i").arg(video).arg("-i").arg(extra);
+    if has_audio {
+        cmd.args([
+            "-filter_complex",
+            "[0:a]aresample=48000[n];[1:a]aresample=48000[x];[n][x]amix=inputs=2:normalize=0:duration=longest[a]",
+            "-map",
+            "0:v",
+            "-map",
+            "[a]",
+        ]);
+    } else {
+        cmd.args(["-map", "0:v", "-map", "1:a"]);
+    }
+    cmd.args(["-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]).arg(&tmp);
+    let (status, err) = match run_child(&mut cmd, cancelled) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+    };
+    if !status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        bail!("{}", last_line(&err));
+    }
+    std::fs::rename(&tmp, out).with_context(|| format!("writing {}", out.display()))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Needs ffmpeg (skipped otherwise): a bed is added to a silent video and mixed into a
+    /// voiced one, and the picture length does not change.
+    #[test]
+    fn mixes_extra_audio_into_the_video() {
+        let Some(ff) = crate::ffmpeg_path() else { return };
+        let dir = std::env::temp_dir().join(format!("studio-addaudio-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let make = |name: &str, audio: bool| {
+            let p = dir.join(name);
+            let mut c = Command::new(&ff);
+            c.args(["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=15:duration=2"]);
+            if audio {
+                c.args(["-f", "lavfi", "-i", "sine=frequency=330:duration=2", "-c:a", "aac", "-shortest"]);
+            }
+            assert!(quiet(c.args(["-pix_fmt", "yuv420p"]).arg(&p)).status().unwrap().success());
+            p
+        };
+        let extra = dir.join("extra.wav");
+        crate::kokoro::write_wav(&extra, &crate::mix::render(&[], 2.0, &[], crate::mix::AudioMix { music: true, ..Default::default() })).unwrap();
+        let probe = ff.with_file_name(if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" });
+        for has_audio in [false, true] {
+            let video = make(if has_audio { "voiced.mp4" } else { "silent.mp4" }, has_audio);
+            let out = dir.join(format!("out-{has_audio}.mp4"));
+            add_audio(&ff, &video, &extra, has_audio, &out, &|| false).unwrap();
+            if probe.is_file() {
+                let o = Command::new(&probe).args(["-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "csv=p=0"]).arg(&out).output().unwrap();
+                let text = String::from_utf8_lossy(&o.stdout);
+                assert!(text.contains("video") && text.contains("audio"), "{text}");
+                let v: f64 = text.lines().find(|l| l.starts_with("video")).and_then(|l| l.split(',').nth(1)).and_then(|d| d.parse().ok()).unwrap();
+                assert!((v - 2.0).abs() < 0.15, "{text}");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// Needs ffmpeg: three 2 s clips dissolve into one 2 × 3 − 2 × 0.5 = 5 s video with audio.
     #[test]
@@ -458,7 +538,14 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Needs ffmpeg (skipped otherwise): text, image and captions + text on a test clip.
+    #[test]
+    fn a_watermark_can_end_before_the_video_does() {
+        assert_eq!(visible_until(None), "");
+        assert_eq!(visible_until(Some(585.0)), ":enable='lt(t,585.000)'");
+    }
+
+    /// Needs ffmpeg (skipped otherwise): text, image and captions + text on a test clip. The
+    /// image one is hidden from 0.5 s on, and the text one is too.
     #[test]
     fn draws_watermarks() {
         let Some(ff) = crate::ffmpeg_path() else { return };
@@ -487,9 +574,9 @@ mod tests {
             if matches!(mark, Mark::Text(_)) && font.is_none() {
                 continue;
             }
-            let wm = Watermark { mark, at, size: 0.08, opacity: 0.6, margin: 0.035, color: (k == 2).then(|| "FF0000".into()), shadow: k != 2 };
+            let wm = Watermark { mark, at, size: 0.08, opacity: 0.6, margin: 0.035, color: (k == 2).then(|| "FF0000".into()), shadow: k != 2, until_last_scene: false };
             let out = dir.join(format!("out{k}.mp4"));
-            let f = Finish { captions, watermark: Some(&wm), font: font.as_deref(), text_rgb: "FFFFFF", shadow_rgb: "000000", width: 640, height: 360 };
+            let f = Finish { captions, watermark: Some(&wm), watermark_until: (k != 0).then_some(0.5), font: font.as_deref(), text_rgb: "FFFFFF", shadow_rgb: "000000", width: 640, height: 360 };
             finish(&ff, &clip, &f, &out, &|| false).unwrap_or_else(|e| panic!("mark {k}: {e:#}"));
             assert!(std::fs::metadata(&out).unwrap().len() > 1000);
         }

@@ -62,6 +62,8 @@ crates/
     src/style.rs        house styles (Slate, Whiteboard, Clean, Phosphor, Playground, Documentary) as engine themes
     src/voice.rs        narration (Kokoro, else the system voice), WAV cache, captions
     src/kokoro/         Kokoro-82M on ONNX Runtime + misaki G2P port, model download
+    src/chatterbox/     optional second voice: Chatterbox Turbo (voice cloning) on the same runtime
+    src/mix.rs          music bed that ducks under the voice, soft sounds on dot pops and the answer box
     samples/            the bundled "Area of a circle" lesson, installed on first run
   studio-app/    the desktop binary (+ `studio-engine`, the console-subsystem render worker)
     src/app.rs          Workspace root: navigation, actions, key bindings, playback
@@ -98,12 +100,16 @@ the same thing.
 cargo run -p tokenbench --release -- --dry                         # prompt sizes, no assistant calls
 cargo run -p tokenbench --release -- --cases fractions --variants baseline,example
 cargo run -p tokenbench --release -- --runs 3                      # every case and variant, 3 times
+cargo run -p tokenbench --release -- --no-critic                   # the engine check alone, as before the critic
+cargo run -p tokenbench --release -- --look                        # plus the look pass (stills, costs tokens)
 ```
 
 Each run builds, checks every scene with the engine, repairs like the app does, and records
 fresh input, cache writes, cache reads, output, model calls, the CLI's cost estimate and
 time, against first-try and final pass rates, layout problems left, scene length vs plan
-and code size. `target/tokenbench/<time>/summary.md` has the per-variant means;
+and code size. The critic's findings (dead air, too brief, too small, off-cue) are counted
+apart from the engine's: first check → left after repairs, per kind, and the share of scenes
+with nothing at all. `target/tokenbench/<time>/summary.md` has the per-variant means;
 `report.html` shows every scene's thumbnail per variant to judge the videos by eye. Real
 runs use your assistant plan. The app uses `prompt::Recipe::default()`: change it there
 when a variant wins on both tokens and quality.
@@ -147,12 +153,19 @@ when a variant wins on both tokens and quality.
   espeak-ng (GPL) is only ever run as a separate program, for words not in the dictionaries;
   Settings → Voice can fetch it on Windows (unpacked from the official MSI, no install).
   Distributing a build needs these projects' licence notices.
+- Optional second voice (Settings → Voice & captions → Voice engine): Chatterbox Turbo (MIT, English),
+  which speaks like a recording of the teacher (about 725 MB, same ONNX Runtime, nothing is sent anywhere).
+  Kokoro stays the default and speaks whenever Chatterbox isn't ready. Cue timing works for either engine.
+- Sound (same page, each switched off by default): a calm synthesized music bed that dips under the
+  narration, a soft tick on dot pops and a chime on the answer box. The lesson kit marks those moments
+  (`sfx:pop`, `sfx:answer`); the export mixes the sounds in, so no cached scene changes.
 - Watermarks (Settings → Rendering): text or an image, placed on a 3×3 grid with size,
   opacity, margin, colour and shadow, previewed live with the same geometry the export uses
   (`studio_render::export::place`). Drawn once on the exported MP4 in the same ffmpeg pass
   as burned-in captions, so scene caches stay valid. Projects can opt out (scene strip →
   Watermark; saved in `project.json`).
-- Visual review: after a video is created (Settings → Assistants → Look over new videos, or the scene strip's Check the look), `preview::review_frames` draws the key moment (and the middle, for longer scenes) of each chapter, ffmpeg writes them to `.cache/review/*.jpg`, and one assistant turn (`prompt::review`) opens the pictures with its file reader and fixes overlapping, cut-off or tiny text in the scene files; the usual engine check and repairs run after it. `cargo run -p studio-app --example review_demo -- <video folder>` tries it without the GUI.
+- Critic (`studio_render::critic`): beside the engine's layout check, a scene that has a narration is also checked for **dead air** (nothing moves for more than 3 s while the voice speaks, unless the scene calls `this.mark("hold")` first), **too brief** (a text on screen for less than 0.5 s plus 0.3 s a word), **too small** (reading text under 28 px at 1080p; the watermark is another layer and is never checked) and **off-cue** (a number or term the script marks with a cue shown more than 0.4 s before the voice says it). The scene hook (`TIMING_HOOK`) records which text is on screen when and the script line of every animation; findings are ordinary problems of the scene's timeline, each naming its line, so they go back through the repair loop and count against the repair limit. The live preview and thumbnails don't run it: only the assistant's checks and repairs do. Text updated every frame (a probe's readout) is not timed.
+- Look pass: after a video is created (Settings → Assistants → Look over new videos, or the scene strip's Check the look), `critic::look_frames` draws a still at the end of each cue of every chapter (and of each sentence without cues), `critic::contact_sheets` tiles them two across and numbers them, ffmpeg writes them to `.cache/review/*.jpg`, and one read-only assistant turn (`prompt::look`) lists overlaps, clipped content, empty halves, unreadable text and anything on screen the narration hasn't said yet, as JSON. `prompt::look_failures` turns the list into failures with the still's time and the script line running then, sent through `prompt::repair_all` as one repair turn that counts against the repair limit; the engine check runs after it. `cargo run -p studio-app --example review_demo -- <video folder>` tries it without the GUI.
 - Lecture slides (Settings → Rendering, or per video from the scene strip / script): saving a video can also write `<Title>.pdf` and/or `<Title>.pptx` beside it: one slide per chapter, which is just that chapter's key frame filling the page, in the video's own shape, with no text added. The frames are cut from the cached scene videos with ffmpeg (so no watermark or burned-in captions). `studio_render::slides` writes both formats by hand. A slide failure never fails the video.
 - Cues time moments inside a sentence: a mark like `If r is ten, c is {c20}twenty.` in the
   script (never spoken, never in captions) lets the scene call `this.cue("c20")` right before
@@ -170,5 +183,5 @@ when a variant wins on both tokens and quality.
   made `target/` grow past 60 GB.
 - Repairs: after a turn, every failing scene goes back in one repair turn, each with its
   diagnostic and the source lines involved (for layout problems, the lines creating the
-  overlapping texts).
+  overlapping texts; for the critic's findings and the look pass, the line they name).
 - The app mark lives in `crates/studio-ui/assets/brand/logo.svg`; rerun `icongen` after editing it.

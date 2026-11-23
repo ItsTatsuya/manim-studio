@@ -94,6 +94,14 @@ impl NaturalVoice {
         }
         if studio_render::voice::kokoro_ready() { Self::Ready } else { Self::Missing }
     }
+
+    /// Point the voice layer at Chatterbox's folder and see whether the model is there.
+    pub fn detect_chatterbox() -> Self {
+        if let Some(dir) = data_dir() {
+            studio_render::voice::set_chatterbox_dir(dir.join("voices").join("chatterbox"));
+        }
+        if studio_render::voice::chatterbox_ready() { Self::Ready } else { Self::Missing }
+    }
 }
 use studio_ui::IconName;
 
@@ -514,6 +522,9 @@ impl Workspace {
             narration: v.scenes.get(scene)?.engine.voice.as_ref().map(|l| l.seconds as f64),
             narration_lines: v.scenes.get(scene)?.engine.voice.as_ref().map(VoiceLine::lines).unwrap_or_default(),
             narration_cues: v.scenes.get(scene)?.engine.voice.as_ref().map(|l| l.cues.clone()).unwrap_or_default(),
+            // The critic runs with the assistant's checks (and repairs), not with the live
+            // preview: a hand-made or sample scene isn't flagged for how it is paced.
+            critic: None,
         })
     }
 
@@ -598,6 +609,9 @@ impl Workspace {
         if !self.prefs.narration {
             return "Off".into();
         }
+        if self.chatterbox_active() {
+            return "Your own voice (Chatterbox)".into();
+        }
         if !self.probes.borrow_mut().kokoro_usable.get((), |_| studio_render::voice::kokoro_ready()) {
             return "Natural voice not downloaded".into();
         }
@@ -626,15 +640,8 @@ impl Workspace {
             margin: w.margin.clamp(WM_RANGES[2].0, WM_RANGES[2].1),
             color: WM_COLORS[w.color.min(WM_COLORS.len() - 1)].1.map(str::to_string),
             shadow: w.shadow,
+            until_last_scene: false,
         })
-    }
-
-    /// The watermark for videos in project `p`.
-    pub fn watermark_for(&self, p: usize) -> Option<studio_render::export::Watermark> {
-        if self.projects.get(p).is_none_or(|p| p.no_watermark) {
-            return None;
-        }
-        self.default_watermark()
     }
 
     /// Set watermark slider `ix` (size, opacity, margin) from window x-coordinate `x`.
@@ -869,8 +876,125 @@ impl Workspace {
         studio_render::kokoro::VOICES.iter().map(|(id, _)| *id).find(|id| *id == spec.voice_id()).unwrap_or(studio_render::kokoro::DEFAULT_VOICE)
     }
 
-    fn voice_spec(&self) -> studio_render::voice::VoiceSpec {
-        studio_render::voice::VoiceSpec { voice: self.prefs.voice.clone(), rate: SPEEDS[self.prefs.speed.min(SPEEDS.len() - 1)].1 }
+    /// Chatterbox is picked and everything it needs is in place: the model, a reference
+    /// recording and the teacher's word that they may use that voice.
+    pub fn chatterbox_active(&self) -> bool {
+        use studio_render::voice::Engine;
+        Engine::ALL[self.prefs.voice_engine.min(Engine::ALL.len() - 1)] == Engine::Chatterbox
+            && self.chatterbox == NaturalVoice::Ready
+            && self.prefs.clone_consent
+            && self.prefs.voice_reference.as_deref().is_some_and(Path::is_file)
+    }
+
+    /// The voice that speaks. Kokoro speaks whenever Chatterbox is picked but not ready
+    /// (not downloaded, no recording, no consent), so narration never stops.
+    pub fn voice_spec(&self) -> studio_render::voice::VoiceSpec {
+        use studio_render::voice::Engine;
+        let rate = SPEEDS[self.prefs.speed.min(SPEEDS.len() - 1)].1;
+        if self.chatterbox_active() {
+            return studio_render::voice::VoiceSpec { engine: Engine::Chatterbox, reference: self.prefs.voice_reference.clone(), voice: None, rate };
+        }
+        studio_render::voice::VoiceSpec { voice: self.prefs.voice.clone(), rate, ..Default::default() }
+    }
+
+    /// Pick the voice engine and re-speak the narration with it.
+    pub fn set_voice_engine(&mut self, i: usize, cx: &mut Context<Self>) {
+        self.prefs.voice_engine = i;
+        self.save_prefs();
+        self.probes.get_mut().clear();
+        self.refresh_voice(self.current, cx);
+        cx.notify();
+    }
+
+    /// Choose the recording Chatterbox should sound like. It is converted to the form the
+    /// model reads (mono, at most ten seconds, quiet ends cut) and kept in the data folder.
+    pub fn pick_voice_clip(&mut self, cx: &mut Context<Self>) {
+        self.pick("Choose a recording of the voice (about ten seconds of one person speaking clearly)", cx, |_this, paths, cx| {
+            let Some(src) = paths.into_iter().next() else { return };
+            let Some(dir) = data_dir().map(|d| d.join("voices").join("chatterbox-reference")) else { return };
+            let dest = dir.join("reference.wav");
+            let _ = std::fs::create_dir_all(&dir);
+            cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let dest2 = dest.clone();
+                let result = cx.background_executor().spawn(async move { studio_render::chatterbox::prepare_reference(&src, &dest2) }).await;
+                this.update(cx, |this, cx| {
+                    match result {
+                        Ok(seconds) => {
+                            this.prefs.voice_reference = Some(dest);
+                            // A new voice is a new yes: the teacher confirms it for this recording.
+                            this.prefs.clone_consent = false;
+                            this.save_prefs();
+                            this.notice = Some(format!("Voice recording ready ({seconds:.0} s). Confirm you may use it to turn Chatterbox on."));
+                            this.refresh_voice(this.current, cx);
+                        }
+                        Err(e) => this.notice = Some(format!("Couldn't use that recording: {e:#}")),
+                    }
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        });
+    }
+
+    pub fn set_clone_consent(&mut self, yes: bool, cx: &mut Context<Self>) {
+        // There has to be a recording to agree about.
+        self.prefs.clone_consent = yes && self.prefs.voice_reference.as_deref().is_some_and(Path::is_file);
+        self.save_prefs();
+        self.refresh_voice(self.current, cx);
+        cx.notify();
+    }
+
+    /// Download the Chatterbox model (and the ONNX Runtime library, if Kokoro isn't here).
+    pub fn download_chatterbox(&mut self, cx: &mut Context<Self>) {
+        if !studio_render::kokoro::supported() || matches!(self.chatterbox, NaturalVoice::Downloading(_)) {
+            return;
+        }
+        let (Some(models), Some(runtime)) = (studio_render::voice::chatterbox_dir().map(Path::to_path_buf), studio_render::voice::kokoro_dir().map(Path::to_path_buf)) else { return };
+        self.chatterbox = NaturalVoice::Downloading(0.);
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.chatterbox_cancel = cancel.clone();
+        cx.notify();
+        let (tx, rx) = async_channel::unbounded::<f32>();
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let task = cx.background_executor().spawn(async move {
+                let mut last = 0.0f32;
+                studio_render::chatterbox::download(&models, &runtime, &cancel, move |done, total| {
+                    let f = done as f32 / total.max(1) as f32;
+                    if f - last >= 0.01 || done == total {
+                        last = f;
+                        let _ = tx.try_send(f);
+                    }
+                })
+            });
+            while let Ok(f) = rx.recv().await {
+                this.update(cx, |this, cx| {
+                    this.chatterbox = NaturalVoice::Downloading(f);
+                    cx.notify();
+                })
+                .ok();
+            }
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(()) => {
+                        this.chatterbox = NaturalVoice::Ready;
+                        this.notice = Some("The Chatterbox voice is installed.".into());
+                        this.refresh_voice(this.current, cx);
+                    }
+                    Err(e) if studio_render::is_cancelled(&e) => this.chatterbox = NaturalVoice::detect_chatterbox(),
+                    Err(e) => this.chatterbox = NaturalVoice::Failed(format!("{e:#}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub fn cancel_chatterbox(&mut self, cx: &mut Context<Self>) {
+        self.chatterbox_cancel.store(true, Ordering::Relaxed);
+        cx.notify();
     }
 
     /// Speak every scene's narration line of `video` in the background (cached per line),
@@ -980,7 +1104,7 @@ impl Workspace {
                 // Say so when speech fails (not while the voice just isn't downloaded:
                 // that has its own prompt).
                 if let Some((i, e)) = first_error
-                    && studio_render::voice::kokoro_ready()
+                    && this.voice_spec().ready()
                 {
                     this.notice = Some(format!("Couldn't speak chapter {}'s narration: {}", i + 1, studio_render::short_error(&e)));
                     cx.notify();
@@ -1091,7 +1215,7 @@ impl Workspace {
     fn voice_pending(&self, video: (usize, usize)) -> bool {
         self.prefs.narration
             && studio_render::kokoro::supported()
-            && studio_render::voice::kokoro_ready()
+            && self.voice_spec().ready()
             && self
                 .projects
                 .get(video.0)
@@ -1207,6 +1331,7 @@ impl Workspace {
             narration: None,
             narration_lines: vec![],
             narration_cues: vec![],
+            critic: None,
         })
     }
 
@@ -1616,7 +1741,8 @@ impl Workspace {
                 2 => studio_render::queue::Captions::Burned,
                 _ => studio_render::queue::Captions::Srt,
             },
-            watermark: self.watermark_for(pi),
+            audio: self.prefs.audio,
+            watermark: self.video_watermark((pi, vi)),
             title: video.title.clone(),
             slides: slide_formats(self.video_slides((pi, vi))),
         });

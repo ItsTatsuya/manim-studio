@@ -17,12 +17,16 @@
 mod fetch;
 pub mod tools;
 pub mod cache;
+pub mod critic;
+pub mod chatterbox;
 pub mod cues;
+pub mod equations;
 pub mod kit;
 pub mod events;
 pub mod export;
 pub mod fonts;
 pub mod kokoro;
+pub mod mix;
 pub mod preview;
 pub mod queue;
 pub mod sample;

@@ -27,6 +27,7 @@ fn sample_scenes_run_cleanly_in_every_style() {
                 narration: None,
                 narration_lines: vec![],
                 narration_cues: vec![],
+                critic: None,
             };
             match check(&req) {
                 Ok(t) => {

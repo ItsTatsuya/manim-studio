@@ -66,7 +66,8 @@ impl Workspace {
     pub fn add_documents(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
         let mut skipped = Vec::new();
         for p in paths {
-            if studio_docs::supported(&p) {
+            // A picture next to a script is its logo.
+            if studio_docs::supported(&p) || crate::teacher::is_image(&p) {
                 if !self.attachments.contains(&p) {
                     self.attachments.push(p);
                 }
@@ -75,7 +76,7 @@ impl Workspace {
             }
         }
         if !skipped.is_empty() {
-            self.notice = Some(format!("Skipped {}: Studio reads PDF, Word, PowerPoint, Markdown and text files.", skipped.join(", ")));
+            self.notice = Some(format!("Skipped {}: Studio reads PDF, Word, PowerPoint, Markdown and text files, and PNG or JPEG logos.", skipped.join(", ")));
         }
         cx.notify();
     }

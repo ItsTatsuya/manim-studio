@@ -5,6 +5,8 @@
 //! cargo run -p tokenbench --release -- --dry                      # prompt sizes only, free
 //! cargo run -p tokenbench --release -- --cases fractions --variants baseline,example
 //! cargo run -p tokenbench --release -- --runs 2                   # everything in bench.json, twice
+//! cargo run -p tokenbench --release -- --no-critic                # the engine check alone, as before the critic
+//! cargo run -p tokenbench --release -- --look                     # plus the look pass (stills, costs tokens)
 //! cargo run -p tokenbench --release -- --check <video folder> [s]  # recheck (optionally narrated)
 //! ```
 //!
@@ -13,9 +15,15 @@
 //! go to `target/tokenbench/<time>/`: `results.json` (one record per run, written as it
 //! goes), `summary.md` (per-variant means) and `report.html` (thumbnails of every scene, to
 //! judge the videos by eye). This spends real plan usage: start with one case and Haiku.
+//!
+//! The critic's checks (dead air, too brief, too small, off-cue) run with the engine check and
+//! count against the repair limit; their findings are counted per kind, first try and final,
+//! apart from the engine's own results, so those stay comparable with runs made without
+//! them (`--no-critic`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
@@ -30,6 +38,10 @@ use studio_render::{Output, style};
 const ROOT: &str = env!("CARGO_MANIFEST_DIR");
 /// Narration pace used to estimate voice length without synthesizing it.
 const WORDS_PER_SECOND: f64 = 2.6;
+/// Whether scenes are checked with the critic (`--no-critic` turns it off).
+static CRITIC: AtomicBool = AtomicBool::new(true);
+/// Whether the look pass runs after the repairs (`--look`).
+static LOOK: AtomicBool = AtomicBool::new(false);
 
 #[derive(Deserialize)]
 struct Bench {
@@ -95,10 +107,22 @@ struct SceneResult {
     file: String,
     planned_s: u32,
     duration_s: Option<f64>,
+    /// The engine check alone (errors, overlaps, regions): comparable with runs before the critic.
     first_ok: bool,
     ok: bool,
+    /// Nothing from the engine check or the critic.
+    #[serde(default)]
+    first_clean: bool,
+    #[serde(default)]
+    clean: bool,
+    /// Engine layout problems left.
     problems: usize,
-    /// The first layout problem left, if any.
+    /// Critic findings by kind (dead air, too brief, too small, off-cue): at the first check, and left at the end.
+    #[serde(default)]
+    first_findings: [usize; 4],
+    #[serde(default)]
+    findings: [usize; 4],
+    /// The first problem left, if any.
     problem: Option<String>,
     error: Option<String>,
     lines: usize,
@@ -115,6 +139,12 @@ struct RunResult {
     run: u32,
     build: Usage,
     repair: Usage,
+    /// The look pass (`--look`): its turn and the repair it led to.
+    #[serde(default)]
+    look: Usage,
+    /// What the look pass listed, as problems sent to a repair.
+    #[serde(default)]
+    looked: usize,
     repairs: u32,
     missing: usize,
     scenes: Vec<SceneResult>,
@@ -129,10 +159,14 @@ struct Args {
     out: Option<PathBuf>,
     replan: bool,
     dry: bool,
+    /// Leave the critic's checks out (the baseline before they existed).
+    no_critic: bool,
+    /// After the repairs, run the look pass.
+    look: bool,
 }
 
 fn args() -> Result<Args> {
-    let mut a = Args { config: Path::new(ROOT).join("bench.json"), cases: None, variants: None, runs: 1, out: None, replan: false, dry: false };
+    let mut a = Args { config: Path::new(ROOT).join("bench.json"), cases: None, variants: None, runs: 1, out: None, replan: false, dry: false, no_critic: false, look: false };
     let mut it = std::env::args().skip(1);
     let list = |s: String| s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect::<Vec<_>>();
     while let Some(arg) = it.next() {
@@ -144,6 +178,8 @@ fn args() -> Result<Args> {
             "--out" => a.out = Some(it.next().context("--out needs a folder")?.into()),
             "--replan" => a.replan = true,
             "--dry" => a.dry = true,
+            "--no-critic" => a.no_critic = true,
+            "--look" => a.look = true,
             other => bail!("unknown argument {other}"),
         }
     }
@@ -261,7 +297,7 @@ fn system_prompt(r: Recipe) -> String {
 }
 
 fn scene_request(dir: &Path, path: &Path, narration: Option<f64>) -> OpenScene {
-    OpenScene { path: path.to_path_buf(), root: dir.to_path_buf(), theme_json: style::json(0).into(), scene: None, globals: vec![], narration, narration_lines: vec![], narration_cues: vec![] }
+    OpenScene { path: path.to_path_buf(), root: dir.to_path_buf(), theme_json: style::json(0).into(), scene: None, globals: vec![], narration, narration_lines: vec![], narration_cues: vec![], critic: None }
 }
 
 /// A scene's narration as the app gives it: estimated sentence lengths and cue times.
@@ -269,12 +305,33 @@ fn narrated_request(dir: &Path, path: &Path, say: &str) -> OpenScene {
     let lines: Vec<f64> = prompt::sentences(say).iter().map(|s| s.split_whitespace().count() as f64 / WORDS_PER_SECOND).collect();
     let total = studio_render::preview::narration_end(&studio_render::voice::sequential_starts(&lines), &lines);
     let narration_cues = studio_render::cues::estimate(say, &lines);
-    OpenScene { narration: Some(total), narration_lines: lines, narration_cues, ..scene_request(dir, path, None) }
+    let critic = CRITIC.load(Ordering::Relaxed).then(|| studio_render::critic::Critic::new(say, &lines, &narration_cues, &[]));
+    OpenScene { narration: Some(total), narration_lines: lines, narration_cues, critic, ..scene_request(dir, path, None) }
 }
 
 
-/// Check every expected scene: (index, path, Ok(problems, duration) | Err(message, line)).
-type Checked = Vec<(usize, PathBuf, std::result::Result<(usize, f64, String), (String, Option<u32>)>)>;
+/// What the checks found in a scene that ran.
+#[derive(Clone)]
+struct Check {
+    /// Engine problems: overlaps, text off the frame, outside its region.
+    engine: usize,
+    /// The critic's findings: dead air, too brief, too small, off-cue.
+    found: [usize; 4],
+    duration: f64,
+    /// All of them as a repair diagnostic.
+    text: String,
+    /// The script line a finding follows.
+    line: Option<u32>,
+}
+
+impl Check {
+    fn clean(&self) -> bool {
+        self.engine == 0 && self.found.iter().sum::<usize>() == 0
+    }
+}
+
+/// Check every expected scene: (index, path, Ok(what was found) | Err(message, line)).
+type Checked = Vec<(usize, PathBuf, std::result::Result<Check, (String, Option<u32>)>)>;
 
 fn check_all(dir: &Path, sb: &Storyboard) -> Checked {
     let mut out = Vec::new();
@@ -286,8 +343,15 @@ fn check_all(dir: &Path, sb: &Storyboard) -> Checked {
         }
         let r = match check(&narrated_request(dir, &path, &scene.say)) {
             Ok(t) => {
-                let found: Vec<(&str, f64)> = t.problems.iter().map(|p| (p.message.as_str(), p.time)).collect();
-                Ok((t.problems.len(), t.duration, prompt::problems(&found)))
+                let all: Vec<(&str, f64)> = t.problems.iter().map(|p| (p.message.as_str(), p.time)).collect();
+                let found = studio_render::critic::count(&t.problems);
+                Ok(Check {
+                    engine: t.problems.len() - found.iter().sum::<usize>(),
+                    found,
+                    duration: t.duration,
+                    text: prompt::problems(&all),
+                    line: t.problems.iter().find_map(|p| studio_render::critic::message_line(&p.message)),
+                })
             }
             Err(e) => {
                 let e = format!("{e:#}");
@@ -304,11 +368,48 @@ fn failing(c: &Checked) -> Vec<(usize, PathBuf, String, Option<u32>)> {
     c.iter()
         .filter(|(_, p, _)| p.is_file())
         .filter_map(|(i, p, r)| match r {
-            Ok((0, _, _)) => None,
-            Ok((_, _, first)) => Some((*i, p.clone(), first.clone(), None)),
+            Ok(c) if c.clean() => None,
+            Ok(c) => Some((*i, p.clone(), c.text.clone(), c.line)),
             Err((msg, line)) => Some((*i, p.clone(), msg.clone(), *line)),
         })
         .collect()
+}
+
+/// The look pass's contact sheets for every scene that was written, numbered over the whole
+/// video, with the pictures in `dir/.look`.
+fn look_sheets(dir: &Path, sb: &Storyboard) -> Result<Vec<prompt::LookSheet>> {
+    use studio_render::critic::{SHEET_COLS, SHEET_ROWS, contact_sheets, look_frames};
+    let ffmpeg = studio_render::ffmpeg_path().context("the look pass needs ffmpeg to write its pictures")?;
+    let out = dir.join(".look");
+    let _ = std::fs::remove_dir_all(&out);
+    std::fs::create_dir_all(&out)?;
+    let rel = |p: &Path| p.strip_prefix(dir).unwrap_or(p).to_string_lossy().replace('\\', "/");
+    let per = SHEET_COLS * SHEET_ROWS;
+    let mut sheets = Vec::new();
+    let mut number = 1;
+    for (i, scene) in sb.scenes.iter().enumerate() {
+        let path = dir.join(prompt::scene_file(i, &scene.title));
+        if !path.is_file() {
+            continue;
+        }
+        // A scene that doesn't run is the engine check's business.
+        let Ok(stills) = look_frames(&narrated_request(dir, &path, &scene.say), Output::new(1280, 720, 30.0)) else { continue };
+        let refs: Vec<&studio_render::Frame> = stills.iter().map(|(_, f)| f).collect();
+        for (s, sheet) in contact_sheets(&refs, number).iter().enumerate() {
+            let img = out.join(format!("{:02}-{}.jpg", i + 1, s + 1));
+            studio_render::slides::frame_to_jpeg(&ffmpeg, sheet, &img)?;
+            let tiles = stills
+                .iter()
+                .skip(s * per)
+                .take(per)
+                .enumerate()
+                .map(|(k, (m, _))| prompt::LookTile { n: number + s * per + k, chapter: i + 1, file: rel(&path), at: m.time, line: m.line, said: m.said.clone() })
+                .collect();
+            sheets.push(prompt::LookSheet { image: rel(&img), tiles });
+        }
+        number += stills.len();
+    }
+    Ok(sheets)
 }
 
 fn run_one(case: &Case, sb: &Storyboard, v: &Variant, run: u32, bench: &Bench, exe: &Path, work: &Path) -> Result<RunResult> {
@@ -362,6 +463,7 @@ fn run_one(case: &Case, sb: &Storyboard, v: &Variant, run: u32, bench: &Bench, e
                 file: path.strip_prefix(&dir).unwrap_or(path).to_string_lossy().replace('\\', "/"),
                 diagnostic: msg.clone(),
                 excerpt: prompt::repair_excerpt(path, *line).or_else(|| prompt::layout_excerpt(path, msg)),
+                seen: false,
             })
             .collect();
         let first = fails[0].0;
@@ -372,11 +474,35 @@ fn run_one(case: &Case, sb: &Storyboard, v: &Variant, run: u32, bench: &Bench, e
         }
         checked = check_all(&dir, sb);
     }
+    // The look pass: the assistant lists what it sees in stills of the finished chapters, and
+    // what it lists is one more repair, counted against the same limit.
+    let mut look = Usage::default();
+    let mut looked = 0;
+    if LOOK.load(Ordering::Relaxed) && repairs < bench.repair_tries {
+        let sheets = look_sheets(&dir, sb)?;
+        if !sheets.is_empty() {
+            let mut ask = req(prompt::look(&sheets), None)?;
+            ask.tools = vec!["Read"];
+            ask.images = sheets.iter().map(|s| dir.join(&s.image)).collect();
+            let out = run_turn(ask)?;
+            look.add(&out.usage);
+            let seen = prompt::parse_look(&out.text);
+            looked = seen.len();
+            let found = prompt::look_failures(&sheets, &seen, &dir);
+            if let Some((chapter, _)) = found.first() {
+                repairs += 1;
+                let list: Vec<prompt::Failure> = found.iter().map(|(_, f)| f.clone()).collect();
+                let out = run_turn(req(prompt::repair_all(&list), sessions[chapter - 1].clone())?)?;
+                look.add(&out.usage);
+                checked = check_all(&dir, sb);
+            }
+        }
+    }
     let thumbs = dir.join("thumbs");
     std::fs::create_dir_all(&thumbs)?;
     let mut scenes = Vec::new();
     for ((i, path, r), (_, _, r0)) in checked.iter().zip(&first) {
-        let ok = matches!(r, Ok((0, _, _)));
+        let ok = matches!(r, Ok(c) if c.engine == 0);
         let thumb = (|| -> Result<String> {
             let output = Output::new(480, 270, 30.0);
             let (host, _, t) = load(&narrated_request(&dir, path, &sb.scenes[*i].say), output)?;
@@ -389,11 +515,15 @@ fn run_one(case: &Case, sb: &Storyboard, v: &Variant, run: u32, bench: &Bench, e
         scenes.push(SceneResult {
             file: path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default(),
             planned_s: sb.scenes[*i].seconds,
-            duration_s: r.as_ref().ok().map(|x| x.1),
-            first_ok: matches!(r0, Ok((0, _, _))),
+            duration_s: r.as_ref().ok().map(|x| x.duration),
+            first_ok: matches!(r0, Ok(c) if c.engine == 0),
             ok,
-            problems: r.as_ref().map(|x| x.0).unwrap_or(0),
-            problem: r.as_ref().ok().filter(|x| x.0 > 0).map(|x| x.2.clone()),
+            first_clean: matches!(r0, Ok(c) if c.clean()),
+            clean: matches!(r, Ok(c) if c.clean()),
+            problems: r.as_ref().map(|x| x.engine).unwrap_or(0),
+            first_findings: r0.as_ref().map(|x| x.found).unwrap_or_default(),
+            findings: r.as_ref().map(|x| x.found).unwrap_or_default(),
+            problem: r.as_ref().ok().filter(|x| !x.clean()).map(|x| x.text.clone()),
             error: r.as_ref().err().map(|e| e.0.clone()),
             lines: std::fs::read_to_string(path).map(|s| s.lines().count()).unwrap_or(0),
             text_at_coords: std::fs::read_to_string(path).map(|s| text_at_coords(&s)).unwrap_or(0),
@@ -401,7 +531,7 @@ fn run_one(case: &Case, sb: &Storyboard, v: &Variant, run: u32, bench: &Bench, e
         });
     }
     let missing = scenes.iter().filter(|s| s.lines == 0).count();
-    Ok(RunResult { case: case.id.clone(), variant: v.id.clone(), run, build, repair, repairs, missing, scenes, error })
+    Ok(RunResult { case: case.id.clone(), variant: v.id.clone(), run, build, repair, look, looked, repairs, missing, scenes, error })
 }
 
 #[derive(Default)]
@@ -411,6 +541,12 @@ struct Agg {
     scenes: u32,
     first_ok: u32,
     ok: u32,
+    first_clean: u32,
+    clean: u32,
+    first_findings: [u32; 4],
+    findings: [u32; 4],
+    looked: u32,
+    look: Usage,
     repairs: u32,
     missing: u32,
     problems: u32,
@@ -431,12 +567,21 @@ fn summary(results: &[RunResult], plan_usage: &Usage) -> String {
         a.runs += 1;
         a.usage.add(&r.build);
         a.usage.add(&r.repair);
+        a.look.add(&r.look);
+        a.usage.add(&r.look);
+        a.looked += r.looked as u32;
         a.repairs += r.repairs;
         a.missing += r.missing as u32;
         for s in &r.scenes {
             a.scenes += 1;
             a.first_ok += s.first_ok as u32;
             a.ok += s.ok as u32;
+            a.first_clean += s.first_clean as u32;
+            a.clean += s.clean as u32;
+            for k in 0..4 {
+                a.first_findings[k] += s.first_findings[k] as u32;
+                a.findings[k] += s.findings[k] as u32;
+            }
             a.problems += s.problems as u32;
             a.lines += s.lines as u32;
             a.text_at_coords += s.text_at_coords as u32;
@@ -447,8 +592,8 @@ fn summary(results: &[RunResult], plan_usage: &Usage) -> String {
         }
     }
     let base = order.first().and_then(|v| by.get(v)).map(|a| (a.usage.billed() as f64 / a.runs as f64, a.usage.cost_usd / a.runs as f64));
-    let mut md = String::from("# Token benchmark\n\nPer run means (one run = one storyboard built, checked and repaired). \"Billed\" is fresh input + cache writes + output; cache reads are listed separately (cheap, but not free). Cost is the CLI's API-price estimate. Quality: scenes passing the engine check first time / after repairs, layout problems left, and how far scene lengths land from the plan.\n\n");
-    md.push_str("| variant | runs | billed | vs first | cache read | output | calls | cost $ | vs first | time s | first pass | final pass | repairs | missing | layout left | length off | lines/scene | text at coords |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
+    let mut md = String::from("# Token benchmark\n\nPer run means (one run = one storyboard built, checked and repaired). \"Billed\" is fresh input + cache writes + output; cache reads are listed separately (cheap, but not free). Cost is the CLI's API-price estimate. Quality: scenes passing the engine check first time / after repairs, layout problems left, and how far scene lengths land from the plan. The critic's findings (dead air, too brief, too small, off-cue) are counted apart, as first check → left after repairs, over all scenes of the variant; \"clean\" is the share of scenes with nothing from the engine check or the critic, and \"look listed\" what the look pass (`--look`) saw. Critic findings count against the repair limit like any failure, so compare repairs and tokens with a `--no-critic` run.\n\n");
+    md.push_str("| variant | runs | billed | vs first | cache read | output | calls | cost $ | vs first | time s | first pass | final pass | repairs | missing | layout left | length off | lines/scene | text at coords | dead air | too brief | too small | off-cue | clean first | clean final | look listed | look billed |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
     for v in &order {
         let a = &by[v];
         let n = a.runs as f64;
@@ -457,8 +602,9 @@ fn summary(results: &[RunResult], plan_usage: &Usage) -> String {
         let rel = |x: f64, b: f64| if b > 0.0 { format!("{:+.0}%", (x / b - 1.0) * 100.0) } else { "".into() };
         let (vb, vc) = base.map_or((String::new(), String::new()), |(b, c)| (rel(billed, b), rel(cost, c)));
         let pct = |k: u32| if a.scenes > 0 { format!("{:.0}%", k as f64 * 100.0 / a.scenes as f64) } else { "-".into() };
+        let kinds: Vec<String> = (0..4).map(|k| format!("{}→{}", a.first_findings[k], a.findings[k])).collect();
         md.push_str(&format!(
-            "| {v} | {} | {:.0} | {vb} | {:.0} | {:.0} | {:.1} | {cost:.3} | {vc} | {:.0} | {} | {} | {:.1} | {} | {} | {} | {:.0} | {} |\n",
+            "| {v} | {} | {:.0} | {vb} | {:.0} | {:.0} | {:.1} | {cost:.3} | {vc} | {:.0} | {} | {} | {:.1} | {} | {} | {} | {:.0} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             a.runs,
             billed,
             a.usage.cache_read as f64 / n,
@@ -473,6 +619,14 @@ fn summary(results: &[RunResult], plan_usage: &Usage) -> String {
             if a.dur_n > 0 { format!("{:.0}%", a.dur_err * 100.0 / a.dur_n as f64) } else { "-".into() },
             a.lines as f64 / a.scenes.max(1) as f64,
             a.text_at_coords,
+            kinds[0],
+            kinds[1],
+            kinds[2],
+            kinds[3],
+            pct(a.first_clean),
+            pct(a.clean),
+            a.looked,
+            a.look.billed(),
         ));
     }
     if plan_usage.calls > 0 {
@@ -547,6 +701,8 @@ fn main() -> Result<()> {
         return recheck(Path::new(&raw[1]), raw.get(2).and_then(|n| n.parse().ok()));
     }
     let a = args()?;
+    CRITIC.store(!a.no_critic, Ordering::Relaxed);
+    LOOK.store(a.look, Ordering::Relaxed);
     let bench: Bench = serde_json::from_str(&std::fs::read_to_string(&a.config).with_context(|| format!("reading {}", a.config.display()))?)?;
     let cases: Vec<Case> = bench.cases.iter().filter(|c| a.cases.as_ref().is_none_or(|l| l.contains(&c.id))).cloned().collect();
     let variants: Vec<Variant> = bench.variants.iter().filter(|v| a.variants.as_ref().is_none_or(|l| l.contains(&v.id))).cloned().collect();
@@ -643,7 +799,8 @@ mod tests {
         assert_eq!(text_at_coords(src), 2);
     }
 
-    /// The worked example in the system prompt must itself pass the engine check.
+    /// The worked example in the system prompt must itself pass the engine check and the
+    /// critic: a recipe that teaches what the checks reject would only cost repairs.
     #[test]
     fn example_scene_passes_the_check() {
         let dir = std::env::temp_dir().join(format!("tokenbench-example-{}", std::process::id()));
@@ -651,9 +808,14 @@ mod tests {
         prepare(&dir, &v).unwrap();
         let path = dir.join("scenes/02-diameter.ts");
         std::fs::write(&path, prompt::EXAMPLE_SCENE).unwrap();
-        let t = check(&scene_request(&dir, &path, Some(9.0))).unwrap();
+        let say = "Here is a circle. The radius runs from the centre to the {r}edge. The diameter is twice the radius, so it goes right across.";
+        let req = narrated_request(&dir, &path, say);
+        let t = check(&req).unwrap();
         assert!(t.problems.is_empty(), "{:?}", t.problems.iter().map(|p| &p.message).collect::<Vec<_>>());
-        assert!((t.duration - (9.0 + studio_render::preview::NARRATION_TAIL)).abs() < 0.6, "paced to the narration: {}", t.duration);
+        let voice = req.narration.unwrap();
+        // The scene writes its heading before the first sentence, so the voice starts a second late.
+        let over = t.duration - (voice + studio_render::preview::NARRATION_TAIL);
+        assert!((0.0..1.5).contains(&over), "paced to the narration: {} for a voice of {voice}", t.duration);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

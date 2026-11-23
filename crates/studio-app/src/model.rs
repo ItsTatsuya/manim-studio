@@ -317,6 +317,12 @@ impl VoiceLine {
     pub fn lines(&self) -> Vec<f64> {
         self.parts.iter().map(|p| p.seconds as f64).collect()
     }
+
+    /// The words the narrator says, for the critic's timing checks.
+    pub fn critic(&self) -> studio_render::critic::Critic {
+        let wavs: Vec<PathBuf> = self.parts.iter().map(|p| p.wav.clone()).collect();
+        studio_render::critic::Critic::new(&self.text, &self.lines(), &self.cues, &wavs)
+    }
 }
 
 #[derive(Clone, Debug)]

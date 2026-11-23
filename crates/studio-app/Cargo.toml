@@ -25,6 +25,7 @@ studio-ui = { path = "../studio-ui" }
 studio-render = { path = "../studio-render" }
 studio-agent = { path = "../studio-agent" }
 studio-docs = { path = "../studio-docs" }
+studio-script = { path = "../studio-script" }
 studio-updater = { path = "../studio-updater" }
 image = { version = "0.25", default-features = false }
 smallvec = "1"

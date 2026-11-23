@@ -25,7 +25,9 @@ pub fn command(exe: &Path, req: &TurnRequest) -> Command {
     for image in &req.images {
         cmd.arg("--image").arg(image);
     }
-    cmd.args(["--sandbox", if req.tools.is_empty() { "read-only" } else { "workspace-write" }]);
+    // Only a turn that may edit files can write; one that just reads pictures stays read-only.
+    let writes = req.tools.iter().any(|t| matches!(*t, "Edit" | "Write"));
+    cmd.args(["--sandbox", if writes { "workspace-write" } else { "read-only" }]);
     if let Some(m) = req.model {
         cmd.args(["--model", m]);
     }

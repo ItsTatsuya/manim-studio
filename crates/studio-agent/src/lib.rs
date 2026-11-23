@@ -14,6 +14,7 @@ pub mod errors;
 pub mod events;
 mod process;
 pub mod prompt;
+pub mod teacher;
 pub mod turn;
 
 pub use events::AgentEvent;
