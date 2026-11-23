@@ -64,11 +64,14 @@ pub struct Span {
     pub from: f64,
     /// `None` while it is still there at the end of the scene.
     pub to: Option<f64>,
-    /// Scene units.
+    /// Scene units: the block's width, and its tallest glyph (the block itself grows with
+    /// every line it wraps to).
     pub width: f64,
     pub height: f64,
     /// The line of the script whose animation brought it in.
     pub line: Option<u32>,
+    /// Redrawn by an updater (a live readout): how long it is on screen isn't measured.
+    pub dynamic: bool,
 }
 
 /// What a scene's run left for the critic.
@@ -98,6 +101,9 @@ struct RawSpan {
     from: f64,
     to: Option<f64>,
     bb: [f64; 4],
+    tall: f64,
+    #[serde(default)]
+    dynamic: bool,
     at: Option<RawAt>,
 }
 
@@ -130,8 +136,9 @@ pub fn read(host: &ScriptHost) -> Look {
                 from: s.from,
                 to: s.to,
                 width: (s.bb[2] - s.bb[0]).abs(),
-                height: (s.bb[3] - s.bb[1]).abs(),
+                height: s.tall.abs(),
                 line: at(s.at),
+                dynamic: s.dynamic,
             })
             .collect(),
         calls: raw.calls.into_iter().map(|c| (c.t, at(c.at))).collect(),
@@ -290,7 +297,7 @@ fn dead_air(t: &TimelineInfo, look: &Look, n: &Narration) -> Vec<Finding> {
                 time: from,
                 line: look.line_at(from),
                 message: format!(
-                    "nothing moves for {:.1} s while the voice is speaking: give what is being said some motion (an emphasis such as Indicate or focus on the part, a step coming in) for that long, or call this.mark(\"hold\") before the pause if the picture should stand still",
+                    "nothing moves for {:.1} s while the voice is speaking: give what is being said some motion for that long (an emphasis such as Indicate, a step coming in), or call this.mark(\"hold\") before a pause that should stand still",
                     spoken
                 ),
             })
@@ -318,9 +325,13 @@ fn shown(label: &str) -> String {
 fn too_brief(look: &Look) -> Vec<Finding> {
     look.spans
         .iter()
-        .filter(|s| s.label.chars().any(char::is_alphanumeric))
+        .filter(|s| s.label.chars().any(char::is_alphanumeric) && !s.dynamic)
         .filter_map(|s| {
             let seen = s.to? - s.from;
+            // A text swapped for another in the same instant (a counter) was never on screen.
+            if seen < 0.05 {
+                return None;
+            }
             let need = BRIEF_BASE + BRIEF_PER_WORD * word_count(&s.label) as f64;
             (seen < need - 1e-6).then(|| Finding {
                 kind: Kind::TooBrief,
@@ -394,64 +405,60 @@ struct Heard<'a> {
     at: f64,
 }
 
+/// A value or term on screen before the voice says the word the script marks with a cue.
+/// Only what the script cues counts: the script says which words go with something on
+/// screen, so a number that is merely said later is not a finding.
 fn off_cue(look: &Look, n: &Narration) -> Vec<Finding> {
     let heard: Vec<Heard> = n
         .words
         .iter()
         .filter_map(|w| Some(Heard { word: w, said: said(&w.text), at: n.starts.get(w.line.checked_sub(1)?)? + w.at }))
         .collect();
-    if heard.is_empty() {
+    if !heard.iter().any(|h| h.word.cue.is_some()) {
         return Vec::new();
     }
     // The spoken words in order, each with the text word it came from.
     let flat: Vec<(&str, usize)> = heard.iter().enumerate().flat_map(|(i, h)| h.said.iter().map(move |s| (s.as_str(), i))).collect();
-    let find = |words: &[String]| -> Option<usize> {
-        (0..flat.len().saturating_sub(words.len().saturating_sub(1)))
-            .find(|&i| words.iter().enumerate().all(|(k, w)| flat[i + k].0 == w))
-            .map(|i| flat[i].1)
+    // The words (of the narration) a number is said as, where it starts.
+    let spoken_at = |num: &str| -> Vec<usize> {
+        let words = said(num);
+        if words.is_empty() || words.len() > flat.len() {
+            return Vec::new();
+        }
+        (0..=flat.len() - words.len()).filter(|&i| words.iter().enumerate().all(|(k, w)| flat[i + k].0 == w)).map(|i| flat[i].1).collect()
     };
     look.spans
         .iter()
         .filter_map(|s| {
             // A lone small number is a counter or a step number, not a value.
-            if s.label.trim().parse::<u32>().is_ok_and(|v| v < 10) {
+            if s.dynamic || s.label.trim().parse::<u32>().is_ok_and(|v| v < 10) {
                 return None;
             }
-            let mut best: Option<(f64, usize)> = None;
-            let mut consider = |h: usize| {
-                let gap = heard[h].at - s.from;
-                if gap > OFF_CUE && best.is_none_or(|(g, _)| gap > g) {
-                    best = Some((gap, h));
-                }
-            };
-            for num in numbers(&s.label) {
-                let words = said(&num);
-                if let Some(h) = find(&words) {
-                    consider(h);
-                }
-            }
-            // Words the script marks with a cue name a thing that appears with the word.
+            // Every place the voice says something this text shows.
+            let mut said_here: Vec<usize> = numbers(&s.label).iter().flat_map(|num| spoken_at(num)).collect();
             let tokens: Vec<String> = s.label.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_string).collect();
-            for (h, x) in heard.iter().enumerate() {
-                if x.word.cue.is_some() && x.word.text.chars().count() >= 4 && tokens.contains(&x.word.text) {
-                    consider(h);
-                }
+            said_here.extend(heard.iter().enumerate().filter(|(_, x)| x.word.cue.is_some() && x.word.text.chars().count() >= 4 && tokens.contains(&x.word.text)).map(|(h, _)| h));
+            // Said without a cue before it is on screen: it was announced.
+            if said_here.iter().any(|&h| heard[h].word.cue.is_none() && heard[h].at <= s.from + OFF_CUE) {
+                return None;
             }
-            let (gap, h) = best?;
+            // The first cued mention is the cue the text waits for.
+            let h = said_here.into_iter().filter(|&h| heard[h].word.cue.is_some()).min_by(|&a, &b| heard[a].at.total_cmp(&heard[b].at))?;
             let x = &heard[h];
-            let line = x.word.line;
-            let how = match &x.word.cue {
-                Some(id) => format!("call this.cue(\"{id}\") right before it"),
-                None => format!("call this.narrate({line}) and this.wait({:.1}) before it, so it lands on the word", x.at - n.starts[line - 1]),
-            };
+            let gap = x.at - s.from;
+            if gap <= OFF_CUE {
+                return None;
+            }
+            let id = x.word.cue.as_deref().unwrap_or_default();
             Some(Finding {
                 kind: Kind::OffCue,
                 time: s.from,
                 line: s.line,
                 message: format!(
-                    "text \"{}\" appears {gap:.1} s before the voice says \"{}\" (sentence {line}, at {:.1} s): {how}",
+                    "text \"{}\" appears {gap:.1} s before the voice says \"{}\" (sentence {}, at {:.1} s): call this.cue(\"{id}\") right before it",
                     shown(&s.label),
                     x.word.text,
+                    x.word.line,
                     x.at
                 ),
             })
@@ -589,7 +596,7 @@ pub fn contact_sheets(frames: &[&Frame], first: usize) -> Vec<Frame> {
             let rows = chunk.len().div_ceil(SHEET_COLS);
             let (w, h) = (SHEET_COLS * TILE_WIDTH + (SHEET_COLS + 1) * GUTTER, rows * tile_h + (rows + 1) * GUTTER);
             let mut bgra = vec![0u8; w * h * 4];
-            for px in bgra.chunks_exact_mut(4) {
+            for px in bgra.as_chunks_mut::<4>().0 {
                 px.copy_from_slice(&[0x40, 0x40, 0x40, 0xFF]);
             }
             for (i, f) in chunk.iter().enumerate() {
@@ -659,7 +666,7 @@ mod tests {
     use super::*;
 
     fn span(label: &str, from: f64, to: Option<f64>, height: f64) -> Span {
-        Span { label: label.into(), from, to, width: 2.0, height, line: Some(7) }
+        Span { label: label.into(), from, to, width: 2.0, height, line: Some(7), dynamic: false }
     }
 
     fn word(text: &str, line: usize, at: f64, cue: Option<&str>) -> SpokenWord {
@@ -731,7 +738,7 @@ mod tests {
             word("twenty", 1, 1.8, Some("c20")),
             word("they", 2, 0.0, None),
             word("meet", 2, 0.3, None),
-            word("126", 2, 1.0, None),
+            word("126", 2, 1.0, Some("sum")),
         ];
         let lines = [2.5, 3.0];
         let n = Narration { lines: &lines, starts: vec![0.0, 2.9], end: 5.9, words: &words, cues: &[] };
@@ -753,7 +760,29 @@ mod tests {
         assert_eq!(found.len(), 2, "{found:?}");
         assert_eq!(found[0].kind, Kind::OffCue);
         assert!(found[0].message.contains("\"c = 20\"") && found[0].message.contains("1.6 s before the voice says \"twenty\"") && found[0].message.contains("this.cue(\"c20\")"), "{}", found[0].message);
-        assert!(found[1].message.contains("\"x = 126\"") && found[1].message.contains("this.narrate(2) and this.wait(1.0)"), "{}", found[1].message);
+        assert!(found[1].message.contains("\"x = 126\"") && found[1].message.contains("this.cue(\"sum\")"), "{}", found[1].message);
+    }
+
+    /// Only what the script cues counts, and a value said twice is measured against the
+    /// first time it is cued.
+    #[test]
+    fn only_cued_values_are_off_cue_and_the_first_cue_counts() {
+        let plain = [word("is", 1, 0.0, None), word("seventy", 1, 2.0, None)];
+        let n = Narration { lines: &[3.0], starts: vec![0.0], end: 3.0, words: &plain, cues: &[] };
+        let look = Look { spans: vec![span("3 r + 2 c = 70", 0.0, None, 0.4)], calls: vec![] };
+        assert!(off_cue(&look, &n).is_empty(), "no cue marks, nothing to be off");
+        // "twenty" is cued at 1.8 s and again in sentence 2 (at 3.4 s).
+        let twice = [word("c", 1, 1.0, None), word("twenty", 1, 1.8, Some("a")), word("again", 2, 0.0, None), word("twenty", 2, 0.5, Some("b"))];
+        let n = Narration { lines: &[2.5, 2.0], starts: vec![0.0, 2.9], end: 4.9, words: &twice, cues: &[] };
+        let look = Look { spans: vec![span("c = 20", 2.0, None, 0.4), span("c = 20", 0.2, None, 0.4)], calls: vec![] };
+        let found = off_cue(&look, &n);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].message.contains("1.6 s before") && found[0].message.contains("this.cue(\"a\")"), "{}", found[0].message);
+        // Said before without a cue, it was announced.
+        let told = [word("twenty", 1, 0.2, None), word("twenty", 1, 1.8, Some("a"))];
+        let n = Narration { lines: &[2.5], starts: vec![0.0], end: 2.5, words: &told, cues: &[] };
+        let look = Look { spans: vec![span("c = 20", 0.1, None, 0.4)], calls: vec![] };
+        assert!(off_cue(&look, &n).is_empty());
     }
 
     #[test]

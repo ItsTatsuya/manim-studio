@@ -79,12 +79,19 @@ const TIMING_HOOK: &str = r#"(() => {
       // call and one an animation brings in or takes out by that animation's start.
       const TEXTY = { Text: 1, Math: 1, DecimalNumber: 1, Integer: 1 };
       const DRAWN = { Axes: 1, NumberLine: 1, NumberPlane: 1, ComplexPlane: 1, PolarPlane: 1 };
+      // The scene file's frame of the stack (paths may hold spaces): the first one in a
+      // scenes/ folder, else the first outside lib/.
       const where = () => {
         try {
+          let other = null;
           for (const ln of String(new Error().stack).split("\n")) {
-            const m = /([^\s()]+\.ts):(\d+)/.exec(ln);
-            if (m && !/[\\/]lib[\\/]/.test(m[1])) return { file: m[1], line: +m[2] };
+            const m = /\((.+\.ts):(\d+)(?::\d+)?\)\s*$/.exec(ln) || /^\s*at (.+\.ts):(\d+)(?::\d+)?\s*$/.exec(ln);
+            if (!m) continue;
+            const at = { file: m[1], line: +m[2] };
+            if (/[\\/]scenes[\\/][^\\/]+$/.test(m[1])) return at;
+            if (!other && !/[\\/]lib[\\/][^\\/]+$/.test(m[1])) other = at;
           }
+          return other;
         } catch (e) {}
         return null;
       };
@@ -99,7 +106,15 @@ const TIMING_HOOK: &str = r#"(() => {
             const bb = m.bbox;
             let text = "";
             try { text = m._q("text"); } catch (e) {}
-            if (bb && typeof text === "string") out.push({ key, text, bb, op: m.getFillOpacity() });
+            if (!bb || typeof text !== "string") return;
+            // Size by the tallest glyph: the whole block's height grows with its lines.
+            let tall = 0;
+            const n = Math.min(m.length, 160);
+            for (let j = 0; j < n && budget > 0; j++, budget--) {
+              const g = m.get(j).bbox;
+              if (g) tall = Math.max(tall, g[3] - g[1]);
+            }
+            out.push({ key, text, bb, tall: tall > 0 ? tall : bb[3] - bb[1], op: m.getFillOpacity() });
             return;
           }
           const n = m.length;
@@ -107,7 +122,7 @@ const TIMING_HOOK: &str = r#"(() => {
         };
         const aligned = ms.length === items.length && ms.every((m, i) => (m.kind || "VMobject") === items[i].kind);
         if (aligned) items.forEach((it, i) => { if (it.text) walk(ms[i], String(it.id)); });
-        else items.forEach((it) => { if (it.text && TEXTY[it.kind]) out.push({ key: String(it.id), text: it.label, bb: it.bbox, op: it.opacity }); });
+        else items.forEach((it) => { if (it.text && TEXTY[it.kind]) out.push({ key: String(it.id), text: it.label, bb: it.bbox, tall: it.bbox[3] - it.bbox[1], op: it.opacity }); });
         return out;
       };
       const sample = (scene, t, at) => {
@@ -117,9 +132,16 @@ const TIMING_HOOK: &str = r#"(() => {
           if (x.op < 0.05) continue;
           seen[x.key] = true;
           const live = L.live[x.key];
-          if (live && live.label === x.text) { live.bb = x.bb; continue; }
-          if (live) live.to = t;
-          L.live[x.key] = { label: x.text, from: t, to: null, bb: x.bb, at };
+          if (live && live.label === x.text) { live.bb = x.bb; live.tall = x.tall; continue; }
+          // A text that keeps changing under one key is redrawn by an updater (a live
+          // readout): its moments of change say nothing about how long a viewer sees it.
+          let dynamic = false;
+          if (live) {
+            live.to = t;
+            dynamic = (L.flips[x.key] = (L.flips[x.key] || 0) + 1) >= 2;
+            if (dynamic) for (const sp of L.spans) if (sp.key === x.key) sp.dynamic = true;
+          }
+          L.live[x.key] = { key: x.key, label: x.text, from: t, to: null, bb: x.bb, tall: x.tall, at, dynamic };
           L.spans.push(L.live[x.key]);
         }
         for (const k of Object.keys(L.live)) {
@@ -256,7 +278,7 @@ const TIMING_HOOK: &str = r#"(() => {
     globalThis.__NARR = { end: 0, starts: {}, used: {} };
     globalThis.__REGION_PROBLEMS = [];
     globalThis.__REGION_SEEN = {};
-    globalThis.__LOOK = { spans: [], live: {}, calls: [] };
+    globalThis.__LOOK = { spans: [], live: {}, flips: {}, calls: [] };
     return run.call(this, cls);
   };
   wrapped.__studio = true;
@@ -1150,6 +1172,10 @@ export default class N extends Scene {
     /// A narrated scene run with the critic: its findings, `(kind, message)`. The body starts
     /// at line 6 of the script.
     fn critiqued(tag: &str, say: &str, lines: &[f64], body: &str) -> Vec<(String, String)> {
+        critiqued_in(tag, say, lines, body, 0)
+    }
+
+    fn critiqued_in(tag: &str, say: &str, lines: &[f64], body: &str, style: usize) -> Vec<(String, String)> {
         let dir = std::env::temp_dir().join(format!("studio-critic-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("scenes")).unwrap();
@@ -1158,7 +1184,7 @@ export default class N extends Scene {
         std::fs::write(
             &path,
             format!(
-                "import {{ Scene, Text, MathTex, Dot, Circle, Create, FadeIn, FadeOut, Write, Indicate }} from \"manim\";\n\
+                "import {{ Scene, Text, MathTex, Dot, Circle, Create, FadeIn, FadeOut, Write, Indicate, VGroup }} from \"manim\";\n\
                  import {{ heading, work, figure, full }} from \"../lib/layout\";\n\
                  import {{ lesson }} from \"../lib/lesson\";\n\
                  export default class C extends Scene {{\n  construct() {{\n{}\n  }}\n}}",
@@ -1169,7 +1195,7 @@ export default class N extends Scene {
         let total = narration_end(&crate::voice::sequential_starts(lines), lines);
         let cues = crate::cues::estimate(say, lines);
         let critic = crate::critic::Critic::new(say, lines, &cues, &[]);
-        let req = OpenScene { path, root: dir.clone(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: Some(total), narration_lines: lines.to_vec(), narration_cues: cues, critic: Some(critic) };
+        let req = OpenScene { path, root: dir.clone(), theme_json: crate::style::json(style).into(), scene: None, globals: vec![], narration: Some(total), narration_lines: lines.to_vec(), narration_cues: cues, critic: Some(critic) };
         let t = load(&req, Output::new(320, 180, 30.0)).unwrap_or_else(|e| panic!("{e:#}")).2;
         let _ = std::fs::remove_dir_all(&dir);
         t.problems.into_iter().filter(|p| crate::critic::Kind::ALL.iter().any(|k| k.name() == p.kind)).map(|p| (p.kind, p.message)).collect()
@@ -1185,11 +1211,11 @@ export default class N extends Scene {
             this.play(FadeIn(Dot()), { runTime: 0.5 });
             this.narrate(2);
             this.play(FadeIn(Circle(1)), { runTime: 0.5 });"#;
-        let found = critiqued("air", say, &[2.0, 6.0], body);
+        let found = critiqued("air gap", say, &[2.0, 6.0], body);
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(found[0].0 == "dead-air" && found[0].1.contains("nothing moves for 5.5 s") && found[0].1.ends_with("(line 9)"), "{found:?}");
         // The wait before sentence 2 is only 1.9 s, and a hold mark excuses the rest.
-        let held = critiqued("held", say, &[2.0, 6.0], &format!("{body}\n            this.mark(\"hold\");"));
+        let held = critiqued("held gap", say, &[2.0, 6.0], &format!("{body}\n            this.mark(\"hold\");"));
         assert!(held.is_empty(), "{held:?}");
     }
 
@@ -1206,6 +1232,57 @@ export default class N extends Scene {
             this.play(Indicate(eq), { runTime: 1.2 });"#;
         let found = critiqued("clean", say, &[4.0], body);
         assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// The S03 and S04 moments of a two-lines lesson, built from kit pieces and paced by the
+    /// voice as a builder is told to: no finding in any house style (a phantom one would
+    /// burn a repair try on a scene that is fine).
+    #[test]
+    fn lesson_pieces_paced_by_the_voice_pass_the_critic() {
+        let say = "Two equations, two lines. The first order says {a}three r plus two c is seventy, and the second says {b}r plus four c is ninety. \
+                   Pick {p}r equals ten and the first line gives c equals twenty. Try a few more points and they all fall on one line. \
+                   Draw the second line the same way, and they cross at one point. That point is {x}ten and twenty. \
+                   So solving means finding the points common to all the lines.";
+        let lines = [1.6, 8.0, 5.0, 5.5, 4.5, 4.0, 4.5];
+        let body = r#"
+            const k = lesson(this);
+            const c = k.c;
+            this.narrate(1);
+            this.play(Write(heading("Two equations, two lines")), { runTime: 1.2 });
+            const one = work.push(k.EquationCard("3 r + 2 c = 70", c.primary, "Order 1"));
+            const two = work.push(k.EquationCard("r + 4 c = 90", c.secondary, "Order 2"));
+            this.narrate(2);
+            this.play(one.enter(), { runTime: Math.min(1.2, this.cue("a")) });
+            this.play(one.focus(), { runTime: 2.0 });
+            this.play(two.enter(), { runTime: Math.min(1.2, this.cue("b")) });
+            this.play(two.focus(), { runTime: 1.5 });
+            const p = k.Plot({ xRange: [0, 40], yRange: [0, 40], step: 10, xLabel: "r", yLabel: "c" });
+            this.narrate(3);
+            this.play(p.show(), two.dim(), { runTime: 1.5 });
+            const steps = k.Steps(["r = 10 arrow c = 20"]);
+            this.play(steps.next(), p.dot([10, 20], c.primary), { runTime: Math.min(1.2, this.cue("p")) });
+            this.play(Indicate(one.eq), { runTime: 1.5 });
+            this.narrate(4);
+            const more = k.Steps(["r = 0 arrow c = 35", "r = 20 arrow c = 5"]);
+            for (const pt of [[0, 35], [20, 5]]) this.play(more.next(), p.dot(pt, c.primary), { runTime: 1.4 });
+            this.play(p.line((r) => 35 - 1.5 * r, c.primary), { runTime: 2.0 });
+            this.narrate(5);
+            this.play(work.clear(), { runTime: 0.8 });
+            this.play(p.line((r) => 22.5 - 0.25 * r, c.secondary), { runTime: 2.0 });
+            this.play(p.probe((r) => 22.5 - 0.25 * r, 0, 20), { runTime: 1.8 });
+            this.narrate(6);
+            const ans = work.push(k.AnswerBox("r = 10, quad c = 20", "notebook and pen box"));
+            this.cue("x");
+            this.play(p.crossing([10, 20]), ans.enter(), { runTime: 1.5 });
+            this.play(Indicate(ans), { runTime: 1.5 });
+            this.narrate(7);
+            const card = k.StatementCard("Solving = finding the points common to all the lines.", "common");
+            this.play(card.enter(), { runTime: 1.0 });
+            this.play(Indicate(ans), { runTime: 2.0 });"#;
+        for style in 0..crate::style::STYLES.len() {
+            let found = critiqued_in(&format!("kit{style}"), say, &lines, body, style);
+            assert!(found.is_empty(), "style {style}: {found:#?}");
+        }
     }
 
     /// Brief texts, tiny texts and values shown before they are said, each with its line.
