@@ -635,7 +635,7 @@ fn blit_scaled(src: &Frame, dst: &mut [u8], w: usize, x0: usize, y0: usize, tw: 
 
 /// The number `n` (1-based) on a dark plate in the corner of the tile at (x0, y0).
 fn label(dst: &mut [u8], w: usize, x0: usize, y0: usize, n: usize) {
-    const SCALE: usize = 6;
+    const SCALE: usize = 4;
     let digits: Vec<usize> = n.to_string().bytes().map(|b| usize::from(b - b'0')).collect();
     let (plate_w, plate_h) = (digits.len() * 4 * SCALE + SCALE, 7 * SCALE);
     for y in 0..plate_h {
