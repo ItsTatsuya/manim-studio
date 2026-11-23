@@ -1039,6 +1039,8 @@ export default class N extends Scene {
             this.play(p.line((r) => 22.5 - 0.25 * r, c.secondary), { runTime: 0.4 });
             this.play(p.line((r) => 35 - 1.5 * r, c.secondary, { dashed: true }), { runTime: 0.3 });
             this.play(p.crossing([10, 20]), { runTime: 1.2 });
+            this.play(p.push([10, 20]), { runTime: 0.6 });
+            this.play(p.pull(), { runTime: 0.5 });
             this.play(p.slopeTriangle((r) => 22.5 - 0.25 * r, 24, 8, "-1/4"), { runTime: 0.3 });
             const ans = work.push(k.AnswerBox("r = 10, quad c = 20", "notebook and pen box"));
             this.play(ans.enter(), { runTime: 0.4 });

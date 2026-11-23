@@ -4,12 +4,12 @@
 // the layout regions. `const k = lesson(this);` once per scene, then e.g.
 // `const eq = k.EquationCard("3 r + 2 c = 70", k.c.primary, "Order 1");`.
 import {
-  AnimationGroup, Circle, Create, DashedLine, Dot, FadeIn, FadeOut, GrowFromCenter, Line, MarkupText, MathTex, MoveAlongPath,
+  AnimationGroup, Circle, Create, Dot, FadeIn, FadeOut, GrowFromCenter, Line, MarkupText, MathTex, MoveAlongPath, MoveCamera,
   Polygon, Rectangle, RoundedRectangle, ShowPassingFlash, Succession, SurroundingRectangle, Text, VGroup, Wait, alwaysRedraw,
   DOWN, LEFT, RIGHT, UP, type Animation, type Mobject, type Scene,
 } from "manim";
 import { palette, type Palette } from "./kit";
-import { figure, full, work, type Region } from "./layout";
+import { clipToBox, figure, full, work, type Region } from "./layout";
 
 type Point2 = [number, number];
 
@@ -48,7 +48,10 @@ export function lesson(scene: Scene) {
   const hidden: Mobject[] = [];
 
   /** A rounded panel behind `content`, with an optional coloured bar down its left side. */
-  const panel = (content: Mobject, opts: { fill?: string; stroke?: string; bar?: string; padX?: number; padY?: number } = {}) => {
+  const panel = (
+    content: Mobject,
+    opts: { fill?: string; stroke?: string; bar?: string; padX?: number; padY?: number; tint?: [string, number, number]; shadow?: [number, number, number] } = {},
+  ) => {
     const padX = opts.padX ?? 0.35, padY = opts.padY ?? 0.22;
     const box = RoundedRectangle({
       width: content.width + 2 * padX + (opts.bar ? 0.12 : 0),
@@ -60,7 +63,18 @@ export function lesson(scene: Scene) {
       strokeWidth: opts.stroke ? 2.5 : 0,
     }).moveTo(content);
     if (opts.bar) box.shift([-0.06, 0, 0]);
+    // A soft shadow: opacity, blur and how far it falls (scene units).
+    if (opts.shadow) box.setShadow("#000000", opts.shadow[0], opts.shadow[1], 0, -opts.shadow[2]);
     const parts: Mobject[] = [box];
+    // A tint over the panel that fades across it, corner to corner.
+    if (opts.tint) {
+      const [colour, from, to] = opts.tint;
+      parts.push(
+        RoundedRectangle({ width: box.width, height: box.height, cornerRadius: 0.14, fillColor: colour, fillOpacity: 1, strokeWidth: 0 })
+          .moveTo(box)
+          .setGradient(-Math.PI / 4, [[0, colour, from], [1, colour, to]]),
+      );
+    }
     if (opts.bar) {
       parts.push(Rectangle({ width: 0.09, height: box.height - 0.12, fillColor: opts.bar, fillOpacity: 1, strokeWidth: 0 }).moveTo(box).alignTo(box, LEFT).shift([0.06, 0, 0]));
     }
@@ -73,7 +87,7 @@ export function lesson(scene: Scene) {
     const content = tag
       ? VGroup(Text(tag.toUpperCase(), { role: "caption", color: colour, weight: "semibold" }), eq).arrange(DOWN, { buff: 0.12, alignedEdge: LEFT })
       : eq;
-    const { box, group } = panel(content, { bar: colour });
+    const { box, group } = panel(content, { bar: colour, tint: [colour, 0.16, 0.04] });
     return Object.assign(group, {
       eq,
       enter: (): Animation => FadeIn(group, { shift: [0.3, 0, 0] }),
@@ -108,7 +122,7 @@ export function lesson(scene: Scene) {
   function AnswerBox(tex: string, sub = "", colour: string = c.positive) {
     const eq = MathTex(tex, { color: c.text });
     const content = sub ? VGroup(eq, Text(sub, { role: "caption", color: c.muted })).arrange(DOWN, { buff: 0.14 }) : eq;
-    const { group } = panel(content, { fill: c.background, stroke: colour, padX: 0.45, padY: 0.28 });
+    const { group } = panel(content, { fill: c.background, stroke: colour, padX: 0.45, padY: 0.28, tint: [colour, 0.22, 0.06], shadow: [0.35, 0.3, 0.2] });
     return Object.assign(group, {
       enter: (): Animation => FadeIn(group, { scale: 0.85, ...POP }),
     }) as Piece<{ enter(): Animation }>;
@@ -132,9 +146,15 @@ export function lesson(scene: Scene) {
     const [sx, sy] = Array.isArray(o.step) ? o.step : [o.step ?? 1, o.step ?? 1];
     const ax = figure.axes({ xRange: [o.xRange[0], o.xRange[1], sx], yRange: [o.yRange[0], o.yRange[1], sy], numbers: true, xLabel: o.xLabel, yLabel: o.yLabel });
     const at = ([x, y]: Point2) => ax.c2p(x, y);
+    /** Everything the plot adds stays inside the figure panel when the camera pushes in. */
+    const inFigure = <M extends Mobject>(m: M): M => {
+      clipToBox(m, figure.box);
+      return m;
+    };
     const lines = new Map<string, { line: Mobject; from: Point2; to: Point2 }>();
     const fmt = (v: number) => String(Math.round(v * 100) / 100).replace("-", "−");
     let probe: { ring: Mobject; readout: Mobject; f?: Fn } | null = null;
+    let zoomed: number[] | null = null;
 
     /** Where a straight line y = f(x) is inside the ranges: its two ends. */
     const ends = (f: Fn): [Point2, Point2] => {
@@ -160,29 +180,32 @@ export function lesson(scene: Scene) {
         const key = f.toString().replace(/\s+/g, "");
         const same = lines.get(key);
         const [from, to] = same ? [same.from, same.to] : ends(f);
-        const line = opts.dashed
-          ? DashedLine(at(from), at(to), { color: colour, strokeWidth: 5, dashLength: 0.18, zIndex: 2 })
-          : Line(at(from), at(to), { color: colour, strokeWidth: 5, zIndex: 1 });
+        const line = inFigure(
+          opts.dashed
+            ? Line(at(from), at(to), { color: colour, strokeWidth: 5, zIndex: 2 }).setDash(0.18, 0.18)
+            : Line(at(from), at(to), { color: colour, strokeWidth: 5, zIndex: 1 }),
+        );
         if (!same) lines.set(key, { line, from, to });
         return Create(line);
       },
       /** A dot that pops in, with an optional label beside it. */
       dot(p: Point2, colour: string, label = ""): Animation {
-        const d = Dot(at(p), { color: colour, radius: 0.1, zIndex: 3 });
+        const d = inFigure(Dot(at(p), { color: colour, radius: 0.1, zIndex: 3 }));
         const pop = GrowFromCenter(d, POP);
         if (!label) return pop;
-        const l = MathTex(label, { color: colour, fontSize: 30 }).nextTo(d, UP, 0.15).shift([0.3, 0, 0]);
+        const l = inFigure(MathTex(label, { color: colour, fontSize: 30 }).nextTo(d, UP, 0.15).shift([0.3, 0, 0]));
         return AnimationGroup(pop, FadeIn(l));
       },
       /** Where lines cross: a gold dot pulses twice, dashed guides drop to both axes, and gold numbers mark it there. */
       crossing(p: Point2, colour: string = c.accent): Animation {
-        const d = Dot(at(p), { color: colour, radius: 0.11, zIndex: 4 });
-        const ring = () => Circle(0.11, { color: colour, strokeWidth: 4 }).moveTo(d);
+        const d = inFigure(Dot(at(p), { color: colour, radius: 0.11, zIndex: 4 }));
+        const ring = () => inFigure(Circle(0.11, { color: colour, strokeWidth: 4 }).moveTo(d));
         const pulse = () => FadeOut(ring(), { scale: 3.2 });
         const base: Point2 = [Math.max(o.xRange[0], 0), Math.max(o.yRange[0], 0)];
-        const gx = DashedLine(at(p), at([p[0], base[1]]), { color: colour, strokeWidth: 3, dashLength: 0.1 });
-        const gy = DashedLine(at(p), at([base[0], p[1]]), { color: colour, strokeWidth: 3, dashLength: 0.1 });
-        const tag = (text: string, where: Point2, dir: typeof DOWN) => MathTex(text, { color: colour, fontSize: 30 }).nextTo(at(where), dir, 0.18);
+        const guide = (to: Point2) => inFigure(Line(at(p), at(to), { color: colour, strokeWidth: 3 }).setDash(0.1, 0.1));
+        const gx = guide([p[0], base[1]]);
+        const gy = guide([base[0], p[1]]);
+        const tag = (text: string, where: Point2, dir: typeof DOWN) => inFigure(MathTex(text, { color: colour, fontSize: 30 }).nextTo(at(where), dir, 0.18));
         const tags = [tag(fmt(p[0]), [p[0], base[1]], DOWN), tag(fmt(p[1]), [base[0], p[1]], LEFT)];
         // The axis numbers the gold ones replace step aside.
         const all = numbers(ax);
@@ -198,8 +221,8 @@ export function lesson(scene: Scene) {
       /** Rise over run on y = f(x), from x to x + run, with the slope written beside it. */
       slopeTriangle(f: Fn, x: number, run: number, label: string, colour: string = c.muted): Animation {
         const a = at([x, f(x)]), b = at([x + run, f(x)]), d = at([x + run, f(x + run)]);
-        const tri = Polygon(a, b, d).setStroke(colour, 3).setFill(colour, 0.12);
-        const t = MathTex(label, { color: colour, fontSize: 30 }).nextTo(VGroup(Line(b, d)), RIGHT, 0.15);
+        const tri = inFigure(Polygon(a, b, d).setStroke(colour, 3).setFill(colour, 0.12));
+        const t = inFigure(MathTex(label, { color: colour, fontSize: 30 }).nextTo(VGroup(Line(b, d)), RIGHT, 0.15));
         return AnimationGroup(Create(tri), FadeIn(t));
       },
       /**
@@ -207,10 +230,10 @@ export function lesson(scene: Scene) {
        * as it goes. `readout` writes them (Typst math).
        */
       probe(f: Fn, from: number, to: number, readout: (x: number, y: number) => string = (x, y) => `(${fmt(x)}, ${fmt(y)})`): Animation {
-        const ring = Circle(0.17, { color: c.accent, strokeWidth: 4, zIndex: 5 }).moveTo(at([from, f(from)]));
+        const ring = inFigure(Circle(0.17, { color: c.accent, strokeWidth: 4, zIndex: 5 }).moveTo(at([from, f(from)])));
         const text = alwaysRedraw(() => {
           const [x, y] = ax.p2c(ring.getCenter());
-          return MathTex(readout(x, y), { color: c.text, fontSize: 28 }).nextTo(ring, UP, 0.12);
+          return inFigure(MathTex(readout(x, y), { color: c.text, fontSize: 28 }).nextTo(ring, UP, 0.12));
         });
         probe = { ring, readout: text, f };
         const path = Line(at([from, f(from)]), at([to, f(to)]));
@@ -219,6 +242,21 @@ export function lesson(scene: Scene) {
       /** Move the probe ring off the line, to (x, y). */
       probeTo(p: Point2): Animation {
         return probe ? probe.ring.animate.moveTo(at(p)) : Wait(0.1);
+      },
+      /**
+       * The camera pushes in on the graph point `p` (scale `zoom`, 1.22 by default), which glides to the middle of the
+       * figure panel while everything outside the panel stays where it is. pull() undoes it.
+       */
+      push(p: Point2, zoom = 1.22): Animation {
+        const b = figure.box;
+        zoomed = at(p);
+        return MoveCamera({ focus: { point: zoomed, anchor: [(b.left + b.right) / 2, (b.top + b.bottom) / 2, 0] }, zoom, runTime: 2.2 });
+      },
+      /** The camera goes back to where it was before push(). */
+      pull(): Animation {
+        const p = zoomed;
+        zoomed = null;
+        return p ? MoveCamera({ focus: { point: p, anchor: p }, zoom: 1, runTime: 1.8 }) : Wait(0.1);
       },
       /** Take the probe away. */
       probeOut(): Animation {
@@ -239,9 +277,11 @@ export function lesson(scene: Scene) {
     const markup = accent ? safe.replace(accent, `<span color="${c.accent}">${accent}</span>`) : safe;
     const style = { role: "heading" as const, color: c.text, maxWidth: 8.8, align: "center" as const };
     const shown = accent ? MarkupText(markup, style) : Text(text, style);
-    const { group } = panel(shown, { stroke: c.accent, padX: 0.6, padY: 0.45 });
+    const { group } = panel(shown, { stroke: c.accent, padX: 0.6, padY: 0.45, shadow: [0.5, 0.45, 0.3] });
     full.place(group);
     group.setZIndex(10);
+    // Frosted glass over the stage: the whole frame, blurred under the card once it dims.
+    const veil = Rectangle({ width: 14.4, height: 8.2, fillOpacity: 0, strokeWidth: 0 }).setBackdropBlur(0).pin().setZIndex(9);
     let stage: { m: Mobject; was: number }[] = [];
     /** What to dim: whole objects, except that ones holding hidden parts are dimmed part by part around them. */
     const pieces = (m: Mobject, was: number): { m: Mobject; was: number }[] => {
@@ -255,14 +295,15 @@ export function lesson(scene: Scene) {
       enter(): Animation {
         const seen = scene.inspect();
         stage = scene.mobjects.flatMap((m, i) => (same(m, group) ? [] : pieces(m, seen[i] ? seen[i].opacity : 1)));
-        // The card grows in at full strength once the stage has dimmed: text fading over text reads as a smudge.
-        return Succession(AnimationGroup(...stage.map((s) => s.m.animate.setOpacity(DIM))), GrowFromCenter(group, POP));
+        scene.add(veil);
+        // The card grows in at full strength once the stage has dimmed and blurred: text fading over text reads as a smudge.
+        return Succession(AnimationGroup(...stage.map((s) => s.m.animate.setOpacity(DIM)), veil.animate.setBackdropBlur(0.05)), GrowFromCenter(group, POP));
       },
       /** Take the card away and bring the stage back. */
       exit(): Animation {
         const back = stage;
         stage = [];
-        return Succession(group.animate.scale(0.02), FadeOut(group, { runTime: 0.01 }), AnimationGroup(...back.map((s) => s.m.animate.setOpacity(s.was))));
+        return Succession(group.animate.scale(0.02), FadeOut(group, { runTime: 0.01 }), AnimationGroup(...back.map((s) => s.m.animate.setOpacity(s.was)), veil.animate.setBackdropBlur(0)), FadeOut(veil, { runTime: 0.01 }));
       },
     }) as Piece<{ enter(): Animation; exit(): Animation }>;
   }

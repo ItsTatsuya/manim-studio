@@ -4094,7 +4094,7 @@ dependencies = [
 [[package]]
 name = "manim"
 version = "0.1.0"
-source = "git+https://github.com/ItsTatsuya/manim-rust?rev=a5ef7d8b53a50f753098477fa3ea87748253079b#a5ef7d8b53a50f753098477fa3ea87748253079b"
+source = "git+https://github.com/ItsTatsuya/manim-rust?rev=89286911fc2c003269f267c2b2b71490e5d9ab38#89286911fc2c003269f267c2b2b71490e5d9ab38"
 dependencies = [
  "anyhow",
  "bytemuck",
