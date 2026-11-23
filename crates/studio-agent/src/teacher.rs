@@ -15,8 +15,9 @@ const FRAME_WIDTH: f32 = 14.2;
 
 /// The beats of a script, as the teacher wrote them: narration word for word, and a
 /// `visual` that carries the on-screen column, the axes, the points and the end card for
-/// the builder. `logo` is the logo's path in the video's assets, when it was attached.
-pub fn draft(script: &TeacherScript, logo: Option<&str>) -> Storyboard {
+/// the builder. `logo` is the logo's path in the video's assets, when it was attached, and
+/// `applying` the numbers of the reviewer notes the teacher asked for.
+pub fn draft(script: &TeacherScript, logo: Option<&str>, applying: &[usize]) -> Storyboard {
     let last = script.scenes.len().saturating_sub(1);
     let scenes = script
         .scenes
@@ -30,7 +31,7 @@ pub fn draft(script: &TeacherScript, logo: Option<&str>) -> Storyboard {
             seconds: ((s.end - s.start).round() as u32).max(5),
         })
         .collect();
-    Storyboard { title: title(&script.title), grade: String::new(), scenes, source_notes: source_notes(script, logo) }
+    Storyboard { title: title(&script.title), grade: String::new(), scenes, source_notes: source_notes(script, logo, applying) }
 }
 
 /// "Video 1.01 – Two Equations: What Does Solving Mean?" as a short video title.
@@ -90,15 +91,24 @@ fn mentions_scene(fact: &str, n: u32) -> bool {
     fact.split(|c: char| !c.is_ascii_alphanumeric()).any(|w| w.strip_prefix(['S', 's']).and_then(|d| d.parse::<u32>().ok()) == Some(n))
 }
 
-/// The script's colours, equations and brand as fixed facts for every build turn. Written
-/// in code, not condensed by a model, so a revision can't drift from what the teacher gave.
-pub fn source_notes(script: &TeacherScript, logo: Option<&str>) -> String {
+/// The script's colours, axes, equations and brand as fixed facts for every build turn, and
+/// the reviewer notes the teacher asked for. Written in code, not condensed by a model, so a
+/// revision can't drift from what the teacher gave.
+pub fn source_notes(script: &TeacherScript, logo: Option<&str>, applying: &[usize]) -> String {
     let mut out = String::from("The teacher's script gives these; use them exactly as given.\n");
     if !script.colours.is_empty() {
         out.push_str("Colours (exact hex strings, written in code as plain strings: the exception to the palette rule; use them where the script says, palette() elsewhere):\n");
         for c in &script.colours {
             let note = if c.note.is_empty() { String::new() } else { format!(" ({})", c.note) };
             out.push_str(&format!("- {}: {} {}{note}\n", c.object, c.name, c.hex));
+        }
+    }
+    if !script.axes.is_empty() {
+        out.push_str("Axes and lines, by scene:\n");
+        for a in &script.axes {
+            let range = |r: Option<studio_script::teacher::Range>| r.map_or_else(|| "as drawn".to_string(), |r| r.to_string());
+            let lines = if a.lines.is_empty() { String::new() } else { format!(". Lines: {}", a.lines.trim_end_matches('.')) };
+            out.push_str(&format!("- {}: x {}; y {}{lines}\n", a.label, range(a.x), range(a.y)));
         }
     }
     if !script.equations.is_empty() {
@@ -114,6 +124,18 @@ pub fn source_notes(script: &TeacherScript, logo: Option<&str>) -> String {
         (Some(path), _) => out.push_str(&format!("Brand: the logo is {path}. Studio draws it as the corner watermark on the finished video, so never draw it yourself, except on the end card.\n")),
         (None, Some(name)) => out.push_str(&format!("Brand: the logo {name} was not attached. Studio draws the corner watermark itself; don't draw it.\n")),
         _ => {}
+    }
+    // Reviewer notes: only the ones the teacher asked for. Their wording changes are already in
+    // the narration; what they say about the screen is for the builder.
+    let wanted: Vec<&Note> = script.notes.iter().filter(|n| applying.contains(&n.n)).collect();
+    if !wanted.is_empty() {
+        out.push_str("Reviewer notes the teacher asked for, from someone who watched an earlier render (use the words to find the scene). Do what each says about what is on screen; changes to the wording are already in the narration:\n");
+        for n in &wanted {
+            out.push_str(&format!("[{}] {}\n", n.n, n.text));
+        }
+    }
+    if script.notes.len() > wanted.len() {
+        out.push_str("sources/*.md also holds other reviewer notes the teacher did not ask for: don't act on them.\n");
     }
     out.trim_end().to_string()
 }
@@ -133,7 +155,7 @@ pub fn plan(script: &TeacherScript, draft: &Storyboard, applying: &[usize]) -> S
         for n in script.notes.iter().filter(|n| applying.contains(&n.n)) {
             p.push_str(&format!("[{}] {} {}\n", n.n, clock(n.at), n.text));
         }
-        p.push_str("For each of these notes, change the narration of the one scene it is about, only as far as the note says, and list its number in that scene's \"applied\". Every other word stays as written. Ignore every other note.\n");
+        p.push_str("If a note asks for different words, change the narration of the one scene it is about, only as far as the note says, and list its number in that scene's \"applied\". A note about what appears on screen needs no change here: the builder gets it. Every other word stays as written. Ignore every other note.\n");
     }
     p.push_str(&format!(
         r#"
@@ -181,10 +203,11 @@ pub struct Merged {
 /// still fit.
 pub fn merge(draft: Storyboard, reply: &[Marked], applying: &[usize]) -> Merged {
     let mut storyboard = draft;
-    let (mut restored, mut applied) = (Vec::new(), Vec::new());
+    let (mut restored, mut applied): (Vec<usize>, Vec<usize>) = (Vec::new(), Vec::new());
     for (i, beat) in storyboard.scenes.iter_mut().enumerate() {
         let Some(r) = reply.get(i) else { continue };
-        let asked: Vec<usize> = r.applied.iter().copied().filter(|n| applying.contains(n)).collect();
+        // A note changes the words of one scene: the first that claims it.
+        let asked: Vec<usize> = r.applied.iter().copied().filter(|n| applying.contains(n) && !applied.contains(n)).collect();
         if same_words(&beat.say, &r.say) {
             beat.say = r.say.trim().to_string();
         } else if !asked.is_empty() && asked.len() == r.applied.len() {
@@ -203,6 +226,7 @@ pub fn merge(draft: Storyboard, reply: &[Marked], applying: &[usize]) -> Merged 
 /// The revise prompt for a storyboard made from a teacher's script: the usual one, plus
 /// the rule that the teacher's words change only where the note says.
 pub fn revise(script: &TeacherScript, current: &Storyboard, note: &str) -> String {
+    // The facts a model must not drift on are written back after its reply (`keep_facts`).
     let mut p = crate::prompt::revise(current, note);
     p.push_str("\nThe narration is the teacher's own script, word for word. Change its words only where the note asks, in the scenes it names, and leave every other sentence exactly as it is. Keep the colours, axis ranges, points and brand details in each scene's \"visual\", and \"source_notes\", as they are.");
     let applying = requested_notes(note, &script.notes);
@@ -217,8 +241,13 @@ pub fn revise(script: &TeacherScript, current: &Storyboard, note: &str) -> Strin
 }
 
 /// After a revision: the facts a model must not drift on are put back as they were.
-pub fn keep_facts(script: &TeacherScript, logo: Option<&str>, revised: &mut Storyboard) {
-    revised.source_notes = source_notes(script, logo);
+pub fn keep_facts(script: &TeacherScript, logo: Option<&str>, applying: &[usize], revised: &mut Storyboard) {
+    revised.source_notes = source_notes(script, logo, applying);
+}
+
+/// The scenes (1-based) whose words differ between two storyboards of the same script.
+pub fn reworded(before: &Storyboard, after: &Storyboard) -> Vec<usize> {
+    before.scenes.iter().zip(&after.scenes).enumerate().filter(|(_, (a, b))| !same_words(&a.say, &b.say)).map(|(i, _)| i + 1).collect()
 }
 
 #[cfg(test)]
@@ -268,7 +297,7 @@ Suggestions:
     #[test]
     fn the_draft_keeps_the_teachers_words_and_facts() {
         let s = script();
-        let d = draft(&s, Some("assets/acme_logo.png"));
+        let d = draft(&s, Some("assets/acme_logo.png"), &[]);
         assert_eq!(d.title, "Two Pens, One Bill: Pairs of Equations");
         assert_eq!(d.scenes.len(), 3);
         assert_eq!(d.scenes[0].say, "A shop sells pens and pads. Two pens and three pads cost forty rupees. If p is five, q is ten.");
@@ -291,22 +320,22 @@ Suggestions:
 
     #[test]
     fn colours_equations_and_brand_reach_the_builder() {
-        let n = source_notes(&script(), Some("assets/acme_logo.png"));
+        let n = source_notes(&script(), Some("assets/acme_logo.png"), &[]);
         assert!(n.contains("- First equation and its line: Violet #7B2CBF"), "{n}");
         assert!(n.contains("- Final answer: Green #57CC99 (in a rounded box)"), "{n}");
         assert!(n.contains("1. k x + 2 y = 3"), "{n}");
         assert!(n.contains("2. LaTeX \\foo{x} (it didn't convert to a Typst that renders: unknown function; write it by hand in Typst)"), "{n}");
         assert!(n.contains("the logo is assets/acme_logo.png") && n.contains("never draw it yourself"), "{n}");
         // Without the logo file the end card is text only.
-        let d = draft(&script(), None);
+        let d = draft(&script(), None, &[]);
         assert!(d.scenes[2].visual.contains("the logo file wasn't attached"), "{}", d.scenes[2].visual);
-        assert!(source_notes(&script(), None).contains("acme_logo.png was not attached"));
+        assert!(source_notes(&script(), None, &[]).contains("acme_logo.png was not attached"));
     }
 
     #[test]
     fn the_planner_is_asked_for_marks_and_sees_only_requested_notes() {
         let s = script();
-        let d = draft(&s, None);
+        let d = draft(&s, None, &[]);
         let p = plan(&s, &d, &[]);
         assert!(p.contains("Narration: A shop sells pens and pads."), "{p}");
         assert!(p.contains("[sentences 1-2] A bill slides in."), "{p}");
@@ -324,7 +353,7 @@ Suggestions:
     #[test]
     fn the_teachers_wording_is_enforced() {
         let s = script();
-        let d = draft(&s, None);
+        let d = draft(&s, None, &[]);
         let reply = parse_marks(
             "```json\n{\"scenes\": [\
               {\"say\": \"A shop sells pens and pads. Two pens and three pads cost forty rupees. If p is five, q is {q10}ten.\"},\
@@ -351,7 +380,7 @@ Suggestions:
     #[test]
     fn requested_notes_may_change_their_scene_and_only_that_one() {
         let s = script();
-        let d = draft(&s, None);
+        let d = draft(&s, None, &[]);
         let reply = vec![
             Marked { say: d.scenes[0].say.clone(), applied: vec![] },
             Marked { say: "Take the first bill. Now plot it. The points lie on one line.".into(), applied: vec![1] },
@@ -368,15 +397,52 @@ Suggestions:
     #[test]
     fn a_revision_keeps_the_words_and_the_facts() {
         let s = script();
-        let d = draft(&s, None);
+        let d = draft(&s, None, &[]);
         let p = revise(&s, &d, "Make scene 2 gentler");
         assert!(p.contains("Change its words only where the note asks") && !p.contains("Show the word"), "{p}");
         let p = revise(&s, &d, "Apply reviewer note 1");
         assert!(p.contains("[1] Show the word “bill” on screen."), "{p}");
         let mut drifted = d.clone();
         drifted.source_notes = "something else".into();
-        keep_facts(&s, None, &mut drifted);
+        keep_facts(&s, None, &[], &mut drifted);
         assert_eq!(drifted.source_notes, d.source_notes);
+    }
+
+    /// A note about the screen changes no word of the narration, so it reaches the builder
+    /// instead: through the source notes, and only when the teacher asked for it.
+    #[test]
+    fn requested_notes_reach_the_builder_and_others_do_not() {
+        let s = script();
+        let build = |applying: &[usize]| crate::prompt::build(&draft(&s, None, applying));
+        let asked = build(&[1]);
+        assert!(asked.contains("[1] Show the word “bill” on screen."), "{asked}");
+        assert!(asked.contains("Do what each says about what is on screen"), "{asked}");
+        assert!(!asked.contains("Say “line” slowly"), "{asked}");
+        assert!(asked.contains("don't act on them"), "{asked}");
+        let none = build(&[]);
+        assert!(!none.contains("Show the word") && !none.contains("Say “line”"), "{none}");
+        assert!(none.contains("don't act on them"), "{none}");
+        // Every note asked for: nothing is left to warn about.
+        assert!(!build(&[1, 2]).contains("don't act on them"));
+        // The axes are facts for every turn, and a revision gets them back.
+        assert!(none.contains("- S02: x 0 to 50, step 10; y -5 to 30, step 5. Lines: Violet: y = 20 - 0.5x"), "{none}");
+    }
+
+    /// One note changes the words of one scene, however many claim it.
+    #[test]
+    fn a_note_unlocks_one_scene() {
+        let s = script();
+        let d = draft(&s, None, &[]);
+        let reply = vec![
+            Marked { say: d.scenes[0].say.clone(), applied: vec![] },
+            Marked { say: "Take the first bill. Now plot it. The points lie on one line.".into(), applied: vec![1] },
+            Marked { say: "Thanks, all, for watching.".into(), applied: vec![1] },
+        ];
+        let m = merge(d.clone(), &reply, &[1]);
+        assert!(m.storyboard.scenes[1].say.contains("Now plot it"));
+        assert_eq!(m.storyboard.scenes[2].say, d.scenes[2].say);
+        assert_eq!((m.restored.as_slice(), m.applied.as_slice()), ([3].as_slice(), [1].as_slice()));
+        assert_eq!(reworded(&d, &m.storyboard), [2]);
     }
 
     #[test]

@@ -720,8 +720,8 @@ impl Workspace {
                 let teacher = self.projects[video.0].videos[video.1].dir.as_deref().and_then(crate::teacher::load);
                 let parsed = match teacher {
                     Some(saved) => {
-                        let request = self.projects[video.0].videos[video.1].request.clone().unwrap_or_default();
-                        let (parsed, lines) = crate::teacher::from_reply(&saved, &request, matches!(r.kind, TurnKind::Plan), &r.text);
+                        let before = self.projects[video.0].videos[video.1].storyboard.clone();
+                        let (parsed, lines) = crate::teacher::from_reply(&saved, before.as_ref(), matches!(r.kind, TurnKind::Plan), &r.text);
                         told = lines;
                         parsed
                     }
@@ -1228,13 +1228,13 @@ impl Workspace {
                 this.set_working((pi, vi), None);
                 let p = match script {
                     Some(prepared) => {
-                        if let Some(dir) = this.projects[pi].videos[vi].dir.clone() {
+                        if let Some(dir) = this.video_mut((pi, vi)).and_then(|v| v.dir.clone()) {
                             crate::teacher::save(&dir, &prepared.saved);
                         }
                         for (ok, text) in prepared.lines {
                             this.push_msg((pi, vi), Msg::Activity { icon: if ok { IconName::Check } else { IconName::Info }, ok, text, meta: String::new() });
                         }
-                        prepared.saved.plan_prompt(&request)
+                        prepared.saved.plan_prompt()
                     }
                     None => this.plan_prompt(&request, &texts, this.prefs.house_style),
                 };
@@ -1278,7 +1278,7 @@ impl Workspace {
         let style = v.settings.style.unwrap_or(self.prefs.house_style);
         // A teacher's script read before: plan from it again.
         if let Some(saved) = v.dir.as_deref().and_then(crate::teacher::load) {
-            let p = saved.plan_prompt(&request);
+            let p = saved.plan_prompt();
             if let Some(v) = self.video_mut(video) {
                 v.busy = Some(Busy::Planning);
             }
@@ -1344,8 +1344,15 @@ impl Workspace {
             v.busy = Some(Busy::Revising);
         }
         let effort = self.prefs.planning_reasoning.effort(Some(Effort::Low));
-        let prompt = match self.video().dir.as_deref().and_then(crate::teacher::load) {
-            Some(saved) => studio_agent::teacher::revise(&saved.script, &sb, &note),
+        let dir = self.video().dir.clone();
+        let prompt = match dir.as_deref().and_then(|d| Some((d, crate::teacher::load(d)?))) {
+            Some((dir, mut saved)) => {
+                // Notes the teacher asks for now are kept for the rest of the video.
+                if saved.ask_for(&note) {
+                    crate::teacher::save(dir, &saved);
+                }
+                studio_agent::teacher::revise(&saved.script, &sb, &note)
+            }
             None => prompt::revise(&sb, &note),
         };
         self.start_turn(video, TurnKind::Revise, prompt, true, effort, cx);

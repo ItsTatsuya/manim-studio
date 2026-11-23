@@ -420,10 +420,19 @@ fn is_notes_heading(cell: &str) -> bool {
 }
 
 /// Read a teacher's script. `None` when the text isn't one: it needs a narration table (a
-/// time, then what is said, then what appears) with at least two timed rows.
+/// "Narration" column: a time, then what is said, then what appears) with at least two
+/// timed rows.
 pub fn parse(text: &str) -> Option<TeacherScript> {
     let all = cells(text);
     let first_row = all.iter().position(|c| time(c).is_some())?;
+    // A timetable (`9:00 | Starter quiz | Slides`) has times too: a script has a narration column.
+    let titled = all.iter().any(|c| {
+        let l = lower(c.trim());
+        c.len() <= 40 && (l.starts_with("narration") || l.starts_with("voice-over") || l.starts_with("voiceover") || l.starts_with("voice over"))
+    });
+    if !titled {
+        return None;
+    }
     // Reviewer notes come after the script; their lines start with times too.
     let notes_at = all.iter().enumerate().skip(first_row).find(|(_, c)| is_notes_heading(c)).map(|(i, _)| i);
     let script_end = notes_at.unwrap_or(all.len());
@@ -700,16 +709,22 @@ pub fn carry_marks(original: &str, reply: &str) -> String {
     let words: Vec<&str> = original.split_whitespace().collect();
     let marked = crate::parse(reply);
     let mut at: Vec<Vec<&str>> = vec![Vec::new(); words.len() + 1];
-    let mut from = 0;
+    // Where the search goes on, and which word of the reply the last mark was on: marks on
+    // the same word share a word of the original, the next word's marks go on after it.
+    let (mut from, mut last) = (0, None);
     for m in &marked.marks {
         let Some(word) = marked.text[m.at.min(marked.text.len())..].split_whitespace().next() else {
             at[words.len()].push(&m.id);
             continue;
         };
+        if last.is_some_and(|l| l != m.at) {
+            from += 1;
+        }
         let want = bare(word);
-        if let Some(i) = words[from..].iter().position(|w| bare(w) == want && !want.is_empty()) {
+        if let Some(i) = words.get(from..).and_then(|w| w.iter().position(|w| bare(w) == want && !want.is_empty())) {
             from += i;
             at[from].push(&m.id);
+            last = Some(m.at);
         }
     }
     let mut out = String::with_capacity(original.len() + marked.marks.len() * 8);
@@ -857,11 +872,14 @@ Instead, say “a free number”.
     fn other_documents_are_not_scripts() {
         assert_eq!(parse("Circles\n\nThe area of a circle is pi r squared.\nSlide 1\nRadius"), None);
         assert_eq!(parse("Time | Narration | On-screen action\n0:00 | Only one row. | Nothing."), None);
+        // A lesson plan's timetable has times and sentences too, but no narration column.
+        let timetable = "Lesson plan\nTime | Activity | Resources\n9:00 | Starter quiz on last week's work | Slides\n9:20 | Group task on adding fractions | Worksheet\n9:50 | Plenary discussion of the answers | Board";
+        assert_eq!(parse(timetable), None);
     }
 
     #[test]
     fn scripts_without_a_scene_table_split_at_beats() {
-        let text = "Beat 1 – Hook (0:00–0:30)\n0:00 | One two three. | A\n0:15 | Four five six. | B\nBeat 2 – Idea (0:30–1:00)\n0:30 | Seven eight nine. | C";
+        let text = "Time | Narration | On-screen action\nBeat 1 – Hook (0:00–0:30)\n0:00 | One two three. | A\n0:15 | Four five six. | B\nBeat 2 – Idea (0:30–1:00)\n0:30 | Seven eight nine. | C";
         let s = parse(text).expect("script");
         let got: Vec<_> = s.scenes.iter().map(|s| (s.title.as_str(), s.rows.len())).collect();
         assert_eq!(got, [("Hook", 2), ("Idea", 1)]);
@@ -913,5 +931,7 @@ Instead, say “a free number”.
         assert!(same_words(&fixed, said));
         // A mark on a word that is gone is dropped; one at the very end stays at the end.
         assert_eq!(carry_marks("Plain words here.", "Plain {gone}other words {end}"), "Plain words here.{end}");
+        // A word said twice gets each of its marks, in order; two marks on one word stay together.
+        assert_eq!(carry_marks("If r is ten, c is ten.", "If r is {a}{b}ten, c is {c}ten."), "If r is {a}{b}ten, c is {c}ten.");
     }
 }

@@ -34,6 +34,8 @@ pub struct Saved {
     pub script: TeacherScript,
     /// The logo in the video's folder (`assets/logo.png`), when it was attached.
     pub logo: Option<String>,
+    /// The reviewer notes (numbers) the teacher has asked for so far.
+    pub applying: Vec<usize>,
 }
 
 pub fn load(dir: &Path) -> Option<Saved> {
@@ -48,10 +50,19 @@ pub fn save(dir: &Path, saved: &Saved) {
 
 impl Saved {
     /// The planning prompt: the teacher's narration and on-screen column, and only the
-    /// reviewer notes the request asks for.
-    pub fn plan_prompt(&self, request: &str) -> String {
-        let draft = plan::draft(&self.script, self.logo.as_deref());
-        plan::plan(&self.script, &draft, &requested_notes(request, &self.script.notes))
+    /// reviewer notes the teacher asked for.
+    pub fn plan_prompt(&self) -> String {
+        let draft = plan::draft(&self.script, self.logo.as_deref(), &self.applying);
+        plan::plan(&self.script, &draft, &self.applying)
+    }
+
+    /// Take the reviewer notes a request asks for. True when it asked for new ones.
+    pub fn ask_for(&mut self, request: &str) -> bool {
+        let before = self.applying.len();
+        self.applying.extend(requested_notes(request, &self.script.notes));
+        self.applying.sort_unstable();
+        self.applying.dedup();
+        self.applying.len() != before
     }
 
     /// The corner logo the brand table asks for, when the logo file is in the video.
@@ -154,8 +165,8 @@ pub fn prepare(request: &str, texts: &[String], images: &[PathBuf], dir: Option<
     }
 
     // Reviewer notes wait for the teacher to ask.
+    let applying = requested_notes(request, &script.notes);
     if !script.notes.is_empty() {
-        let applying = requested_notes(request, &script.notes);
         lines.push((
             true,
             if applying.is_empty() {
@@ -168,7 +179,7 @@ pub fn prepare(request: &str, texts: &[String], images: &[PathBuf], dir: Option<
             },
         ));
     }
-    Some(Prepared { saved: Saved { script, logo }, lines })
+    Some(Prepared { saved: Saved { script, logo, applying }, lines })
 }
 
 /// `2, 3 and 5`.
@@ -182,21 +193,28 @@ fn join_numbers(n: &[usize]) -> String {
 
 /// The storyboard for a finished plan or revise turn of a video made from a teacher's
 /// script, and what to tell the teacher. A plan reply is only cue marks, and every scene's
-/// words are checked against the script; a revision keeps the facts as they were.
-pub fn from_reply(saved: &Saved, request: &str, planning: bool, reply: &str) -> (Result<Storyboard, String>, Vec<String>) {
+/// words are checked against the script; a revision keeps the facts as they were and says
+/// which scenes' words it changed from `before`.
+pub fn from_reply(saved: &Saved, before: Option<&Storyboard>, planning: bool, reply: &str) -> (Result<Storyboard, String>, Vec<String>) {
     let logo = saved.logo.as_deref();
     if !planning {
         return match studio_agent::prompt::parse_storyboard(reply) {
             Ok(mut sb) => {
-                plan::keep_facts(&saved.script, logo, &mut sb);
-                (Ok(sb), Vec::new())
+                plan::keep_facts(&saved.script, logo, &saved.applying, &mut sb);
+                let changed = before.map(|b| plan::reworded(b, &sb)).unwrap_or_default();
+                let lines = if changed.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![format!("Changed the wording of {} {}.", if changed.len() == 1 { "scene" } else { "scenes" }, join_numbers(&changed))]
+                };
+                (Ok(sb), lines)
             }
             Err(e) => (Err(e.to_string()), Vec::new()),
         };
     }
-    let draft = plan::draft(&saved.script, logo);
+    let draft = plan::draft(&saved.script, logo, &saved.applying);
     let scenes = draft.scenes.len();
-    let applying = requested_notes(request, &saved.script.notes);
+    let applying = saved.applying.as_slice();
     let Ok(marks) = plan::parse_marks(reply) else {
         return (Ok(draft), vec!["The assistant's reply had no cue marks, so your script is used as written, without them.".into()]);
     };
@@ -204,7 +222,7 @@ pub fn from_reply(saved: &Saved, request: &str, planning: bool, reply: &str) -> 
     if marks.len() < scenes {
         lines.push(format!("The assistant marked {} of {scenes} scenes; the rest have no cue marks.", marks.len()));
     }
-    let merged = plan::merge(draft, &marks, &applying);
+    let merged = plan::merge(draft, &marks, applying);
     if !merged.restored.is_empty() {
         let which = merged.restored.iter().map(usize::to_string).collect::<Vec<_>>();
         lines.push(format!(
@@ -285,8 +303,14 @@ Suggestions:
         assert!(lines.iter().any(|l| l.starts_with("Using assets/Acme_Logo.PNG as the watermark and on the end card")), "{lines:?}");
         // The note waits for the teacher to ask.
         assert!(lines.last().unwrap().starts_with("1 reviewer note found. None is applied"), "{lines:?}");
+        assert!(p.saved.applying.is_empty());
         let asked = prepare("Apply reviewer note 1", &texts, &[logo], Some(&video), 0).unwrap();
         assert_eq!(asked.lines.last().unwrap().1, "Applying reviewer note 1 of 1 found.");
+        assert_eq!(asked.saved.applying, [1]);
+        // The note goes to the builder with the storyboard, and the plan asks the planner about it.
+        assert!(studio_agent::prompt::build(&plan::draft(&asked.saved.script, None, &asked.saved.applying)).contains("[1] Show the word “bill”."));
+        assert!(asked.saved.plan_prompt().contains("[1] 0:10 Show the word “bill”."));
+        assert!(!p.saved.plan_prompt().contains("Show the word"));
         // Nothing to say about a document that isn't a script.
         assert!(prepare("", &texts[..1], &[], None, 0).is_none());
         let _ = std::fs::remove_dir_all(&dir);
@@ -298,7 +322,7 @@ Suggestions:
         std::fs::create_dir_all(dir.join("assets")).unwrap();
         std::fs::write(dir.join("assets/logo.png"), b"x").unwrap();
         let script = studio_script::teacher::parse(SCRIPT).unwrap();
-        let mut saved = Saved { script, logo: Some("assets/logo.png".into()) };
+        let mut saved = Saved { script, logo: Some("assets/logo.png".into()), ..Default::default() };
         let w = saved.watermark(&dir).expect("watermark");
         assert_eq!(w.mark, Mark::Image(dir.join("assets/logo.png")));
         assert_eq!(w.at, (Align::Start, Align::End));
@@ -314,11 +338,29 @@ Suggestions:
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A later request can ask for more notes; a revision says which scenes' words it changed.
+    #[test]
+    fn a_revision_asks_for_notes_and_reports_what_it_reworded() {
+        let mut saved = Saved { script: studio_script::teacher::parse(SCRIPT).unwrap(), ..Default::default() };
+        assert!(!saved.ask_for("Make it calmer"));
+        assert!(saved.ask_for("Apply reviewer note 1"));
+        assert!(!saved.ask_for("Apply reviewer note 1 again"));
+        assert_eq!(saved.applying, [1]);
+        let before = plan::draft(&saved.script, None, &[]);
+        let mut after = before.clone();
+        after.scenes[1].say = "Thanks, everyone.".into();
+        let reply = serde_json::to_string(&after).unwrap();
+        let (sb, lines) = from_reply(&saved, Some(&before), false, &reply);
+        assert_eq!(lines, ["Changed the wording of scene 2."]);
+        // The facts come back whatever the model wrote, with the notes asked for.
+        assert!(sb.unwrap().source_notes.contains("[1] Show the word “bill”."));
+    }
+
     #[test]
     fn replies_are_checked_against_the_script() {
-        let saved = Saved { script: studio_script::teacher::parse(SCRIPT).unwrap(), logo: Some("assets/logo.png".into()) };
+        let saved = Saved { script: studio_script::teacher::parse(SCRIPT).unwrap(), logo: Some("assets/logo.png".into()), ..Default::default() };
         let reply = r#"{"scenes": [{"say": "A shop sells pens. If p is five, q is {q}ten. Take the first bill."}, {"say": "Thank you all for watching."}]}"#;
-        let (sb, lines) = from_reply(&saved, "", true, reply);
+        let (sb, lines) = from_reply(&saved, None, true, reply);
         let sb = sb.unwrap();
         assert_eq!(sb.scenes[0].say, "A shop sells pens. If p is five, q is {q}ten. Take the first bill.");
         assert_eq!(sb.scenes[1].say, "Thanks for watching.");
@@ -326,7 +368,7 @@ Suggestions:
         // The end card and colours are in the storyboard whatever the reply says.
         assert!(sb.scenes[1].visual.contains("ImageMobject(\"assets/logo.png\")"), "{}", sb.scenes[1].visual);
         // Not JSON: the script is used as written.
-        let (sb, lines) = from_reply(&saved, "", true, "Sorry, I can't.");
+        let (sb, lines) = from_reply(&saved, None, true, "Sorry, I can't.");
         assert_eq!(sb.unwrap().scenes[1].say, "Thanks for watching.");
         assert_eq!(lines.len(), 1);
     }

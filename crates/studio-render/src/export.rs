@@ -468,13 +468,14 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Needs ffmpeg (skipped otherwise): text, image and captions + text on a test clip.
     #[test]
     fn a_watermark_can_end_before_the_video_does() {
         assert_eq!(visible_until(None), "");
         assert_eq!(visible_until(Some(585.0)), ":enable='lt(t,585.000)'");
     }
 
+    /// Needs ffmpeg (skipped otherwise): text, image and captions + text on a test clip. The
+    /// image one is hidden from 0.5 s on, and the text one is too.
     #[test]
     fn draws_watermarks() {
         let Some(ff) = crate::ffmpeg_path() else { return };
@@ -505,7 +506,7 @@ mod tests {
             }
             let wm = Watermark { mark, at, size: 0.08, opacity: 0.6, margin: 0.035, color: (k == 2).then(|| "FF0000".into()), shadow: k != 2, until_last_scene: false };
             let out = dir.join(format!("out{k}.mp4"));
-            let f = Finish { captions, watermark: Some(&wm), watermark_until: (k == 1).then_some(0.5), font: font.as_deref(), text_rgb: "FFFFFF", shadow_rgb: "000000", width: 640, height: 360 };
+            let f = Finish { captions, watermark: Some(&wm), watermark_until: (k != 0).then_some(0.5), font: font.as_deref(), text_rgb: "FFFFFF", shadow_rgb: "000000", width: 640, height: 360 };
             finish(&ff, &clip, &f, &out, &|| false).unwrap_or_else(|e| panic!("mark {k}: {e:#}"));
             assert!(std::fs::metadata(&out).unwrap().len() > 1000);
         }
