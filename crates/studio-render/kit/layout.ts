@@ -29,6 +29,15 @@ const LAYOUT = ((globalThis as any).__LAYOUT ??= { boxes: BOXES, items: [] as Pl
 function track(m: Mobject, region: string) {
   LAYOUT.items = LAYOUT.items.filter((p) => p.m !== m);
   LAYOUT.items.push({ m, region });
+  // The camera moves the figure and nothing else: everything in the other regions stays put,
+  // and the figure's content is cut at its panel's edge when the camera pushes in.
+  if (region === "figure") clipToBox(m, BOXES.figure);
+  else m.pin();
+}
+
+/** Keep `m` (as it is now) inside `box` when the camera zooms. */
+export function clipToBox(m: Mobject, box: Box) {
+  m.clipTo(box.left, box.bottom, box.right, box.top);
 }
 
 /** Shrink `m` (never grow it) so it fits `width` × `height`. Axes are never scaled: they are made to size. */
@@ -104,6 +113,8 @@ export class Region {
     if (xLabel) titles.push(Text(xLabel, { role: "caption" }).nextTo(ax, DOWN, 0.12));
     if (yLabel) titles.push(Text(yLabel, { role: "caption" }).nextTo(ax, UP, 0.12).alignTo(ax, LEFT));
     ax.labels = VGroup(...titles);
+    if (this.name === "figure") clipToBox(ax.labels, this.box);
+    else ax.labels.pin();
     return ax;
   }
 }
