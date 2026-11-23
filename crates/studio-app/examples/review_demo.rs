@@ -19,7 +19,7 @@ fn main() -> anyhow::Result<()> {
     let theme_json = studio_render::style::json(0).to_string();
     let mut frames = Vec::new();
     for (i, file) in studio_render::sample::scene_files(&dir).into_iter().enumerate() {
-        let req = OpenScene { path: file.clone(), root: dir.clone(), theme_json: theme_json.clone(), scene: None, globals: vec![], narration: None, narration_lines: vec![], narration_cues: vec![] };
+        let req = OpenScene { path: file.clone(), root: dir.clone(), theme_json: theme_json.clone(), scene: None, globals: vec![], narration: None, narration_lines: vec![], narration_cues: vec![], critic: None };
         for (k, (at, frame)) in review_frames(&req, Output::new(1280, 720, 30.0))?.into_iter().enumerate() {
             let img = out.join(format!("{:02}-{}.jpg", i + 1, k + 1));
             slides::frame_to_jpeg(&ffmpeg, &frame, &img)?;

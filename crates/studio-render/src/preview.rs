@@ -45,6 +45,10 @@ pub struct OpenScene {
     pub narration_lines: Vec<f64>,
     /// When each cue mark in the narration is spoken (`this.cue(id)`).
     pub narration_cues: Vec<CueTime>,
+    /// Run the timing and readability checks with the scene (dead air, too brief, too
+    /// small, off-cue): their findings join the timeline's problems. Off for the live
+    /// preview, thumbnails and renders; the assistant's checks turn it on.
+    pub critic: Option<crate::critic::Critic>,
 }
 
 /// Silence after the narration ends before the next scene starts. The next scene's
@@ -69,14 +73,79 @@ const TIMING_HOOK: &str = r#"(() => {
     while (p && !Object.prototype.hasOwnProperty.call(p, "wait")) p = Object.getPrototypeOf(p);
     if (p && !p.__studioTiming) {
       const wait = p.wait, play = p.play;
+      // The critic (a scene checked with one): which text is on screen when, and which line
+      // of the script each animation comes from. The screen is sampled before and after
+      // every play and before every wait, so a text added with add() is dated by the next
+      // call and one an animation brings in or takes out by that animation's start.
+      const TEXTY = { Text: 1, Math: 1, DecimalNumber: 1, Integer: 1 };
+      const DRAWN = { Axes: 1, NumberLine: 1, NumberPlane: 1, ComplexPlane: 1, PolarPlane: 1 };
+      const where = () => {
+        try {
+          for (const ln of String(new Error().stack).split("\n")) {
+            const m = /([^\s()]+\.ts):(\d+)/.exec(ln);
+            if (m && !/[\\/]lib[\\/]/.test(m[1])) return { file: m[1], line: +m[2] };
+          }
+        } catch (e) {}
+        return null;
+      };
+      const texts = (scene) => {
+        const out = [];
+        const items = scene.inspect();
+        const ms = scene.mobjects;
+        let budget = 4000;
+        const walk = (m, key) => {
+          if (budget-- <= 0 || DRAWN[m.kind]) return;
+          if (TEXTY[m.kind]) {
+            const bb = m.bbox;
+            let text = "";
+            try { text = m._q("text"); } catch (e) {}
+            if (bb && typeof text === "string") out.push({ key, text, bb, op: m.getFillOpacity() });
+            return;
+          }
+          const n = m.length;
+          for (let j = 0; j < n; j++) walk(m.get(j), key + "/" + j);
+        };
+        const aligned = ms.length === items.length && ms.every((m, i) => (m.kind || "VMobject") === items[i].kind);
+        if (aligned) items.forEach((it, i) => { if (it.text) walk(ms[i], String(it.id)); });
+        else items.forEach((it) => { if (it.text && TEXTY[it.kind]) out.push({ key: String(it.id), text: it.label, bb: it.bbox, op: it.opacity }); });
+        return out;
+      };
+      const sample = (scene, t, at) => {
+        const L = globalThis.__LOOK;
+        const seen = {};
+        for (const x of texts(scene)) {
+          if (x.op < 0.05) continue;
+          seen[x.key] = true;
+          const live = L.live[x.key];
+          if (live && live.label === x.text) { live.bb = x.bb; continue; }
+          if (live) live.to = t;
+          L.live[x.key] = { label: x.text, from: t, to: null, bb: x.bb, at };
+          L.spans.push(L.live[x.key]);
+        }
+        for (const k of Object.keys(L.live)) {
+          if (!seen[k]) { L.live[k].to = t; delete L.live[k]; }
+        }
+      };
+      // Notes a call and samples the screen as it is now; returns where the call is.
+      const note = (scene) => {
+        if (!globalThis.__LOOK_ON) return null;
+        const at = where();
+        globalThis.__LOOK.calls.push({ t: scene.time, at });
+        return at;
+      };
       p.wait = function (s = 1) {
         const plan = globalThis.__WAIT_PLAN;
         const i = (globalThis.__WAIT_IX = (globalThis.__WAIT_IX || 0) + 1) - 1;
+        const at = note(this);
+        if (globalThis.__LOOK_ON) sample(this, this.time, at);
         return wait.call(this, plan && plan[i] != null ? plan[i] : s);
       };
       p.play = function (...items) {
         const plan = globalThis.__PLAY_PLAN;
         const i = (globalThis.__PLAY_IX = (globalThis.__PLAY_IX || 0) + 1) - 1;
+        const t0 = this.time;
+        const at = note(this);
+        if (globalThis.__LOOK_ON) sample(this, t0, at);
         if (plan && plan[i] != null) {
           const last = items[items.length - 1];
           if (last && Object.getPrototypeOf(last) === Object.prototype) items[items.length - 1] = { ...last, runTime: plan[i] };
@@ -84,6 +153,7 @@ const TIMING_HOOK: &str = r#"(() => {
         }
         const out = play.apply(this, items);
         checkRegions(this);
+        if (globalThis.__LOOK_ON) sample(this, t0, at);
         return out;
       };
       // Holds until scene time `t`. The engine rounds a wait down to whole frames, which
@@ -154,6 +224,7 @@ const TIMING_HOOK: &str = r#"(() => {
       // sentence has finished and the narrator has paused for breath, marks the moment,
       // and returns the seconds until the sentence's first cue, or its whole length.
       p.narrate = function (n) {
+        note(this);
         const start = begin(this, n);
         const inside = cuesOf().filter((c) => c.line === n).map((c) => c.at);
         if (!inside.length) return length(n);
@@ -163,6 +234,7 @@ const TIMING_HOOK: &str = r#"(() => {
       // be, holds until that word, marks the moment, and returns the seconds until the
       // next cue or the end of the sentence. An id used again names its next mark.
       p.cue = function (id) {
+        note(this);
         const all = cuesOf();
         const same = all.filter((c) => c.id === String(id));
         if (!same.length) return 1;
@@ -184,6 +256,7 @@ const TIMING_HOOK: &str = r#"(() => {
     globalThis.__NARR = { end: 0, starts: {}, used: {} };
     globalThis.__REGION_PROBLEMS = [];
     globalThis.__REGION_SEEN = {};
+    globalThis.__LOOK = { spans: [], live: {}, calls: [] };
     return run.call(this, cls);
   };
   wrapped.__studio = true;
@@ -338,6 +411,7 @@ fn load_with(req: &OpenScene, output: Output, plan: Option<&TimingPlan>) -> Resu
     if let Some(n) = req.narration {
         host.set_global_json("NARRATION", &narration_json(n, &req.narration_lines, &req.narration_cues))?;
     }
+    host.set_global_json("__LOOK_ON", if req.critic.is_some() { "true" } else { "false" })?;
     install_hooks(&host, plan)?;
     let scene = match &req.scene {
         Some(s) => s.clone(),
@@ -366,6 +440,12 @@ fn load_with(req: &OpenScene, output: Output, plan: Option<&TimingPlan>) -> Resu
     }
     let mut timeline = host.timeline().ok_or_else(|| anyhow!("the scene did not run"))?;
     timeline.problems.extend(region_problems(&host));
+    if let Some(critic) = &req.critic {
+        let look = crate::critic::read(&host);
+        let narration = crate::critic::Narration::of(req, &timeline, critic);
+        let found = crate::critic::critique(&timeline, &look, narration.as_ref());
+        timeline.problems.extend(found.into_iter().map(crate::critic::Finding::into_problem));
+    }
     Ok((host, scene, timeline))
 }
 
@@ -808,7 +888,7 @@ export default class T extends Scene {
 }"#,
         )
         .unwrap();
-        OpenScene { path, root: dir.to_path_buf(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: None, narration_lines: vec![], narration_cues: vec![] }
+        OpenScene { path, root: dir.to_path_buf(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: None, narration_lines: vec![], narration_cues: vec![], critic: None }
     }
 
     #[test]
@@ -867,7 +947,7 @@ export default class N extends Scene {
         .unwrap();
         let lines = vec![1.5, 2.0, 1.0];
         let total = crate::preview::narration_end(&crate::voice::sequential_starts(&lines), &lines);
-        let req = OpenScene { path, root: dir.clone(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: Some(total), narration_lines: lines.clone(), narration_cues: vec![] };
+        let req = OpenScene { path, root: dir.clone(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: Some(total), narration_lines: lines.clone(), narration_cues: vec![], critic: None };
         let (_, _, t) = load(&req, Output::new(320, 180, 30.0)).unwrap();
         assert!(uses_narrate(&t));
         let starts = narration_starts(&t, &lines);
@@ -893,7 +973,7 @@ export default class N extends Scene {
         std::fs::write(&path, script).unwrap();
         let total = narration_end(&crate::voice::sequential_starts(lines), lines);
         let cues = crate::cues::estimate(say, lines);
-        let req = OpenScene { path, root: dir.clone(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: Some(total), narration_lines: lines.to_vec(), narration_cues: cues.clone() };
+        let req = OpenScene { path, root: dir.clone(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: Some(total), narration_lines: lines.to_vec(), narration_cues: cues.clone(), critic: None };
         let (_, _, t) = load(&req, Output::new(320, 180, 30.0)).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         let starts = narration_starts(&t, lines);
@@ -976,7 +1056,7 @@ export default class N extends Scene {
              import {{ heading, work, figure, full }} from \"../lib/layout\";\n\
              import {{ lesson }} from \"../lib/lesson\";\n\
              export default class L extends Scene {{ construct() {{ {body} }} }}")).unwrap();
-        let req = OpenScene { path, root: dir.clone(), theme_json: crate::style::json(style).into(), scene: None, globals: vec![], narration: None, narration_lines: vec![], narration_cues: vec![] };
+        let req = OpenScene { path, root: dir.clone(), theme_json: crate::style::json(style).into(), scene: None, globals: vec![], narration: None, narration_lines: vec![], narration_cues: vec![], critic: None };
         let t = load(&req, Output::new(320, 180, 30.0)).unwrap_or_else(|e| panic!("{e:#}"));
         let _ = std::fs::remove_dir_all(&dir);
         t.2.problems.iter().map(|p| format!("{} at {:.2}", p.message, p.time)).collect()
@@ -1067,6 +1147,92 @@ export default class N extends Scene {
         assert!(found.is_empty(), "{found:?}");
     }
 
+    /// A narrated scene run with the critic: its findings, `(kind, message)`. The body starts
+    /// at line 6 of the script.
+    fn critiqued(tag: &str, say: &str, lines: &[f64], body: &str) -> Vec<(String, String)> {
+        let dir = std::env::temp_dir().join(format!("studio-critic-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("scenes")).unwrap();
+        crate::kit::install(&dir).unwrap();
+        let path = dir.join("scenes/01-c.ts");
+        std::fs::write(
+            &path,
+            format!(
+                "import {{ Scene, Text, MathTex, Dot, Circle, Create, FadeIn, FadeOut, Write, Indicate }} from \"manim\";\n\
+                 import {{ heading, work, figure, full }} from \"../lib/layout\";\n\
+                 import {{ lesson }} from \"../lib/lesson\";\n\
+                 export default class C extends Scene {{\n  construct() {{\n{}\n  }}\n}}",
+                body.trim_matches('\n')
+            ),
+        )
+        .unwrap();
+        let total = narration_end(&crate::voice::sequential_starts(lines), lines);
+        let cues = crate::cues::estimate(say, lines);
+        let critic = crate::critic::Critic::new(say, lines, &cues, &[]);
+        let req = OpenScene { path, root: dir.clone(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: Some(total), narration_lines: lines.to_vec(), narration_cues: cues, critic: Some(critic) };
+        let t = load(&req, Output::new(320, 180, 30.0)).unwrap_or_else(|e| panic!("{e:#}")).2;
+        let _ = std::fs::remove_dir_all(&dir);
+        t.problems.into_iter().filter(|p| crate::critic::Kind::ALL.iter().any(|k| k.name() == p.kind)).map(|p| (p.kind, p.message)).collect()
+    }
+
+    /// Nothing moving while the voice runs is dead air, with the line it follows; a hold
+    /// mark excuses it.
+    #[test]
+    fn dead_air_is_found_and_a_hold_excuses_it() {
+        let say = "Here is the first idea. It takes a while to say, so the picture has time to show it.";
+        let body = r#"
+            this.narrate(1);
+            this.play(FadeIn(Dot()), { runTime: 0.5 });
+            this.narrate(2);
+            this.play(FadeIn(Circle(1)), { runTime: 0.5 });"#;
+        let found = critiqued("air", say, &[2.0, 6.0], body);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].0 == "dead-air" && found[0].1.contains("nothing moves for 5.5 s") && found[0].1.ends_with("(line 9)"), "{found:?}");
+        // The wait before sentence 2 is only 1.9 s, and a hold mark excuses the rest.
+        let held = critiqued("held", say, &[2.0, 6.0], &format!("{body}\n            this.mark(\"hold\");"));
+        assert!(held.is_empty(), "{held:?}");
+    }
+
+    /// A scene that moves with its voice and shows each value on its word has no findings.
+    #[test]
+    fn a_scene_that_moves_with_its_voice_is_clean() {
+        let say = "We set r to {r}ten and look at it for a moment, then at the line that follows from it.";
+        let body = r#"
+            this.play(Write(heading("A clean scene")), { runTime: 0.8 });
+            this.cue("r");
+            const eq = work.push(MathTex("r = 10"));
+            this.play(FadeIn(eq), { runTime: 0.4 });
+            this.play(Indicate(eq), { runTime: 1.2 });
+            this.play(Indicate(eq), { runTime: 1.2 });"#;
+        let found = critiqued("clean", say, &[4.0], body);
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// Brief texts, tiny texts and values shown before they are said, each with its line.
+    #[test]
+    fn brief_small_and_off_cue_texts_are_found() {
+        let say = "We start with the line. Then the value is {v}twenty.";
+        let body = r#"
+            this.narrate(1);
+            const a = work.push(MathTex("c = 20"));
+            this.play(FadeIn(a), { runTime: 0.5 });
+            this.play(FadeOut(a), { runTime: 0.3 });
+            this.narrate(2);
+            const t = work.push(Text("tiny print here", { fontSize: 9 }));
+            this.play(FadeIn(t), { runTime: 0.5 });
+            this.cue("v");
+            this.play(Indicate(t), { runTime: 1.0 });"#;
+        let found = critiqued("many", say, &[2.5, 2.5], body);
+        let of = |kind: &str| found.iter().filter(|(k, _)| k == kind).map(|(_, m)| m.as_str()).collect::<Vec<_>>();
+        let brief = of("too-brief");
+        assert!(brief.len() == 1 && brief[0].contains("\"c = 20\"") && brief[0].contains("only 0.5 s") && brief[0].ends_with("(line 8)"), "{found:?}");
+        let small = of("too-small");
+        assert!(small.len() == 1 && small[0].contains("\"tiny print here\"") && small[0].ends_with("(line 12)"), "{found:?}");
+        let off = of("off-cue");
+        assert!(off.len() == 1 && off[0].contains("\"c = 20\"") && off[0].contains("before the voice says \"twenty\""), "{found:?}");
+        assert!(of("dead-air").is_empty(), "{found:?}");
+    }
+
     /// Like the preview thread: one scene after another on the same thread, retimed.
     #[test]
     fn sequential_retimed_scenes_on_one_thread() {
@@ -1074,7 +1240,7 @@ export default class N extends Scene {
         let scenes = crate::sample::install(&dir).unwrap();
         let out = Output::new(320, 180, 30.0);
         for path in scenes.iter().take(3) {
-            let req = OpenScene { path: path.clone(), root: dir.clone(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: Some(6.0), narration_lines: vec![], narration_cues: vec![] };
+            let req = OpenScene { path: path.clone(), root: dir.clone(), theme_json: crate::style::json(0).into(), scene: None, globals: vec![], narration: Some(6.0), narration_lines: vec![], narration_cues: vec![], critic: None };
             let (host, _, t) = load(&req, out).unwrap_or_else(|e| panic!("{}: {e:#}", path.display()));
             // Raw engine seeks, backwards and forwards: the sample's scene 2 creates its
             // tracker and redrawn mobjects mid-scene (fixed in manim-rust 3deae09).

@@ -261,7 +261,7 @@ fn system_prompt(r: Recipe) -> String {
 }
 
 fn scene_request(dir: &Path, path: &Path, narration: Option<f64>) -> OpenScene {
-    OpenScene { path: path.to_path_buf(), root: dir.to_path_buf(), theme_json: style::json(0).into(), scene: None, globals: vec![], narration, narration_lines: vec![], narration_cues: vec![] }
+    OpenScene { path: path.to_path_buf(), root: dir.to_path_buf(), theme_json: style::json(0).into(), scene: None, globals: vec![], narration, narration_lines: vec![], narration_cues: vec![], critic: None }
 }
 
 /// A scene's narration as the app gives it: estimated sentence lengths and cue times.
