@@ -787,6 +787,59 @@ mod tests {
         }
     }
 
+    /// Needs ffmpeg (skipped otherwise): the export mixes the bed under the narration and a
+    /// pop where the scene asked for one, whether or not the joined video had audio.
+    #[test]
+    fn export_mixes_music_and_sounds_in() {
+        let Some(ff) = crate::ffmpeg_path() else { return };
+        let dir = std::env::temp_dir().join(format!("studio-mixin-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rate = crate::kokoro::SAMPLE_RATE as usize;
+        let voice = dir.join("voice.wav");
+        crate::kokoro::write_wav(&voice, &(0..rate * 2).map(|i| 0.3 * (i as f32 * 0.07).sin()).collect::<Vec<_>>()).unwrap();
+        let mut j = job(1);
+        j.audio = crate::mix::AudioMix { music: true, pops: true, answers: false };
+        j.scenes = vec![SceneSpec {
+            path: dir.join("scene.ts"),
+            title: String::new(),
+            key_time: None,
+            expected: None,
+            narration: Some(Narration { wav: voice.clone(), seconds: 2.0, text: "Hi.".into(), parts: vec![(voice.clone(), "Hi.".into())], cues: vec![] }),
+        }];
+        let video = dir.join("scene.mp4");
+        let mut c = std::process::Command::new(&ff);
+        c.args(["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x90:rate=10:duration=6", "-f", "lavfi", "-i", "sine=frequency=330:duration=2,apad=pad_dur=4", "-t", "6", "-c:a", "aac", "-pix_fmt", "yuv420p"]).arg(&video);
+        assert!(export::quiet(&mut c).status().unwrap().success());
+        let hits = vec![vec![crate::mix::Hit { kind: crate::mix::Sfx::Pop, at: 4.0 }]];
+        let joined = dir.join("joined.mp4");
+        std::fs::copy(&video, &joined).unwrap();
+        mix_in(&ff, &j, &[video], &[0.0], &hits, 6.0, true, &joined, &|| false).unwrap();
+        // The audio, as heard.
+        let wav = dir.join("heard.wav");
+        let mut c = std::process::Command::new(&ff);
+        c.args(["-y", "-loglevel", "error", "-i"]).arg(&joined).args(["-vn", "-ac", "1", "-ar", "24000"]).arg(&wav);
+        assert!(export::quiet(&mut c).status().unwrap().success());
+        let heard = crate::voice::read_wav(&wav).unwrap();
+        let rms = |a: f64, b: f64| {
+            let x = &heard[(a * rate as f64) as usize..(b * rate as f64) as usize];
+            (x.iter().map(|s| s * s).sum::<f32>() / x.len() as f32).sqrt()
+        };
+        assert!(rms(0.5, 1.5) > 0.05, "the narration is there: {}", rms(0.5, 1.5));
+        assert!(rms(3.0, 3.2) > 0.002, "the bed is there once the voice is done: {}", rms(3.0, 3.2));
+        assert!(rms(4.0, 4.1) > rms(3.0, 3.1) * 2.0, "and the pop is on top of it at 4 s");
+        // No voice anywhere: the bed alone becomes the video's audio.
+        let silent = dir.join("silent.mp4");
+        let mut c = std::process::Command::new(&ff);
+        c.args(["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x90:rate=10:duration=3", "-pix_fmt", "yuv420p"]).arg(&silent);
+        assert!(export::quiet(&mut c).status().unwrap().success());
+        j.scenes[0].narration = None;
+        mix_in(&ff, &j, std::slice::from_ref(&silent), &[0.0], &[vec![]], 3.0, false, &silent, &|| false).unwrap();
+        let mut c = std::process::Command::new(&ff);
+        c.args(["-y", "-loglevel", "error", "-i"]).arg(&silent).args(["-vn", "-ac", "1", "-ar", "24000"]).arg(&wav);
+        assert!(export::quiet(&mut c).status().unwrap().success(), "the video has an audio stream now");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A job that has not started is cancelled at once, not when its turn comes.
     #[test]
     fn cancelling_a_waiting_job_is_immediate() {

@@ -251,6 +251,8 @@ pub struct Workspace {
     /// Narration playback (absent without an audio device).
     pub audio: Option<crate::audio::Audio>,
     pub natural: crate::engine::NaturalVoice,
+    /// The Chatterbox voice model (optional second engine).
+    pub chatterbox: crate::engine::NaturalVoice,
     /// Stage overlays and playback: safe-area guides, narration captions, loop the scene.
     pub stage_safe: bool,
     /// Watermark sliders in Settings: hit boxes, and the one being dragged.
@@ -265,6 +267,7 @@ pub struct Workspace {
     pub update: crate::update::UpdateState,
     /// Cancel flags of the running downloads (a new one per download).
     pub natural_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub chatterbox_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub espeak_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub ffmpeg_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     focus: FocusHandle,
@@ -486,6 +489,7 @@ impl Workspace {
                 a
             }),
             natural: crate::engine::NaturalVoice::Missing,
+            chatterbox: crate::engine::NaturalVoice::Missing,
             stage_safe: false,
             wm_bounds: Default::default(),
             wm_drag: None,
@@ -495,6 +499,7 @@ impl Workspace {
             ffmpeg_dl: crate::engine::NaturalVoice::Missing,
             update: crate::update::UpdateState::Idle,
             natural_cancel: Default::default(),
+            chatterbox_cancel: Default::default(),
             espeak_cancel: Default::default(),
             ffmpeg_cancel: Default::default(),
             focus: cx.focus_handle(),
@@ -515,6 +520,7 @@ impl Workspace {
             this.download_ffmpeg(cx);
         }
         this.natural = crate::engine::NaturalVoice::detect(this.voice_quality());
+        this.chatterbox = crate::engine::NaturalVoice::detect_chatterbox();
         // A voice downloaded before ONNX Runtime moved out of the program only lacks the
         // runtime DLL: top it up quietly (~6 MB) instead of asking for a download.
         if studio_render::kokoro::supported()
@@ -1103,7 +1109,7 @@ impl Workspace {
 impl Drop for Workspace {
     /// Closing the app stops downloads in flight (their partial files are kept).
     fn drop(&mut self) {
-        for flag in [&self.natural_cancel, &self.espeak_cancel, &self.ffmpeg_cancel] {
+        for flag in [&self.natural_cancel, &self.chatterbox_cancel, &self.espeak_cancel, &self.ffmpeg_cancel] {
             flag.store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }

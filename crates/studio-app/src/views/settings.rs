@@ -594,8 +594,26 @@ impl Workspace {
         };
         let preview = Button::new("voice-try", "Listen")
             .with_icon(IconName::Play)
-            .disabled(!ready)
+            .disabled(!self.voice_spec().ready())
             .on_click(click(cx, |this, _, cx| this.preview_voice(cx)));
+        // The second engine: Chatterbox speaks like a recording of the teacher.
+        use studio_render::voice::Engine;
+        let engine_pick = Engine::ALL[self.prefs.voice_engine.min(Engine::ALL.len() - 1)];
+        let engine_names: Vec<&'static str> = Engine::ALL.iter().map(|e| e.name()).collect();
+        let engine = self.dropdown("voice-engine", &engine_names, self.prefs.voice_engine, cx, |this, i, _, cx| this.set_voice_engine(i, cx));
+        let chatterbox_rows = if engine_pick == Engine::Chatterbox { Some(self.settings_chatterbox(cx)) } else { None };
+        let sound = |key: &'static str, on: bool, set: fn(&mut studio_render::mix::AudioMix, bool)| {
+            Toggle::new(key, on).on_toggle(with_value(cx, move |this, v: bool, _, cx| {
+                set(&mut this.prefs.audio, v);
+                this.save_prefs();
+                cx.notify();
+            }))
+        };
+        let (music, pops, answers) = (
+            sound("audio-music", self.prefs.audio.music, |a, v| a.music = v),
+            sound("audio-pops", self.prefs.audio.pops, |a, v| a.pops = v),
+            sound("audio-answers", self.prefs.audio.answers, |a, v| a.answers = v),
+        );
         group(cx)
             .child(item("Narration", "Read each chapter's narration aloud and time the chapter to it.", narration, false, cx))
             .child(item("Natural voice", natural_desc, natural, false, cx))
@@ -614,9 +632,82 @@ impl Workspace {
                 false,
                 cx,
             ))
-            .child(item("Speed", "Changing it re-speaks the narration.", speed, false, cx))
-            .child(item("Captions", "Timed from the narration. Burned-in captions are drawn on the video; the .srt file is for YouTube, LMS uploads and screen readers.", captions, true, cx))
+            .child(item("Speed", if self.chatterbox_active() { "Kokoro only: Chatterbox speaks at its own pace." } else { "Changing it re-speaks the narration." }, speed, false, cx))
+            .child(item(
+                "Voice engine",
+                "Kokoro has eleven ready-made voices and is the default. Chatterbox can speak in the voice of a recording, such as your own.",
+                engine,
+                false,
+                cx,
+            ))
+            .children(chatterbox_rows)
+            .child(item("Captions", "Timed from the narration. Burned-in captions are drawn on the video; the .srt file is for YouTube, LMS uploads and screen readers.", captions, false, cx))
+            .child(item("Background music", "A quiet, calm bed under the whole video that dips whenever the narrator speaks. Added when you export; nothing to download.", music, false, cx))
+            .child(item("Dot sounds", "A soft tick as each dot pops onto a graph.", pops, false, cx))
+            .child(item("Answer sound", "A soft chime as the answer box appears.", answers, true, cx))
             .into_any_element()
+    }
+
+    /// The Chatterbox rows: the model, the recording to sound like, and the teacher's word
+    /// that they may use that voice.
+    fn settings_chatterbox(&mut self, cx: &mut Context<Self>) -> Div {
+        use crate::engine::NaturalVoice as Dl;
+        let model: AnyElement = match &self.chatterbox {
+            _ if !studio_render::kokoro::supported() => faint("Not available", cx).into_any_element(),
+            Dl::Ready => Chip::new("Installed").tone(Tone::Ok).icon(IconName::Check).into_any_element(),
+            Dl::Downloading(f) => div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(div().w(px(120.)).child(ProgressBar::new(*f).tone(Tone::Neutral).height(6.)))
+                .child(faint(format!("{:.0}%", f * 100.), cx))
+                .child(Button::new("chatterbox-cancel", "Cancel").ghost().small().on_click(click(cx, |this, _, cx| this.cancel_chatterbox(cx))))
+                .into_any_element(),
+            Dl::Missing | Dl::Failed(_) => {
+                let size = match (studio_render::voice::chatterbox_dir(), studio_render::voice::kokoro_dir()) {
+                    (Some(m), Some(r)) => studio_render::chatterbox::download_size(m, r),
+                    _ => studio_render::chatterbox::total_size(),
+                };
+                let label = if matches!(self.chatterbox, Dl::Failed(_)) { "Try again".to_string() } else { format!("Download · {} MB", size / 1_000_000) };
+                Button::new("chatterbox-dl", label).with_icon(IconName::Download).on_click(click(cx, |this, _, cx| this.download_chatterbox(cx))).into_any_element()
+            }
+        };
+        let model_desc = match &self.chatterbox {
+            Dl::Failed(e) => format!("Download failed: {e}"),
+            _ if !studio_render::kokoro::supported() => studio_render::kokoro::UNSUPPORTED.to_string(),
+            _ => "Chatterbox Turbo (MIT licence, English) runs on this computer. One-time download; nothing is sent anywhere. Slower than Kokoro: expect about one to two seconds of waiting per second of speech.".into(),
+        };
+        let clip = self.prefs.voice_reference.as_deref().filter(|p| p.is_file()).is_some();
+        let pick = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .children(clip.then(|| Chip::new("Recording ready").tone(Tone::Ok).icon(IconName::Check)))
+            .child(Button::new("chatterbox-clip", if clip { "Choose another" } else { "Choose a recording" }).on_click(click(cx, |this, _, cx| this.pick_voice_clip(cx))));
+        let consent = Toggle::new("clone-consent", self.prefs.clone_consent).on_toggle(with_value(cx, |this, v: bool, _, cx| this.set_clone_consent(v, cx)));
+        let status = if self.chatterbox_active() {
+            "Chatterbox is speaking."
+        } else {
+            "Until all three are in place Kokoro keeps speaking."
+        };
+        div()
+            .flex()
+            .flex_col()
+            .child(item("Chatterbox model", model_desc, model, false, cx))
+            .child(item(
+                "Voice to copy",
+                "A clean recording of one person, about ten seconds, with no music or other voices. WAV works everywhere; MP3 and other files are converted when ffmpeg is available.",
+                pick,
+                false,
+                cx,
+            ))
+            .child(item(
+                "I may use this voice",
+                format!("Only clone your own voice, or a voice whose owner has agreed. The generated audio carries no watermark. {status}"),
+                consent,
+                false,
+                cx,
+            ))
     }
 
     fn settings_rendering(&mut self, cx: &mut Context<Self>) -> AnyElement {

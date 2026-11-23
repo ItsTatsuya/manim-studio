@@ -163,3 +163,43 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Needs ffmpeg (skipped otherwise): a worker run saves where the lesson kit asked for
+    /// soft sounds, beside the scene, for the export to read.
+    #[test]
+    fn saves_where_sounds_belong() {
+        if crate::ffmpeg_path().is_none() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("studio-worker-sfx-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("scenes")).unwrap();
+        crate::kit::install(&dir).unwrap();
+        let script = dir.join("scenes/01-a.ts");
+        std::fs::write(
+            &script,
+            "import { Scene, Text } from \"manim\";\n\
+             import { work, figure } from \"../lib/layout\";\n\
+             import { lesson } from \"../lib/lesson\";\n\
+             export default class A extends Scene { construct() {\n\
+               const k = lesson(this);\n\
+               const plot = k.Plot({ xRange: [0, 40, 10], yRange: [0, 40, 10] });\n\
+               this.play(plot.show(), { runTime: 0.4 });\n\
+               this.play(plot.dot([10, 20], k.c.primary), { runTime: 0.3 });\n\
+               this.play(k.AnswerBox(\"r = 10\").enter(), { runTime: 0.3 });\n\
+             } }",
+        )
+        .unwrap();
+        let (out, sfx) = (dir.join("scene.mp4"), dir.join("scene.sfx"));
+        let args = ["--script", script.to_str().unwrap(), "--root", dir.to_str().unwrap(), "-r", "160x90", "--fps", "10", "--format", "mp4", "--renderer", "cpu", "--encoder", "x264", "-o", out.to_str().unwrap(), "--sfx-marks", sfx.to_str().unwrap()];
+        assert_eq!(main(args.map(String::from)), 0);
+        let hits = crate::mix::load_hits(&sfx);
+        assert_eq!(hits.iter().map(|h| h.kind).collect::<Vec<_>>(), [crate::mix::Sfx::Pop, crate::mix::Sfx::Answer], "{hits:?}");
+        assert!((hits[0].at - 0.4).abs() < 0.15 && (hits[1].at - 0.7).abs() < 0.15, "{hits:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
